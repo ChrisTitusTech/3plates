@@ -1,0 +1,14 @@
+{
+  "name": "3plates",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @3plates/api --filter @3plates/mobile dev",
+    "dev:api": "pnpm --filter @3plates/api dev",
+    "dev:mobile": "pnpm --filter @3plates/mobile dev",
+    "typecheck": "pnpm --filter @3plates/contract typecheck && pnpm --filter @3plates/db typecheck && pnpm --filter @3plates/api typecheck && pnpm --filter @3plates/mobile typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

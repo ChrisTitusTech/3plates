@@ -4,13 +4,16 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@ts-rest/core": "^3.52.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
     "typescript": "^5.8.0"
   }
 }

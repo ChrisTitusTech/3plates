@@ -19,7 +19,7 @@
     "expo-status-bar": "^2.2.0",
     "react": "19.0.0",
     "react-native": "0.85.3",
-    "react-native-safe-area-context": "5.4.0",
+    "react-native-safe-area-context": "5.7.0",
     "react-native-screens": "~4.11.1",
     "zod": "^3.25.0"
   },

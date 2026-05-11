@@ -44,6 +44,18 @@ This app has three client surfaces: a website, an Android app, and an iOS app. A
 - Make schema, API, and auth changes backward compatible when practical.
 - Ask before making destructive data migrations or breaking API changes.
 
+## Dependency Version Guardrails
+
+- Keep these package versions at or above the current baseline unless there is a validated compatibility reason to change them:
+	- `typescript`: `6.0.3` (workspace baseline)
+	- `@types/node`: `25.6.2`
+	- `expo-constants`: `55.0.16`
+	- `expo-status-bar`: `55.0.6`
+- Do not downgrade the above packages during unrelated feature work.
+- Keep `zod` on major version 3 for now (`3.25.76` baseline). Do not upgrade to `zod` v4 until `@ts-rest/core` officially supports it and the mobile/API typecheck passes.
+- Before changing dependency majors, run typecheck and tests across contract, db, api, and mobile to confirm compatibility.
+- Preserve existing TypeScript 6 config compatibility settings (including `ignoreDeprecations: "6.0"`) unless replaced by an intentional and validated tsconfig migration.
+
 ## Quality Bar
 
 - Add or update tests for auth, sync, and data persistence changes.

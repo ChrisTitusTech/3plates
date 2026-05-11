@@ -25,6 +25,6 @@
     "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test && pnpm --filter @3plates/mobile test"
   },
   "devDependencies": {
-    "typescript": "^5.8.0"
+    "typescript": "^6.0.3"
   }
 }

@@ -13,14 +13,14 @@
   "dependencies": {
     "@3plates/contract": "workspace:*",
     "@react-native-async-storage/async-storage": "^3.0.2",
-    "@ts-rest/core": "^3.52.0",
-    "expo": "^53.0.0",
+    "@ts-rest/core": "^3.52.1",
+    "expo": "^55.0.23",
     "expo-constants": "~55.0.16",
     "expo-linking": "~55.0.15",
     "expo-router": "^55.0.14",
     "expo-secure-store": "^55.0.13",
     "expo-status-bar": "^55.0.6",
-    "react": "19.0.0",
+    "react": "19.2.6",
     "react-native": "0.85.3",
     "react-native-safe-area-context": "5.7.0",
     "react-native-screens": "~4.24.0",
@@ -28,8 +28,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.2",
-    "@types/react": "~19.0.10",
-    "tsx": "^4.20.0",
+    "@types/react": "~19.2.2",
+    "tsx": "^4.21.0",
     "typescript": "~6.0.3"
   }
 }

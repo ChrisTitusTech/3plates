@@ -6,6 +6,12 @@
     "overrides": {
       "esbuild": "0.27.7",
       "postcss": "8.5.10"
+    },
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "@expo/metro-runtime": "5.0.5",
+        "typescript": ">=5 <7"
+      }
     }
   },
   "scripts": {

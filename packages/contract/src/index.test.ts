@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   appContract,
   authProviderSchema,
+  authSessionSchema,
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
@@ -62,6 +63,27 @@ test('schema validations accept valid data', () => {
       pushToken: 'token-123',
     },
   );
+
+  assert.deepEqual(
+    authSessionSchema.parse({
+      sessionToken: 'session-token-123',
+      expiresAt: '2026-05-10T00:00:00.000Z',
+      user: {
+        id: 'user_1',
+        email: 'user@example.com',
+        displayName: null,
+      },
+    }),
+    {
+      sessionToken: 'session-token-123',
+      expiresAt: '2026-05-10T00:00:00.000Z',
+      user: {
+        id: 'user_1',
+        email: 'user@example.com',
+        displayName: null,
+      },
+    },
+  );
 });
 
 test('schema validations reject invalid data', () => {
@@ -75,6 +97,9 @@ test('schema validations reject invalid data', () => {
 test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.health.path, '/health');
   assert.equal(appContract.authStart.path, '/auth/start');
+  assert.equal(appContract.authLinkStart.path, '/auth/link');
+  assert.equal(appContract.authCallback.path, '/auth/callback');
+  assert.equal(appContract.authRefresh.path, '/auth/refresh');
   assert.equal(appContract.me.path, '/users/me');
   assert.equal(appContract.progress.path, '/users/me/progress');
   assert.equal(appContract.updateProgress.path, '/users/me/progress');

@@ -2,7 +2,7 @@
 
 Status: Active roadmap
 Owner: Core product team
-Last updated: 2026-05-09
+Last updated: 2026-05-10
 
 ## Goal
 
@@ -29,12 +29,12 @@ Definition of done:
 
 ## Priority 2: Authentication and Account Linking
 
-- [ ] Implement OAuth start and callback for Google.
-- [ ] Implement OAuth start and callback for Apple.
-- [ ] Persist linked identities in user_identities.
-- [ ] Issue and validate sessions consistently.
-- [ ] Add auth guard and user context in API request lifecycle.
-- [ ] Replace /users/me demo identity with authenticated identity resolution.
+- [x] Implement OAuth start and callback for Google.
+- [x] Implement OAuth start and callback for Apple.
+- [x] Persist linked identities in user_identities.
+- [x] Issue and validate sessions consistently.
+- [x] Add auth guard and user context in API request lifecycle.
+- [x] Replace /users/me demo identity with authenticated identity resolution.
 
 Definition of done:
 
@@ -109,7 +109,7 @@ Definition of done:
 ## Quick Progress Tracker
 
 - [x] P1 API to DB integration
-- [ ] P2 Auth and account linking
+- [x] P2 Auth and account linking
 - [ ] P3 Contract and error hardening
 - [ ] P4 Mobile wiring
 - [ ] P5 Test expansion

@@ -38,6 +38,42 @@ export const userIdentities = pgTable(
   }),
 );
 
+export const oauthTransactions = pgTable(
+  'oauth_transactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    state: text('state').notNull().unique(),
+    provider: text('provider').notNull(),
+    purpose: text('purpose').notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    redirectTo: text('redirect_to'),
+    codeVerifier: text('code_verifier').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    stateIndex: uniqueIndex('oauth_transactions_state_idx').on(table.state),
+  }),
+);
+
+export const authSessions = pgTable(
+  'auth_sessions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tokenHashIndex: uniqueIndex('auth_sessions_token_hash_idx').on(table.tokenHash),
+  }),
+);
+
 export const userProgress = pgTable('user_progress', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id')

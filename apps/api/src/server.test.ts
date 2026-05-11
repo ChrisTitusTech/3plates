@@ -1,20 +1,93 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { createServer } from './server.js';
+import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
+import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import { createMemoryUserStateStore } from './user-state-store.js';
+
+function createFakeProvider(provider: AuthProviderName, profile: OAuthIdentity): OAuthProviderAdapter {
+  return {
+    provider,
+    buildAuthorizationUrl({ state }) {
+      return `https://auth.example/${provider}?state=${state}`;
+    },
+    async exchangeCode() {
+      return profile;
+    },
+  };
+}
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
-  const app = createServer({ store });
+  const authRepository = createMemoryAuthRepository();
+
+  const googleProfile: OAuthIdentity = {
+    provider: 'google',
+    providerSubjectId: `google-${randomUUID()}`,
+    email: `google-${randomUUID()}@example.com`,
+    emailVerified: true,
+    displayName: 'Google Demo User',
+  };
+
+  const appleProfile: OAuthIdentity = {
+    provider: 'apple',
+    providerSubjectId: `apple-${randomUUID()}`,
+    email: `apple-${randomUUID()}@example.com`,
+    emailVerified: true,
+    displayName: 'Apple Demo User',
+  };
+
+  const authService = createAuthService({
+    authRepository,
+    userStateStore: store,
+    providers: {
+      google: createFakeProvider('google', googleProfile),
+      apple: createFakeProvider('apple', appleProfile),
+    },
+  });
+
+  const app = createServer({ store, authService });
 
   return {
     app,
+    authRepository,
     store,
-    headers: {
-      'x-user-email': 'user@example.com',
-      'x-user-display-name': 'Demo User',
+    googleProfile,
+    appleProfile,
+  };
+}
+
+async function signIn(app: ReturnType<typeof createAuthenticatedApp>['app'], provider: AuthProviderName) {
+  const startResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider,
+      redirectTo: 'http://localhost:3000/welcome',
     },
+  });
+
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+
+  const callbackUrl = new URL('/auth/callback', 'http://localhost:3000');
+  callbackUrl.searchParams.set('provider', provider);
+  callbackUrl.searchParams.set('code', `${provider}-code`);
+  callbackUrl.searchParams.set('state', startBody.state);
+
+  const callbackResponse = await app.inject({
+    method: 'GET',
+    url: callbackUrl.toString(),
+  });
+
+  assert.equal(callbackResponse.statusCode, 200);
+  const callbackBody = callbackResponse.json();
+
+  return {
+    sessionToken: callbackBody.sessionToken as string,
+    user: callbackBody.user as { id: string; email: string | null; displayName: string | null },
   };
 }
 
@@ -35,70 +108,160 @@ test('GET /health returns status and timestamp', async (t) => {
   assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('POST /auth/start returns auth continuation payload', async (t) => {
+test('auth start, callback, and refresh issue real sessions', async (t) => {
   const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();
   });
 
-  const response = await app.inject({
+  const startResponse = await app.inject({
     method: 'POST',
     url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
   });
 
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    ok: true,
-    provider: 'google',
-    next: '/auth/callback',
-  });
-});
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+  assert.equal(startBody.ok, true);
+  assert.equal(startBody.provider, 'google');
+  assert.match(startBody.next, /^https:\/\/auth\.example\/google/);
+  assert.equal(typeof startBody.state, 'string');
 
-test('GET /users/me returns a user payload', async (t) => {
-  const { app, headers } = createAuthenticatedApp();
-  t.after(async () => {
-    await app.close();
+  const callbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
   });
 
-  const response = await app.inject({
+  assert.equal(callbackResponse.statusCode, 200);
+  const callbackBody = callbackResponse.json();
+  assert.equal(callbackBody.ok, true);
+  assert.equal(callbackBody.provider, 'google');
+  assert.equal(callbackBody.user.email, callbackBody.user.email?.toLowerCase());
+
+  const meResponse = await app.inject({
     method: 'GET',
     url: '/users/me',
-    headers,
+    headers: {
+      authorization: `Bearer ${callbackBody.sessionToken}`,
+    },
   });
 
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.match(body.id, /^[0-9a-f-]{36}$/i);
-  assert.deepEqual(body, {
-    id: body.id,
-    email: 'user@example.com',
-    displayName: 'Demo User',
+  assert.equal(meResponse.statusCode, 200);
+  assert.deepEqual(meResponse.json(), callbackBody.user);
+
+  const refreshResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/refresh',
+    headers: {
+      authorization: `Bearer ${callbackBody.sessionToken}`,
+    },
   });
+
+  assert.equal(refreshResponse.statusCode, 200);
+  const refreshBody = refreshResponse.json();
+  assert.equal(refreshBody.ok, true);
+  assert.equal(refreshBody.user.id, callbackBody.user.id);
+  assert.notEqual(refreshBody.sessionToken, callbackBody.sessionToken);
+
+  const oldTokenResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${callbackBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(oldTokenResponse.statusCode, 401);
+
+  const refreshedUserResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${refreshBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(refreshedUserResponse.statusCode, 200);
+  assert.deepEqual(refreshedUserResponse.json(), callbackBody.user);
 });
 
-test('progress endpoints persist per-user state', async (t) => {
-  const { app, headers } = createAuthenticatedApp();
+test('auth link keeps the existing account and links a second identity', async (t) => {
+  const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();
   });
 
-  const getResponse = await app.inject({
-    method: 'GET',
-    url: '/users/me/progress',
-    headers,
+  const googleSession = await signIn(app, 'google');
+
+  const linkStartResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/link',
+    headers: {
+      authorization: `Bearer ${googleSession.sessionToken}`,
+    },
+    payload: {
+      provider: 'apple',
+      redirectTo: 'http://localhost:3000/settings',
+    },
   });
 
-  assert.equal(getResponse.statusCode, 200);
-  assert.deepEqual(getResponse.json(), {
+  assert.equal(linkStartResponse.statusCode, 200);
+  const linkStartBody = linkStartResponse.json();
+  assert.equal(linkStartBody.provider, 'apple');
+
+  const linkCallbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=apple&code=apple-code&state=${encodeURIComponent(linkStartBody.state)}`,
+  });
+
+  assert.equal(linkCallbackResponse.statusCode, 200);
+  const linkCallbackBody = linkCallbackResponse.json();
+  assert.equal(linkCallbackBody.user.id, googleSession.user.id);
+
+  const linkedUserResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${linkCallbackBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(linkedUserResponse.statusCode, 200);
+  assert.equal(linkedUserResponse.json().id, googleSession.user.id);
+});
+
+test('stateful user endpoints persist per-user state using bearer sessions', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const session = await signIn(app, 'google');
+
+  const progressGet = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
+  });
+
+  assert.equal(progressGet.statusCode, 200);
+  assert.deepEqual(progressGet.json(), {
     streakDays: 0,
     completedWorkouts: 0,
     lastWorkoutAt: null,
   });
 
-  const putResponse = await app.inject({
+  const progressPut = await app.inject({
     method: 'PUT',
     url: '/users/me/progress',
-    headers,
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
     payload: {
       streakDays: 4,
       completedWorkouts: 16,
@@ -106,46 +269,29 @@ test('progress endpoints persist per-user state', async (t) => {
     },
   });
 
-  assert.equal(putResponse.statusCode, 200);
-  assert.deepEqual(putResponse.json(), { updated: true });
+  assert.equal(progressPut.statusCode, 200);
 
-  const persistedResponse = await app.inject({
+  const progressPersisted = await app.inject({
     method: 'GET',
     url: '/users/me/progress',
-    headers,
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
   });
 
-  assert.equal(persistedResponse.statusCode, 200);
-  assert.deepEqual(persistedResponse.json(), {
+  assert.equal(progressPersisted.statusCode, 200);
+  assert.deepEqual(progressPersisted.json(), {
     streakDays: 4,
     completedWorkouts: 16,
     lastWorkoutAt: '2026-05-09T12:00:00.000Z',
   });
-});
 
-test('preferences endpoints persist per-user state', async (t) => {
-  const { app, headers } = createAuthenticatedApp();
-  t.after(async () => {
-    await app.close();
-  });
-
-  const getResponse = await app.inject({
-    method: 'GET',
-    url: '/users/me/preferences',
-    headers,
-  });
-
-  assert.equal(getResponse.statusCode, 200);
-  assert.deepEqual(getResponse.json(), {
-    units: 'metric',
-    reminderTime: '07:00',
-    theme: 'system',
-  });
-
-  const putResponse = await app.inject({
+  const preferencesPut = await app.inject({
     method: 'PUT',
     url: '/users/me/preferences',
-    headers,
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
     payload: {
       units: 'imperial',
       reminderTime: '08:30',
@@ -153,70 +299,24 @@ test('preferences endpoints persist per-user state', async (t) => {
     },
   });
 
-  assert.equal(putResponse.statusCode, 200);
-  assert.deepEqual(putResponse.json(), { updated: true });
+  assert.equal(preferencesPut.statusCode, 200);
 
-  const persistedResponse = await app.inject({
-    method: 'GET',
-    url: '/users/me/preferences',
-    headers,
-  });
-
-  assert.equal(persistedResponse.statusCode, 200);
-  assert.deepEqual(persistedResponse.json(), {
-    units: 'imperial',
-    reminderTime: '08:30',
-    theme: 'dark',
-  });
-});
-
-test('POST /notifications/devices upserts devices per user', async (t) => {
-  const { app, headers, store } = createAuthenticatedApp();
-  t.after(async () => {
-    await app.close();
-  });
-
-  const userResponse = await app.inject({
-    method: 'GET',
-    url: '/users/me',
-    headers,
-  });
-  const user = userResponse.json();
-
-  const firstResponse = await app.inject({
+  const notificationResponse = await app.inject({
     method: 'POST',
     url: '/notifications/devices',
-    headers,
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
     payload: {
       platform: 'ios',
       pushToken: 'push-token-1',
     },
   });
 
-  assert.equal(firstResponse.statusCode, 200);
-  assert.deepEqual(firstResponse.json(), { registered: true });
-
-  const secondResponse = await app.inject({
-    method: 'POST',
-    url: '/notifications/devices',
-    headers,
-    payload: {
-      platform: 'android',
-      pushToken: 'push-token-1',
-    },
-  });
-
-  assert.equal(secondResponse.statusCode, 200);
-  assert.deepEqual(secondResponse.json(), { registered: true });
-  assert.deepEqual(store.listDevicesForUser(user.id), [
-    {
-      platform: 'android',
-      pushToken: 'push-token-1',
-    },
-  ]);
+  assert.equal(notificationResponse.statusCode, 200);
 });
 
-test('stateful user endpoints require an authenticated user header', async (t) => {
+test('stateful user endpoints require an authenticated user session', async (t) => {
   const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();

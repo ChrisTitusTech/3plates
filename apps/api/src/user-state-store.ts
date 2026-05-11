@@ -7,12 +7,15 @@ import {
 import { createDatabaseClient } from '@3plates/db';
 import {
   notificationDevices,
+  userIdentities,
   userPreferences,
   userProgress,
   users,
 } from '@3plates/db';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+
+import type { OAuthIdentity } from './auth-types.js';
 
 const userIdentitySchema = z.object({
   email: z.string().email(),
@@ -27,6 +30,8 @@ export type NotificationDeviceRecord = z.infer<typeof notificationDeviceSchema>;
 
 export interface UserStateStore {
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
+  getUserById(userId: string): Promise<UserRecord | null>;
+  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null }): Promise<UserRecord>;
   getProgress(userId: string): Promise<ProgressRecord>;
   updateProgress(userId: string, progress: ProgressRecord): Promise<void>;
   getPreferences(userId: string): Promise<PreferencesRecord>;
@@ -82,7 +87,127 @@ function mapPreferences(row: {
 export function createDbUserStateStore(connectionString: string): UserStateStore {
   const { db, close } = createDatabaseClient(connectionString);
 
+  const getUserById = async (userId: string): Promise<UserRecord | null> => {
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    return user ? mapUser(user) : null;
+  };
+
   return {
+    getUserById,
+
+    async resolveOAuthIdentity(input) {
+      const identity = input;
+
+      return db.transaction(async (transaction) => {
+        const [existingIdentity] = await transaction
+          .select({
+            userId: userIdentities.userId,
+          })
+          .from(userIdentities)
+          .where(
+            and(
+              eq(userIdentities.provider, identity.provider),
+              eq(userIdentities.providerSubjectId, identity.providerSubjectId),
+            ),
+          )
+          .limit(1);
+
+        if (existingIdentity) {
+          const user = await getUserById(existingIdentity.userId);
+          if (!user) {
+            throw new Error('Identity references a missing user.');
+          }
+          return user;
+        }
+
+        if (identity.linkedUserId) {
+          const [linkedIdentity] = await transaction
+            .select({
+              userId: userIdentities.userId,
+            })
+            .from(userIdentities)
+            .where(
+              and(
+                eq(userIdentities.provider, identity.provider),
+                eq(userIdentities.providerSubjectId, identity.providerSubjectId),
+              ),
+            )
+            .limit(1);
+
+          if (linkedIdentity && linkedIdentity.userId !== identity.linkedUserId) {
+            throw new Error('Identity is already linked to another account.');
+          }
+
+          await transaction.insert(userIdentities).values({
+            userId: identity.linkedUserId,
+            provider: identity.provider,
+            providerSubjectId: identity.providerSubjectId,
+            email: identity.email,
+          });
+
+          const linkedUser = await getUserById(identity.linkedUserId);
+          if (!linkedUser) {
+            throw new Error('Linked account is missing.');
+          }
+
+          return linkedUser;
+        }
+
+        if (identity.email && identity.emailVerified) {
+          const [existingUserByEmail] = await transaction
+            .select({
+              id: users.id,
+              email: users.email,
+              displayName: users.displayName,
+            })
+            .from(users)
+            .where(eq(users.email, identity.email))
+            .limit(1);
+
+          if (existingUserByEmail) {
+            await transaction.insert(userIdentities).values({
+              userId: existingUserByEmail.id,
+              provider: identity.provider,
+              providerSubjectId: identity.providerSubjectId,
+              email: identity.email,
+            });
+
+            return mapUser(existingUserByEmail);
+          }
+        }
+
+        const [createdUser] = await transaction
+          .insert(users)
+          .values({
+            email: identity.email ?? `${identity.providerSubjectId}@${identity.provider}.local`,
+            displayName: identity.displayName,
+          })
+          .returning({
+            id: users.id,
+            email: users.email,
+            displayName: users.displayName,
+          });
+
+        await transaction.insert(userIdentities).values({
+          userId: createdUser.id,
+          provider: identity.provider,
+          providerSubjectId: identity.providerSubjectId,
+          email: identity.email,
+        });
+
+        return mapUser(createdUser);
+      });
+    },
+
     async getOrCreateUser(input) {
       const identity = userIdentitySchema.parse(input);
       const [existingUser] = await db
@@ -275,9 +400,15 @@ export function createMemoryUserStateStore(): UserStateStore & {
   listDevicesForUser(userId: string): NotificationDeviceRecord[];
 } {
   const usersByEmail = new Map<string, MemoryUser>();
+  const usersById = new Map<string, MemoryUser>();
+  const identitiesByKey = new Map<string, string>();
   const progressByUserId = new Map<string, ProgressRecord>();
   const preferencesByUserId = new Map<string, PreferencesRecord>();
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
+
+  function identityKey(provider: string, providerSubjectId: string) {
+    return `${provider}:${providerSubjectId}`;
+  }
 
   return {
     async getOrCreateUser(input) {
@@ -291,6 +422,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
         } satisfies MemoryUser;
 
         usersByEmail.set(identity.email, updatedUser);
+        usersById.set(updatedUser.id, updatedUser);
         return updatedUser;
       }
 
@@ -301,6 +433,52 @@ export function createMemoryUserStateStore(): UserStateStore & {
       });
 
       usersByEmail.set(createdUser.email ?? identity.email, createdUser);
+      usersById.set(createdUser.id, createdUser);
+      return createdUser;
+    },
+
+    async getUserById(userId) {
+      return usersById.get(userId) ?? null;
+    },
+
+    async resolveOAuthIdentity(input) {
+      const existingUserId = identitiesByKey.get(identityKey(input.provider, input.providerSubjectId));
+      if (existingUserId) {
+        const existingUser = usersById.get(existingUserId);
+        if (!existingUser) {
+          throw new Error('Identity references a missing user.');
+        }
+
+        return existingUser;
+      }
+
+      if (input.linkedUserId) {
+        const linkedUser = usersById.get(input.linkedUserId);
+        if (!linkedUser) {
+          throw new Error('Linked account is missing.');
+        }
+
+        identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), linkedUser.id);
+        return linkedUser;
+      }
+
+      if (input.email && input.emailVerified) {
+        const existingUserByEmail = usersByEmail.get(input.email);
+        if (existingUserByEmail) {
+          identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), existingUserByEmail.id);
+          return existingUserByEmail;
+        }
+      }
+
+      const createdUser = userSchema.parse({
+        id: crypto.randomUUID(),
+        email: input.email ?? `${input.providerSubjectId}@${input.provider}.local`,
+        displayName: input.displayName,
+      });
+
+      usersByEmail.set(createdUser.email, createdUser);
+      usersById.set(createdUser.id, createdUser);
+      identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), createdUser.id);
       return createdUser;
     },
 

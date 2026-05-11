@@ -15,6 +15,13 @@
       "when": 1778469300000,
       "tag": "0001_bootstrap_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778469779934,
+      "tag": "0002_absent_vision",
+      "breakpoints": true
     }
   ]
 }

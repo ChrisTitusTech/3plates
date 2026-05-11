@@ -20,10 +20,12 @@ Copy `.env.example` to `.env` and fill in the values for:
 - `API_PORT`
 - `EXPO_PUBLIC_API_URL`
 - `AUTH_SECRET`
+- `AUTH_BASE_URL`
 - `AUTH_GOOGLE_CLIENT_ID`
 - `AUTH_GOOGLE_CLIENT_SECRET`
 - `AUTH_APPLE_CLIENT_ID`
 - `AUTH_APPLE_CLIENT_SECRET`
+- `AUTH_SESSION_TTL_DAYS`
 
 ## Local development
 

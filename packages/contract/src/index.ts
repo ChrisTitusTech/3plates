@@ -28,6 +28,12 @@ export const notificationDeviceSchema = z.object({
   pushToken: z.string().min(1),
 });
 
+export const authSessionSchema = z.object({
+  sessionToken: z.string().min(1),
+  expiresAt: z.string().datetime(),
+  user: userSchema,
+});
+
 export const appContract = c.router({
   health: {
     method: 'GET',
@@ -51,6 +57,51 @@ export const appContract = c.router({
         ok: z.literal(true),
         provider: authProviderSchema,
         next: z.string(),
+        state: z.string(),
+      }),
+    },
+  },
+  authLinkStart: {
+    method: 'POST',
+    path: '/auth/link',
+    body: z.object({
+      provider: authProviderSchema,
+      redirectTo: z.string().url().optional(),
+    }),
+    responses: {
+      200: z.object({
+        ok: z.literal(true),
+        provider: authProviderSchema,
+        next: z.string(),
+        state: z.string(),
+      }),
+    },
+  },
+  authCallback: {
+    method: 'GET',
+    path: '/auth/callback',
+    query: z.object({
+      provider: authProviderSchema,
+      code: z.string().min(1),
+      state: z.string().min(1),
+    }),
+    responses: {
+      200: z.object({
+        ok: z.literal(true),
+        provider: authProviderSchema,
+        redirectTo: z.string().nullable(),
+        ...authSessionSchema.shape,
+      }),
+    },
+  },
+  authRefresh: {
+    method: 'POST',
+    path: '/auth/refresh',
+    body: z.object({}),
+    responses: {
+      200: z.object({
+        ok: z.literal(true),
+        ...authSessionSchema.shape,
       }),
     },
   },

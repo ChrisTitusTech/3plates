@@ -1,10 +1,14 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 
+import { requireAuthenticatedUser } from './authenticated-user.js';
 import {
-  defaultAuthenticatedUserResolver,
-} from './authenticated-user.js';
-import type { AuthenticatedUserResolver } from './authenticated-user.js';
+  createAppleOAuthProvider,
+  createAuthService,
+  createDbAuthRepository,
+  createGoogleOAuthProvider,
+} from './auth-service.js';
+import type { AuthService } from './auth-service.js';
 import { env } from './env.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -17,8 +21,17 @@ import type { UserStateStore } from './user-state-store.js';
 
 type CreateServerOptions = {
   store?: UserStateStore;
-  authenticatedUserResolver?: AuthenticatedUserResolver;
+  authService?: AuthService;
 };
+
+function parseBearerToken(authorizationHeader: string | undefined) {
+  if (!authorizationHeader?.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = authorizationHeader.slice('Bearer '.length).trim();
+  return token.length > 0 ? token : null;
+}
 
 function createDefaultStore() {
   if (!env.DATABASE_URL) {
@@ -28,23 +41,48 @@ function createDefaultStore() {
   return createDbUserStateStore(env.DATABASE_URL);
 }
 
+function createDefaultAuthService(store: UserStateStore) {
+  if (!env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required to start the API without an injected auth service.');
+  }
+
+  return createAuthService({
+    authRepository: createDbAuthRepository(env.DATABASE_URL),
+    userStateStore: store,
+    providers: {
+      google: createGoogleOAuthProvider(),
+      apple: createAppleOAuthProvider(),
+    },
+  });
+}
+
 export function createServer(options: CreateServerOptions = {}) {
   const app = Fastify({ logger: true });
   const store = options.store ?? createDefaultStore();
-  const authenticatedUserResolver =
-    options.authenticatedUserResolver ?? defaultAuthenticatedUserResolver;
+  const authService = options.authService ?? createDefaultAuthService(store);
+
+  app.decorateRequest('authUser', null);
+  app.decorateRequest('authToken', null);
+
+  app.addHook('onRequest', async (request) => {
+    const token = parseBearerToken(request.headers.authorization);
+    request.authToken = token;
+    request.authUser = token ? await authService.resolveRequestUser(token) : null;
+  });
 
   app.register(cors, {
     origin: true,
   });
 
   app.register(registerHealthRoutes);
-  app.register(registerAuthRoutes);
+  app.register(async (authApp) => {
+    await registerAuthRoutes(authApp, authService);
+  });
   app.register(async (statefulApp) => {
-    await registerUserRoutes(statefulApp, store, authenticatedUserResolver);
-    await registerProgressRoutes(statefulApp, store, authenticatedUserResolver);
-    await registerPreferencesRoutes(statefulApp, store, authenticatedUserResolver);
-    await registerNotificationRoutes(statefulApp, store, authenticatedUserResolver);
+    await registerUserRoutes(statefulApp);
+    await registerProgressRoutes(statefulApp, store);
+    await registerPreferencesRoutes(statefulApp, store);
+    await registerNotificationRoutes(statefulApp, store);
   });
 
   return app;

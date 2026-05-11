@@ -5,7 +5,14 @@ import { requireAuthenticatedUser } from '../authenticated-user.js';
 import type { UserStateStore } from '../user-state-store.js';
 
 export async function registerProgressRoutes(app: FastifyInstance, store: UserStateStore) {
-  app.get('/users/me/progress', async (request, reply) => {
+  app.get('/users/me/progress', {
+    config: {
+      rateLimit: {
+        max: 120,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) {
       return reply;
@@ -14,7 +21,14 @@ export async function registerProgressRoutes(app: FastifyInstance, store: UserSt
     return store.getProgress(user.id);
   });
 
-  app.put('/users/me/progress', async (request, reply) => {
+  app.put('/users/me/progress', {
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) {
       return reply;

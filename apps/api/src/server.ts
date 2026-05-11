@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { ZodError } from 'zod';
 
@@ -116,6 +117,12 @@ export function createServer(options: CreateServerOptions = {}) {
 
   app.register(cors, {
     origin: true,
+  });
+
+  app.register(rateLimit, {
+    global: false,
+    max: 120,
+    timeWindow: '1 minute',
   });
 
   app.register(registerHealthRoutes);

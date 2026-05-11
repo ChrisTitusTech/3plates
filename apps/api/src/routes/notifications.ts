@@ -5,7 +5,14 @@ import { requireAuthenticatedUser } from '../authenticated-user.js';
 import type { UserStateStore } from '../user-state-store.js';
 
 export async function registerNotificationRoutes(app: FastifyInstance, store: UserStateStore) {
-  app.post('/notifications/devices', async (request, reply) => {
+  app.post('/notifications/devices', {
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
     const user = await requireAuthenticatedUser(request, reply);
     if (!user) {
       return reply;

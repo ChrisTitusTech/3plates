@@ -77,11 +77,32 @@ async function handleStartAuthentication(
 }
 
 export async function registerAuthRoutes(app: FastifyInstance, authService: AuthService) {
-  app.post('/auth/start', async (request, reply) => handleStartAuthentication(request, reply, authService, 'sign-in'));
+  app.post('/auth/start', {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => handleStartAuthentication(request, reply, authService, 'sign-in'));
 
-  app.post('/auth/link', async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
+  app.post('/auth/link', {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
 
-  app.get('/auth/callback', async (request, reply) => {
+  app.get('/auth/callback', {
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
     const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
     const providerResult = authProviderSchema.safeParse(query.provider);
     const code = typeof query.code === 'string' ? query.code : null;
@@ -126,7 +147,14 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     };
   });
 
-  app.post('/auth/refresh', async (request) => {
+  app.post('/auth/refresh', {
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request) => {
     const token = request.authToken ?? getAuthorizationToken(request);
     if (!token) {
       throw invalidAuthError();
@@ -145,7 +173,14 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     };
   });
 
-  app.post('/auth/exchange', async (request) => {
+  app.post('/auth/exchange', {
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request) => {
     const parsedBody = authExchangeBodySchema.safeParse(request.body);
     if (!parsedBody.success) {
       throw invalidRequestPayloadError();

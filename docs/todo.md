@@ -14,13 +14,13 @@ Ship the scaffold into a real cross-platform product with:
 
 ## Priority 1: API to Database Integration
 
-- [ ] Connect API routes to the DB package.
-- [ ] Use entities from [packages/db/src/schema.ts](../packages/db/src/schema.ts) for all saved user state.
-- [ ] Add per-user lookup and upsert logic for:
-	- [ ] Progress
-	- [ ] Preferences
-	- [ ] Notification devices
-- [ ] Replace demo responses in API routes with persisted data paths.
+- [x] Connect API routes to the DB package.
+- [x] Use entities from [packages/db/src/schema.ts](../packages/db/src/schema.ts) for all saved user state.
+- [x] Add per-user lookup and upsert logic for:
+	- [x] Progress
+	- [x] Preferences
+	- [x] Notification devices
+- [x] Replace demo responses in API routes with persisted data paths.
 
 Definition of done:
 
@@ -75,7 +75,7 @@ Definition of done:
 
 ## Priority 5: Test Expansion
 
-- [ ] Add DB-backed integration tests for API routes.
+- [x] Add DB-backed integration tests for API routes.
 - [ ] Add auth session and guard tests.
 - [ ] Add conflict and dedupe behavior tests:
 	- [ ] Progress update conflict semantics
@@ -108,7 +108,7 @@ Definition of done:
 
 ## Quick Progress Tracker
 
-- [ ] P1 API to DB integration
+- [x] P1 API to DB integration
 - [ ] P2 Auth and account linking
 - [ ] P3 Contract and error hardening
 - [ ] P4 Mobile wiring

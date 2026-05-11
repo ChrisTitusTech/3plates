@@ -21,12 +21,18 @@ importers:
       '@3plates/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@3plates/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@fastify/cors':
         specifier: ^11.2.0
         version: 11.2.0
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)
       fastify:
         specifier: ^5.3.0
         version: 5.8.5
@@ -114,6 +120,9 @@ importers:
 
   packages/db:
     dependencies:
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)

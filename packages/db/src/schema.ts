@@ -42,7 +42,8 @@ export const userProgress = pgTable('user_progress', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id')
     .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'cascade' })
+    .unique(),
   streakDays: integer('streak_days').notNull().default(0),
   completedWorkouts: integer('completed_workouts').notNull().default(0),
   lastWorkoutAt: timestamp('last_workout_at', { withTimezone: true }),

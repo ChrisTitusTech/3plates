@@ -43,13 +43,13 @@ Definition of done:
 
 ## Priority 3: Contract and Error Handling Hardening
 
-- [ ] Keep [packages/contract/src/index.ts](../packages/contract/src/index.ts) as the single request and response source.
-- [ ] Add typed error responses for:
-	- [ ] Invalid or missing auth
-	- [ ] Invalid request payload
-	- [ ] Missing user state
-	- [ ] Conflict or stale update cases
-- [ ] Ensure API handlers return only contract-compliant responses.
+- [x] Keep [packages/contract/src/index.ts](../packages/contract/src/index.ts) as the single request and response source.
+- [x] Add typed error responses for:
+	- [x] Invalid or missing auth
+	- [x] Invalid request payload
+	- [x] Missing user state
+	- [x] Conflict or stale update cases
+- [x] Ensure API handlers return only contract-compliant responses.
 
 Definition of done:
 
@@ -110,7 +110,7 @@ Definition of done:
 
 - [x] P1 API to DB integration
 - [x] P2 Auth and account linking
-- [ ] P3 Contract and error hardening
+- [x] P3 Contract and error hardening
 - [ ] P4 Mobile wiring
 - [ ] P5 Test expansion
 - [ ] P6 CI and delivery safety

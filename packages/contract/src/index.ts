@@ -28,6 +28,22 @@ export const notificationDeviceSchema = z.object({
   pushToken: z.string().min(1),
 });
 
+export const apiErrorCodeSchema = z.enum([
+  'invalid_auth',
+  'invalid_request_payload',
+  'missing_user_state',
+  'conflict_or_stale_update',
+  'internal_error',
+]);
+
+export const apiErrorSchema = z.object({
+  ok: z.literal(false),
+  error: z.object({
+    code: apiErrorCodeSchema,
+    message: z.string().min(1),
+  }),
+});
+
 export const authSessionSchema = z.object({
   sessionToken: z.string().min(1),
   expiresAt: z.string().datetime(),
@@ -53,6 +69,7 @@ export const appContract = c.router({
       redirectTo: z.string().url().optional(),
     }),
     responses: {
+      400: apiErrorSchema,
       200: z.object({
         ok: z.literal(true),
         provider: authProviderSchema,
@@ -69,6 +86,8 @@ export const appContract = c.router({
       redirectTo: z.string().url().optional(),
     }),
     responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
       200: z.object({
         ok: z.literal(true),
         provider: authProviderSchema,
@@ -86,6 +105,9 @@ export const appContract = c.router({
       state: z.string().min(1),
     }),
     responses: {
+      400: apiErrorSchema,
+      404: apiErrorSchema,
+      409: apiErrorSchema,
       200: z.object({
         ok: z.literal(true),
         provider: authProviderSchema,
@@ -99,6 +121,8 @@ export const appContract = c.router({
     path: '/auth/refresh',
     body: z.object({}),
     responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
       200: z.object({
         ok: z.literal(true),
         ...authSessionSchema.shape,
@@ -109,6 +133,8 @@ export const appContract = c.router({
     method: 'GET',
     path: '/users/me',
     responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
       200: userSchema,
     },
   },
@@ -116,6 +142,8 @@ export const appContract = c.router({
     method: 'GET',
     path: '/users/me/progress',
     responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
       200: progressSchema,
     },
   },
@@ -124,6 +152,10 @@ export const appContract = c.router({
     path: '/users/me/progress',
     body: progressSchema,
     responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      409: apiErrorSchema,
       200: z.object({
         updated: z.literal(true),
       }),
@@ -133,6 +165,8 @@ export const appContract = c.router({
     method: 'GET',
     path: '/users/me/preferences',
     responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
       200: preferencesSchema,
     },
   },
@@ -141,6 +175,10 @@ export const appContract = c.router({
     path: '/users/me/preferences',
     body: preferencesSchema,
     responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      409: apiErrorSchema,
       200: z.object({
         updated: z.literal(true),
       }),
@@ -151,6 +189,10 @@ export const appContract = c.router({
     path: '/notifications/devices',
     body: notificationDeviceSchema,
     responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      409: apiErrorSchema,
       200: z.object({
         registered: z.literal(true),
       }),

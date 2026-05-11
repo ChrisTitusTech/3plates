@@ -1,7 +1,7 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
+import { ZodError } from 'zod';
 
-import { requireAuthenticatedUser } from './authenticated-user.js';
 import {
   createAppleOAuthProvider,
   createAuthService,
@@ -18,6 +18,13 @@ import { registerProgressRoutes } from './routes/progress.js';
 import { registerUserRoutes } from './routes/users.js';
 import { createDbUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
+import {
+  internalServerError,
+  invalidAuthError,
+  invalidRequestPayloadError,
+  isApiError,
+  serializeApiError,
+} from './api-error.js';
 
 type CreateServerOptions = {
   store?: UserStateStore;
@@ -63,11 +70,48 @@ export function createServer(options: CreateServerOptions = {}) {
 
   app.decorateRequest('authUser', null);
   app.decorateRequest('authToken', null);
+  app.decorateRequest('authError', null);
 
   app.addHook('onRequest', async (request) => {
     const token = parseBearerToken(request.headers.authorization);
     request.authToken = token;
-    request.authUser = token ? await authService.resolveRequestUser(token) : null;
+    request.authError = null;
+
+    if (!token) {
+      request.authUser = null;
+      return;
+    }
+
+    try {
+      request.authUser = await authService.resolveRequestUser(token);
+      if (!request.authUser) {
+        request.authError = invalidAuthError();
+      }
+    } catch (error) {
+      request.authUser = null;
+      if (isApiError(error)) {
+        request.authError = error;
+        return;
+      }
+
+      throw error;
+    }
+  });
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ZodError) {
+      reply.status(400).send(
+        serializeApiError(invalidRequestPayloadError('Request payload is invalid.')),
+      );
+      return;
+    }
+
+    if (isApiError(error)) {
+      reply.status(error.statusCode).send(serializeApiError(error));
+      return;
+    }
+
+    reply.status(500).send(serializeApiError(internalServerError()));
   });
 
   app.register(cors, {

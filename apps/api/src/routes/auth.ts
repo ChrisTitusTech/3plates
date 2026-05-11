@@ -4,6 +4,10 @@ import { z } from 'zod';
 
 import { requireAuthenticatedUser } from '../authenticated-user.js';
 import type { AuthService } from '../auth-service.js';
+import {
+  invalidAuthError,
+  invalidRequestPayloadError,
+} from '../api-error.js';
 import { env } from '../env.js';
 
 const authStartBodySchema = z.object({
@@ -34,14 +38,12 @@ async function handleStartAuthentication(
   const parsedBody = authStartBodySchema.safeParse(request.body);
 
   if (!parsedBody.success) {
-    reply.status(400);
-    return reply.send({ error: 'Invalid provider' });
+    throw invalidRequestPayloadError();
   }
 
   const currentUser = purpose === 'link' ? request.authUser : null;
   if (purpose === 'link' && !currentUser) {
-    reply.status(401);
-    return reply.send({ error: 'Unauthorized' });
+    throw invalidAuthError();
   }
 
   const startedAuth = await authService.startAuthentication({
@@ -65,15 +67,14 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
 
   app.post('/auth/link', async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
 
-  app.get('/auth/callback', async (request, reply) => {
+  app.get('/auth/callback', async (request) => {
     const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
     const providerResult = authProviderSchema.safeParse(query.provider);
     const code = typeof query.code === 'string' ? query.code : null;
     const state = typeof query.state === 'string' ? query.state : null;
 
     if (!providerResult.success || !code || !state) {
-      reply.status(400);
-      return reply.send({ error: 'Invalid callback payload' });
+      throw invalidRequestPayloadError();
     }
 
     const completedAuth = await authService.completeAuthentication({
@@ -93,17 +94,15 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     };
   });
 
-  app.post('/auth/refresh', async (request, reply) => {
+  app.post('/auth/refresh', async (request) => {
     const token = request.authToken ?? getAuthorizationToken(request);
     if (!token) {
-      reply.status(401);
-      return reply.send({ error: 'Unauthorized' });
+      throw invalidAuthError();
     }
 
     const refreshedSession = await authService.refreshSession(token);
     if (!refreshedSession) {
-      reply.status(401);
-      return reply.send({ error: 'Unauthorized' });
+      throw invalidAuthError();
     }
 
     return {

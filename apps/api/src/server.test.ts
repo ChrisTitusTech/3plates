@@ -6,6 +6,7 @@ import { createServer } from './server.js';
 import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
 import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import { createMemoryUserStateStore } from './user-state-store.js';
+import type { UserStateStore } from './user-state-store.js';
 
 function createFakeProvider(provider: AuthProviderName, profile: OAuthIdentity): OAuthProviderAdapter {
   return {
@@ -57,6 +58,63 @@ function createAuthenticatedApp() {
     googleProfile,
     appleProfile,
   };
+}
+
+function createMissingUserStateApp() {
+  const sessionUser = {
+    id: randomUUID(),
+    email: 'missing@example.com',
+    displayName: 'Missing User',
+  };
+
+  const store: UserStateStore = {
+    getOrCreateUser: async () => sessionUser,
+    getUserById: async () => null,
+    resolveOAuthIdentity: async () => sessionUser,
+    getProgress: async () => ({ streakDays: 0, completedWorkouts: 0, lastWorkoutAt: null }),
+    updateProgress: async () => undefined,
+    getPreferences: async () => ({ theme: 'system', units: 'metric', reminderTime: '07:00' }),
+    updatePreferences: async () => undefined,
+    registerDevice: async () => undefined,
+    close: async () => undefined,
+  };
+
+  const authRepository = createMemoryAuthRepository();
+
+  const authService = createAuthService({
+    authRepository,
+    userStateStore: store,
+    providers: {
+      google: createFakeProvider('google', {
+        provider: 'google',
+        providerSubjectId: `google-${randomUUID()}`,
+        email: 'missing@example.com',
+        emailVerified: true,
+        displayName: 'Missing User',
+      }),
+      apple: createFakeProvider('apple', {
+        provider: 'apple',
+        providerSubjectId: `apple-${randomUUID()}`,
+        email: 'missing@example.com',
+        emailVerified: true,
+        displayName: 'Missing User',
+      }),
+    },
+  });
+
+  return {
+    app: createServer({ store, authService }),
+  };
+}
+
+function assertApiError(body: unknown, code: string, message: string) {
+  assert.deepEqual(body, {
+    ok: false,
+    error: {
+      code,
+      message,
+    },
+  });
 }
 
 async function signIn(app: ReturnType<typeof createAuthenticatedApp>['app'], provider: AuthProviderName) {
@@ -186,6 +244,94 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
 
   assert.equal(refreshedUserResponse.statusCode, 200);
   assert.deepEqual(refreshedUserResponse.json(), callbackBody.user);
+});
+
+test('auth routes return typed errors for invalid payload and stale callbacks', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const invalidStartResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'github',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+
+  assert.equal(invalidStartResponse.statusCode, 400);
+  assertApiError(invalidStartResponse.json(), 'invalid_request_payload', 'Request payload is invalid.');
+
+  const startResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+
+  const firstCallbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+  });
+
+  assert.equal(firstCallbackResponse.statusCode, 200);
+
+  const staleCallbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+  });
+
+  assert.equal(staleCallbackResponse.statusCode, 409);
+  assertApiError(
+    staleCallbackResponse.json(),
+    'conflict_or_stale_update',
+    'OAuth transaction is missing or expired.',
+  );
+});
+
+test('missing user state returns a typed 404 response', async (t) => {
+  const { app } = createMissingUserStateApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const startResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+
+  const callbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+  });
+
+  assert.equal(callbackResponse.statusCode, 200);
+  const callbackBody = callbackResponse.json();
+
+  const meResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${callbackBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(meResponse.statusCode, 404);
+  assertApiError(meResponse.json(), 'missing_user_state', 'Session belongs to a deleted user.');
 });
 
 test('auth link keeps the existing account and links a second identity', async (t) => {
@@ -328,5 +474,5 @@ test('stateful user endpoints require an authenticated user session', async (t) 
   });
 
   assert.equal(response.statusCode, 401);
-  assert.deepEqual(response.json(), { error: 'Unauthorized' });
+  assertApiError(response.json(), 'invalid_auth', 'Authentication required.');
 });

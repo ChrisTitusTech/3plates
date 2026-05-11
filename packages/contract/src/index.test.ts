@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   appContract,
+  apiErrorSchema,
   authProviderSchema,
   authSessionSchema,
   notificationDeviceSchema,
@@ -81,6 +82,23 @@ test('schema validations accept valid data', () => {
         id: 'user_1',
         email: 'user@example.com',
         displayName: null,
+      },
+    },
+  );
+
+  assert.deepEqual(
+    apiErrorSchema.parse({
+      ok: false,
+      error: {
+        code: 'invalid_auth',
+        message: 'Authentication required.',
+      },
+    }),
+    {
+      ok: false,
+      error: {
+        code: 'invalid_auth',
+        message: 'Authentication required.',
       },
     },
   );

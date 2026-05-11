@@ -10,6 +10,7 @@ import {
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { isNull } from 'drizzle-orm';
 
+import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
 import { env } from './env.js';
 import type { AuthProviderName, AuthTransactionPurpose, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import type { UserRecord, UserStateStore } from './user-state-store.js';
@@ -391,15 +392,15 @@ export function createAuthService(input: {
     async completeAuthentication({ provider, code, state, callbackUrl }) {
       const transaction = await input.authRepository.consumeOAuthTransaction(state);
       if (!transaction) {
-        throw new Error('OAuth transaction is missing or expired.');
+        throw conflictOrStaleUpdateError('OAuth transaction is missing or expired.');
       }
 
       if (transaction.provider !== provider) {
-        throw new Error('OAuth transaction provider mismatch.');
+        throw conflictOrStaleUpdateError('OAuth transaction provider mismatch.');
       }
 
       if (transaction.expiresAt.getTime() <= Date.now()) {
-        throw new Error('OAuth transaction has expired.');
+        throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
       const identity = await input.providers[provider].exchangeCode({
@@ -435,7 +436,7 @@ export function createAuthService(input: {
 
       const user = await input.userStateStore.getUserById(session.userId);
       if (!user) {
-        return null;
+        throw missingUserStateError('Session belongs to a deleted user.');
       }
 
       const sessionToken = buildSessionToken();
@@ -459,7 +460,12 @@ export function createAuthService(input: {
         return null;
       }
 
-      return input.userStateStore.getUserById(session.userId);
+      const user = await input.userStateStore.getUserById(session.userId);
+      if (!user) {
+        throw missingUserStateError('Session belongs to a deleted user.');
+      }
+
+      return user;
     },
   };
 }

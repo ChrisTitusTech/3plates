@@ -15,6 +15,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
 import type { OAuthIdentity } from './auth-types.js';
 
 const userIdentitySchema = z.object({
@@ -124,7 +125,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         if (existingIdentity) {
           const user = await getUserById(existingIdentity.userId);
           if (!user) {
-            throw new Error('Identity references a missing user.');
+            throw missingUserStateError('Identity references a missing user.');
           }
           return user;
         }
@@ -144,7 +145,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             .limit(1);
 
           if (linkedIdentity && linkedIdentity.userId !== identity.linkedUserId) {
-            throw new Error('Identity is already linked to another account.');
+            throw conflictOrStaleUpdateError('Identity is already linked to another account.');
           }
 
           await transaction.insert(userIdentities).values({
@@ -156,7 +157,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
 
           const linkedUser = await getUserById(identity.linkedUserId);
           if (!linkedUser) {
-            throw new Error('Linked account is missing.');
+            throw missingUserStateError('Linked account is missing.');
           }
 
           return linkedUser;
@@ -446,7 +447,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
       if (existingUserId) {
         const existingUser = usersById.get(existingUserId);
         if (!existingUser) {
-          throw new Error('Identity references a missing user.');
+          throw missingUserStateError('Identity references a missing user.');
         }
 
         return existingUser;
@@ -455,7 +456,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
       if (input.linkedUserId) {
         const linkedUser = usersById.get(input.linkedUserId);
         if (!linkedUser) {
-          throw new Error('Linked account is missing.');
+          throw missingUserStateError('Linked account is missing.');
         }
 
         identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), linkedUser.id);

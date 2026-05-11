@@ -80,8 +80,8 @@ importers:
         specifier: ^55.0.13
         version: 55.0.13(expo@53.0.27)
       expo-status-bar:
-        specifier: ^2.2.0
-        version: 2.2.3(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+        specifier: ^55.0.6
+        version: 55.0.6(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       react:
         specifier: 19.0.0
         version: 19.0.0
@@ -2007,8 +2007,8 @@ packages:
     resolution: {integrity: sha512-N5Ipn1NwqaJzEm+G97o0Jbe4g/th3R/16N1DabnYryXKCiZwDkK13/w3VfGkQN9LOOaBP+JIRxGf4M8lQKPzyA==}
     engines: {node: '>=20.16.0'}
 
-  expo-status-bar@2.2.3:
-    resolution: {integrity: sha512-+c8R3AESBoduunxTJ8353SqKAKpxL6DvcD8VKBuh81zzJyUUbfB4CVjr1GufSJEKsMzNPXZU+HJwXx7Xh7lx8Q==}
+  expo-status-bar@55.0.6:
+    resolution: {integrity: sha512-ijOUptfdiqYt7rObZ6jrPQ8sE5YN/8MxKCIJx0b7TY4nGkSJxhPIxeoW4GXcXCA8mTQ9PiOHH/ThLZgRVZvUlQ==}
     peerDependencies:
       react: '*'
       react-native: '*'
@@ -5556,11 +5556,10 @@ snapshots:
 
   expo-server@55.0.9: {}
 
-  expo-status-bar@2.2.3(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):
+  expo-status-bar@55.0.6(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):
     dependencies:
       react: 19.0.0
       react-native: 0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0)
-      react-native-edge-to-edge: 1.6.0(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       react-native-is-edge-to-edge: 1.3.1(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
 
   expo-symbols@55.0.8(expo-font@13.3.2(expo@53.0.27)(react@19.0.0))(expo@53.0.27)(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):

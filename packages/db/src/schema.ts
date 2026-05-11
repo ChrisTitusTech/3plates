@@ -74,6 +74,26 @@ export const authSessions = pgTable(
   }),
 );
 
+export const mobileAuthExchanges = pgTable(
+  'mobile_auth_exchanges',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().unique(),
+    sessionToken: text('session_token').notNull(),
+    sessionExpiresAt: timestamp('session_expires_at', { withTimezone: true }).notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userEmail: text('user_email'),
+    userDisplayName: text('user_display_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    exchangeExpiresAt: timestamp('exchange_expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    codeIndex: uniqueIndex('mobile_auth_exchanges_code_idx').on(table.code),
+  }),
+);
+
 export const userProgress = pgTable('user_progress', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id')

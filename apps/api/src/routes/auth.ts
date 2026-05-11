@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { requireAuthenticatedUser } from '../authenticated-user.js';
 import type { AuthService } from '../auth-service.js';
 import {
+  conflictOrStaleUpdateError,
   invalidAuthError,
   invalidRequestPayloadError,
 } from '../api-error.js';
@@ -13,6 +14,10 @@ import { env } from '../env.js';
 const authStartBodySchema = z.object({
   provider: authProviderSchema,
   redirectTo: z.string().url().optional(),
+});
+
+const authExchangeBodySchema = z.object({
+  code: z.string().min(1),
 });
 
 function getCallbackUrl(request: FastifyRequest) {
@@ -27,6 +32,15 @@ function getAuthorizationToken(request: FastifyRequest) {
   }
 
   return authorizationHeader.slice('Bearer '.length).trim() || null;
+}
+
+function isNativeRedirectTarget(redirectTo: string) {
+  try {
+    const redirectUrl = new URL(redirectTo);
+    return redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:';
+  } catch {
+    return false;
+  }
 }
 
 async function handleStartAuthentication(
@@ -67,7 +81,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
 
   app.post('/auth/link', async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
 
-  app.get('/auth/callback', async (request) => {
+  app.get('/auth/callback', async (request, reply) => {
     const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
     const providerResult = authProviderSchema.safeParse(query.provider);
     const code = typeof query.code === 'string' ? query.code : null;
@@ -83,6 +97,24 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       state,
       callbackUrl: getCallbackUrl(request),
     });
+
+    if (completedAuth.redirectTo && isNativeRedirectTarget(completedAuth.redirectTo)) {
+      const redirectUrl = new URL(completedAuth.redirectTo);
+      const exchange = await authService.issueMobileAuthExchangeCode({
+        sessionToken: completedAuth.sessionToken,
+        expiresAt: completedAuth.expiresAt,
+        user: completedAuth.user,
+      });
+
+      redirectUrl.searchParams.set('provider', providerResult.data);
+      redirectUrl.searchParams.set('exchangeCode', exchange.code);
+      redirectUrl.searchParams.set('expiresAt', completedAuth.expiresAt);
+
+      return reply
+        .code(302)
+        .header('location', redirectUrl.toString())
+        .send();
+    }
 
     return {
       ok: true,
@@ -110,6 +142,25 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       sessionToken: refreshedSession.sessionToken,
       expiresAt: refreshedSession.expiresAt,
       user: refreshedSession.user,
+    };
+  });
+
+  app.post('/auth/exchange', async (request) => {
+    const parsedBody = authExchangeBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      throw invalidRequestPayloadError();
+    }
+
+    const exchangeRecord = await authService.redeemMobileAuthExchangeCode(parsedBody.data.code);
+    if (!exchangeRecord) {
+      throw conflictOrStaleUpdateError('Exchange code is missing or expired.');
+    }
+
+    return {
+      ok: true,
+      sessionToken: exchangeRecord.sessionToken,
+      expiresAt: exchangeRecord.expiresAt,
+      user: exchangeRecord.user,
     };
   });
 }

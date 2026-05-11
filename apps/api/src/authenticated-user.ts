@@ -1,11 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import type { ApiError } from './api-error.js';
-import type { AuthenticatedUser } from './user-state-store.js';
+import type { UserRecord } from './user-state-store.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    authUser: AuthenticatedUser | null;
+    authUser: UserRecord | null;
     authToken: string | null;
     authError: ApiError | null;
   }
@@ -14,7 +14,7 @@ declare module 'fastify' {
 export async function requireAuthenticatedUser(
   request: FastifyRequest,
   reply: FastifyReply,
-): Promise<AuthenticatedUser | null> {
+): Promise<UserRecord | null> {
   const user = request.authUser;
 
   if (!user) {

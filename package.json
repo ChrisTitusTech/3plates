@@ -22,7 +22,7 @@
     "db:logs": "docker-compose logs -f postgres",
     "db:test": "bash ./scripts/db-smoke-test.sh",
     "typecheck": "pnpm --filter @3plates/contract typecheck && pnpm --filter @3plates/db typecheck && pnpm --filter @3plates/api typecheck && pnpm --filter @3plates/mobile typecheck",
-    "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test"
+    "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test && pnpm --filter @3plates/mobile test"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

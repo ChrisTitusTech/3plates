@@ -7,15 +7,18 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@3plates/contract": "workspace:*",
+    "@react-native-async-storage/async-storage": "^3.0.2",
     "@ts-rest/core": "^3.52.0",
     "expo": "^53.0.0",
     "expo-constants": "~17.1.8",
     "expo-linking": "~55.0.15",
     "expo-router": "^55.0.14",
+    "expo-secure-store": "^55.0.13",
     "expo-status-bar": "^2.2.0",
     "react": "19.0.0",
     "react-native": "0.85.3",
@@ -24,10 +27,9 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@types/react": "~19.0.10",
     "@types/node": "^24.0.0",
+    "@types/react": "~19.0.10",
+    "tsx": "^4.20.0",
     "typescript": "~5.8.3"
   }
 }
-
-

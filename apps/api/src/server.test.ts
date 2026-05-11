@@ -296,6 +296,81 @@ test('auth routes return typed errors for invalid payload and stale callbacks', 
   );
 });
 
+test('auth callback redirects to native deep link with an exchange code and redeem succeeds once', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const startResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'threeplates://auth-finished',
+    },
+  });
+
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+
+  const callbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+  });
+
+  assert.equal(callbackResponse.statusCode, 302);
+  const redirectLocation = callbackResponse.headers.location;
+  if (!redirectLocation) {
+    throw new Error('Expected callback response to include a redirect location header.');
+  }
+
+  const redirectUrl = new URL(redirectLocation);
+  assert.equal(redirectUrl.protocol, 'threeplates:');
+  assert.equal(redirectUrl.searchParams.get('provider'), 'google');
+  const exchangeCode = redirectUrl.searchParams.get('exchangeCode');
+  assert.equal(typeof exchangeCode, 'string');
+  assert.equal(typeof redirectUrl.searchParams.get('expiresAt'), 'string');
+
+  const redeemResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/exchange',
+    payload: {
+      code: exchangeCode,
+    },
+  });
+
+  assert.equal(redeemResponse.statusCode, 200);
+  const redeemBody = redeemResponse.json();
+  assert.equal(redeemBody.ok, true);
+  assert.equal(typeof redeemBody.sessionToken, 'string');
+
+  const meResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${redeemBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(meResponse.statusCode, 200);
+
+  const staleRedeemResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/exchange',
+    payload: {
+      code: exchangeCode,
+    },
+  });
+
+  assert.equal(staleRedeemResponse.statusCode, 409);
+  assertApiError(
+    staleRedeemResponse.json(),
+    'conflict_or_stale_update',
+    'Exchange code is missing or expired.',
+  );
+});
+
 test('missing user state returns a typed 404 response', async (t) => {
   const { app } = createMissingUserStateApp();
   t.after(async () => {

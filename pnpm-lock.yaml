@@ -58,6 +58,9 @@ importers:
       '@3plates/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@react-native-async-storage/async-storage':
+        specifier: ^3.0.2
+        version: 3.0.2(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       '@ts-rest/core':
         specifier: ^3.52.0
         version: 3.52.1(@types/node@24.12.3)(zod@3.25.76)
@@ -73,6 +76,9 @@ importers:
       expo-router:
         specifier: ^55.0.14
         version: 55.0.14(@expo/log-box@55.0.12(@expo/dom-webview@55.0.6)(expo@53.0.27)(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0))(@expo/metro-runtime@5.0.5(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0)))(@types/react@19.0.14)(expo-constants@17.1.8(expo@53.0.27)(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0)))(expo-font@13.3.2(expo@53.0.27)(react@19.0.0))(expo-linking@55.0.15(expo@53.0.27)(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0))(expo@53.0.27)(react-dom@19.2.6(react@19.0.0))(react-native-safe-area-context@5.7.0(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0))(react-native-screens@4.24.0(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+      expo-secure-store:
+        specifier: ^55.0.13
+        version: 55.0.13(expo@53.0.27)
       expo-status-bar:
         specifier: ^2.2.0
         version: 2.2.3(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
@@ -98,6 +104,9 @@ importers:
       '@types/react':
         specifier: ~19.0.10
         version: 19.0.14
+      tsx:
+        specifier: ^4.20.0
+        version: 4.21.0
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
@@ -1145,6 +1154,12 @@ packages:
       '@types/react':
         optional: true
 
+  '@react-native-async-storage/async-storage@3.0.2':
+    resolution: {integrity: sha512-XP0zDIl+1XoeuQ7f878qXKdl77zLwzLALPpxvNRc7ZtDh9ew36WSvOdQOhFkexMySapFAWxEbZxS8K8J2DU4eg==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
+
   '@react-native/assets-registry@0.85.3':
     resolution: {integrity: sha512-u9ZiYP23vA2IFtdFQFmetzSmk6SM0xgKIoiOsr1hXNHjHaLhOm+/Ph1ud57wX6+Dbwdzx8coJgnzSKL3W21PCg==}
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
@@ -1983,6 +1998,11 @@ packages:
       react-server-dom-webpack:
         optional: true
 
+  expo-secure-store@55.0.13:
+    resolution: {integrity: sha512-I6r0JNO1Fd4o0Gu7Ixiic7s89lqgdUHq17uBH9y1f/AntoyKn71TdtYJH82RgfsBbu5qNVzrwImmvlANyOlITQ==}
+    peerDependencies:
+      expo: '*'
+
   expo-server@55.0.9:
     resolution: {integrity: sha512-N5Ipn1NwqaJzEm+G97o0Jbe4g/th3R/16N1DabnYryXKCiZwDkK13/w3VfGkQN9LOOaBP+JIRxGf4M8lQKPzyA==}
     engines: {node: '>=20.16.0'}
@@ -2186,6 +2206,9 @@ packages:
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
+
+  idb@8.0.3:
+    resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
 
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
@@ -4658,6 +4681,12 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.0.14
 
+  '@react-native-async-storage/async-storage@3.0.2(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)':
+    dependencies:
+      idb: 8.0.3
+      react: 19.0.0
+      react-native: 0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0)
+
   '@react-native/assets-registry@0.85.3': {}
 
   '@react-native/babel-plugin-codegen@0.79.6(@babel/core@7.29.0)':
@@ -5521,6 +5550,10 @@ snapshots:
       - expo-font
       - supports-color
 
+  expo-secure-store@55.0.13(expo@53.0.27):
+    dependencies:
+      expo: 53.0.27(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@5.0.5(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0)))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+
   expo-server@55.0.9: {}
 
   expo-status-bar@2.2.3(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):
@@ -5753,6 +5786,8 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  idb@8.0.3: {}
 
   ieee754@1.2.1: {}
 

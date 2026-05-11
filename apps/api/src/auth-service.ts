@@ -1,6 +1,6 @@
-import { authSessions, oauthTransactions } from '@3plates/db';
+import { authSessions, mobileAuthExchanges, oauthTransactions } from '@3plates/db';
 import { createDatabaseClient } from '@3plates/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
 import {
   createHash,
   randomBytes,
@@ -31,12 +31,22 @@ export type AuthSession = {
   expiresAt: Date;
 };
 
+export type MobileAuthExchangeRecord = {
+  code: string;
+  sessionToken: string;
+  sessionExpiresAt: Date;
+  user: UserRecord;
+  exchangeExpiresAt: Date;
+};
+
 export interface AuthRepository {
   createOAuthTransaction(input: OAuthTransaction): Promise<void>;
   consumeOAuthTransaction(state: string): Promise<OAuthTransaction | null>;
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
   getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date } | null>;
   revokeSessionByToken(token: string): Promise<void>;
+  createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
+  consumeMobileAuthExchange(code: string): Promise<MobileAuthExchangeRecord | null>;
   close?(): Promise<void>;
 }
 
@@ -54,6 +64,12 @@ export type AuthService = {
     state: string;
     callbackUrl: string;
   }): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord; redirectTo: string | null }>;
+  issueMobileAuthExchangeCode(input: {
+    sessionToken: string;
+    expiresAt: string;
+    user: UserRecord;
+  }): Promise<{ code: string; exchangeExpiresAt: string }>;
+  redeemMobileAuthExchangeCode(code: string): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord } | null>;
   refreshSession(token: string): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord } | null>;
   resolveRequestUser(token: string): Promise<UserRecord | null>;
 };
@@ -127,7 +143,11 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
       await db.delete(oauthTransactions).where(eq(oauthTransactions.state, state));
 
-      return transaction;
+      return {
+        ...transaction,
+        provider: transaction.provider as AuthProviderName,
+        purpose: transaction.purpose as AuthTransactionPurpose,
+      };
     },
 
     async createSession(userId, tokenHash, expiresAt) {
@@ -164,6 +184,50 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         .where(eq(authSessions.tokenHash, tokenHash));
     },
 
+    async createMobileAuthExchange(input) {
+      await db.insert(mobileAuthExchanges).values({
+        code: input.code,
+        sessionToken: input.sessionToken,
+        sessionExpiresAt: input.sessionExpiresAt,
+        userId: input.user.id,
+        userEmail: input.user.email,
+        userDisplayName: input.user.displayName,
+        exchangeExpiresAt: input.exchangeExpiresAt,
+      });
+    },
+
+    async consumeMobileAuthExchange(code) {
+      const now = new Date();
+      const [exchange] = await db
+        .delete(mobileAuthExchanges)
+        .where(and(eq(mobileAuthExchanges.code, code), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
+        .returning({
+          code: mobileAuthExchanges.code,
+          sessionToken: mobileAuthExchanges.sessionToken,
+          sessionExpiresAt: mobileAuthExchanges.sessionExpiresAt,
+          userId: mobileAuthExchanges.userId,
+          userEmail: mobileAuthExchanges.userEmail,
+          userDisplayName: mobileAuthExchanges.userDisplayName,
+          exchangeExpiresAt: mobileAuthExchanges.exchangeExpiresAt,
+        });
+
+      if (!exchange) {
+        return null;
+      }
+
+      return {
+        code: exchange.code,
+        sessionToken: exchange.sessionToken,
+        sessionExpiresAt: exchange.sessionExpiresAt,
+        exchangeExpiresAt: exchange.exchangeExpiresAt,
+        user: {
+          id: exchange.userId,
+          email: exchange.userEmail,
+          displayName: exchange.userDisplayName,
+        },
+      };
+    },
+
     close,
   };
 }
@@ -171,6 +235,16 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 export function createMemoryAuthRepository(): AuthRepository {
   const transactions = new Map<string, OAuthTransaction>();
   const sessions = new Map<string, { userId: string; expiresAt: Date; revokedAt: Date | null }>();
+  const mobileExchanges = new Map<string, MobileAuthExchangeRecord>();
+
+  function pruneExpiredMobileExchanges() {
+    const now = Date.now();
+    for (const [code, exchange] of mobileExchanges.entries()) {
+      if (exchange.exchangeExpiresAt.getTime() <= now) {
+        mobileExchanges.delete(code);
+      }
+    }
+  }
 
   return {
     async createOAuthTransaction(input) {
@@ -203,6 +277,22 @@ export function createMemoryAuthRepository(): AuthRepository {
       if (session) {
         session.revokedAt = new Date();
       }
+    },
+
+    async createMobileAuthExchange(input) {
+      pruneExpiredMobileExchanges();
+      mobileExchanges.set(input.code, input);
+    },
+
+    async consumeMobileAuthExchange(code) {
+      pruneExpiredMobileExchanges();
+      const exchange = mobileExchanges.get(code) ?? null;
+      if (!exchange) {
+        return null;
+      }
+
+      mobileExchanges.delete(code);
+      return exchange;
     },
 
     async close() {
@@ -363,6 +453,7 @@ export function createAuthService(input: {
   providers: Record<AuthProviderName, OAuthProviderAdapter>;
 }) : AuthService {
   const sessionTtlMilliseconds = env.AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const mobileExchangeTtlMilliseconds = 2 * 60 * 1000;
 
   return {
     async startAuthentication({ provider, purpose, redirectTo, userId, callbackUrl }) {
@@ -423,6 +514,38 @@ export function createAuthService(input: {
         expiresAt: expiresAt.toISOString(),
         user,
         redirectTo: transaction.redirectTo,
+      };
+    },
+
+    async issueMobileAuthExchangeCode({ sessionToken, expiresAt, user }) {
+      const exchangeCode = randomUUID();
+      const exchangeExpiresAt = new Date(Date.now() + mobileExchangeTtlMilliseconds);
+      const sessionExpiresAt = new Date(expiresAt);
+
+      await input.authRepository.createMobileAuthExchange({
+        code: exchangeCode,
+        sessionToken,
+        sessionExpiresAt,
+        user,
+        exchangeExpiresAt,
+      });
+
+      return {
+        code: exchangeCode,
+        exchangeExpiresAt: exchangeExpiresAt.toISOString(),
+      };
+    },
+
+    async redeemMobileAuthExchangeCode(code) {
+      const exchange = await input.authRepository.consumeMobileAuthExchange(code);
+      if (!exchange) {
+        return null;
+      }
+
+      return {
+        sessionToken: exchange.sessionToken,
+        expiresAt: exchange.sessionExpiresAt.toISOString(),
+        user: exchange.user,
       };
     },
 

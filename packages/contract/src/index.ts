@@ -129,6 +129,21 @@ export const appContract = c.router({
       }),
     },
   },
+  authExchange: {
+    method: 'POST',
+    path: '/auth/exchange',
+    body: z.object({
+      code: z.string().min(1),
+    }),
+    responses: {
+      400: apiErrorSchema,
+      409: apiErrorSchema,
+      200: z.object({
+        ok: z.literal(true),
+        ...authSessionSchema.shape,
+      }),
+    },
+  },
   me: {
     method: 'GET',
     path: '/users/me',
@@ -201,3 +216,8 @@ export const appContract = c.router({
 });
 
 export type AppContract = typeof appContract;
+export type AuthProvider = z.infer<typeof authProviderSchema>;
+export type User = z.infer<typeof userSchema>;
+export type Progress = z.infer<typeof progressSchema>;
+export type Preferences = z.infer<typeof preferencesSchema>;
+export type NotificationDevice = z.infer<typeof notificationDeviceSchema>;

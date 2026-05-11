@@ -57,17 +57,17 @@ Definition of done:
 
 ## Priority 4: Mobile Wiring
 
-- [ ] Replace scaffold views with real data fetch and mutation flows.
-- [ ] Use [apps/mobile/src/lib/api.ts](../apps/mobile/src/lib/api.ts) for route interactions.
-- [ ] Add loading and retry states on all stateful screens.
-- [ ] Add offline cache support for read paths and pending update handling where needed.
+- [x] Replace scaffold views with real data fetch and mutation flows.
+- [x] Use [apps/mobile/src/lib/api.ts](../apps/mobile/src/lib/api.ts) for route interactions.
+- [x] Add loading and retry states on all stateful screens.
+- [x] Add offline cache support for read paths and pending update handling where needed.
 
 Targets:
 
-- [ ] [apps/mobile/app/sign-in.tsx](../apps/mobile/app/sign-in.tsx)
-- [ ] [apps/mobile/app/progress.tsx](../apps/mobile/app/progress.tsx)
-- [ ] [apps/mobile/app/preferences.tsx](../apps/mobile/app/preferences.tsx)
-- [ ] [apps/mobile/app/notifications.tsx](../apps/mobile/app/notifications.tsx)
+- [x] [apps/mobile/app/sign-in.tsx](../apps/mobile/app/sign-in.tsx)
+- [x] [apps/mobile/app/progress.tsx](../apps/mobile/app/progress.tsx)
+- [x] [apps/mobile/app/preferences.tsx](../apps/mobile/app/preferences.tsx)
+- [x] [apps/mobile/app/notifications.tsx](../apps/mobile/app/notifications.tsx)
 
 Definition of done:
 
@@ -111,6 +111,6 @@ Definition of done:
 - [x] P1 API to DB integration
 - [x] P2 Auth and account linking
 - [x] P3 Contract and error hardening
-- [ ] P4 Mobile wiring
+- [x] P4 Mobile wiring
 - [ ] P5 Test expansion
 - [ ] P6 CI and delivery safety

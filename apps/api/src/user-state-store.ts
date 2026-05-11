@@ -477,7 +477,8 @@ export function createMemoryUserStateStore(): UserStateStore & {
         displayName: input.displayName,
       });
 
-      usersByEmail.set(createdUser.email, createdUser);
+      const createdEmail = createdUser.email ?? `${input.providerSubjectId}@${input.provider}.local`;
+      usersByEmail.set(createdEmail, createdUser);
       usersById.set(createdUser.id, createdUser);
       identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), createdUser.id);
       return createdUser;

@@ -1,13 +1,8 @@
-import { workoutModeSchema } from '@3plates/contract';
+import { workoutListQuerySchema } from '@3plates/contract';
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
 
 import { requireAuthenticatedUser } from '../authenticated-user.js';
 import type { UserStateStore } from '../user-state-store.js';
-
-const workoutQuerySchema = z.object({
-  mode: workoutModeSchema,
-});
 
 export async function registerWorkoutRoutes(app: FastifyInstance, store: UserStateStore) {
   app.get('/workouts', {
@@ -23,11 +18,27 @@ export async function registerWorkoutRoutes(app: FastifyInstance, store: UserSta
       return reply;
     }
 
-    const query = workoutQuerySchema.parse(request.query);
+    const query = workoutListQuerySchema.parse(request.query);
     const workouts = await store.listWorkouts(query.mode);
+    const total = workouts.length;
+    const totalPages = total === 0 ? 0 : Math.ceil(total / query.pageSize);
+    const start = (query.page - 1) * query.pageSize;
+    const end = start + query.pageSize;
+    const pagedWorkouts = workouts.slice(start, end);
 
     return {
-      workouts,
+      workouts: pagedWorkouts,
+      pagination: {
+        page: query.page,
+        pageSize: query.pageSize,
+        total,
+        totalPages,
+        hasNextPage: query.page < totalPages,
+        hasPreviousPage: query.page > 1,
+      },
+      ordering: {
+        applied: query.order,
+      },
     };
   });
 }

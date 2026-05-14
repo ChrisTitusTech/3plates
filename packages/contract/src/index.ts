@@ -31,12 +31,38 @@ export const notificationDeviceSchema = z.object({
 
 export const workoutModeSchema = z.enum(['active_recovery', 'strength_metcon']);
 
+export const workoutListOrderSchema = z.enum([
+  'published_at_desc_created_at_desc_id_asc',
+]);
+
+export const workoutListQuerySchema = z.object({
+  mode: workoutModeSchema,
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  order: workoutListOrderSchema.default('published_at_desc_created_at_desc_id_asc'),
+});
+
 export const workoutSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1),
   description: z.string().nullable(),
   mode: workoutModeSchema,
   isPublished: z.boolean(),
+});
+
+export const workoutListResponseSchema = z.object({
+  workouts: z.array(workoutSchema),
+  pagination: z.object({
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1).max(50),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative(),
+    hasNextPage: z.boolean(),
+    hasPreviousPage: z.boolean(),
+  }),
+  ordering: z.object({
+    applied: workoutListOrderSchema,
+  }),
 });
 
 export const apiErrorCodeSchema = z.enum([
@@ -229,15 +255,11 @@ export const appContract = c.router({
   workoutsByMode: {
     method: 'GET',
     path: '/workouts',
-    query: z.object({
-      mode: workoutModeSchema,
-    }),
+    query: workoutListQuerySchema,
     responses: {
       400: apiErrorSchema,
       401: apiErrorSchema,
-      200: z.object({
-        workouts: z.array(workoutSchema),
-      }),
+      200: workoutListResponseSchema,
     },
   },
 });
@@ -250,3 +272,6 @@ export type Preferences = z.infer<typeof preferencesSchema>;
 export type NotificationDevice = z.infer<typeof notificationDeviceSchema>;
 export type WorkoutMode = z.infer<typeof workoutModeSchema>;
 export type Workout = z.infer<typeof workoutSchema>;
+export type WorkoutListOrder = z.infer<typeof workoutListOrderSchema>;
+export type WorkoutListQuery = z.infer<typeof workoutListQuerySchema>;
+export type WorkoutListResponse = z.infer<typeof workoutListResponseSchema>;

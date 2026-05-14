@@ -115,7 +115,7 @@ Depends on: Phase 1 (parallel with Phase 2)
 - [x] Add a workout mode selection step in UI: active recovery or strength metcon.
 - [x] Add workout catalog storage in DB with category tagging and active/published state.
 - [x] Add API endpoint to fetch workouts by selected mode from database.
-- [ ] Add explicit pagination and ordering contract for workout list reads.
+- [x] Add explicit pagination and ordering contract for workout list reads.
 - [x] Return a list payload suitable for web and mobile rendering.
 - [x] Add empty-state handling when no workouts exist for selected mode.
 

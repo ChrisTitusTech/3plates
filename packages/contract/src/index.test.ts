@@ -9,6 +9,8 @@ import {
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
+  workoutListQuerySchema,
+  workoutListResponseSchema,
   workoutModeSchema,
   workoutSchema,
   userSchema,
@@ -87,6 +89,68 @@ test('schema validations accept valid data', () => {
   );
 
   assert.deepEqual(
+    workoutListQuerySchema.parse({
+      mode: 'active_recovery',
+      page: '2',
+      pageSize: '10',
+      order: 'published_at_desc_created_at_desc_id_asc',
+    }),
+    {
+      mode: 'active_recovery',
+      page: 2,
+      pageSize: 10,
+      order: 'published_at_desc_created_at_desc_id_asc',
+    },
+  );
+
+  assert.deepEqual(
+    workoutListResponseSchema.parse({
+      workouts: [
+        {
+          id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+          title: 'Zone 2 Bike 30',
+          description: 'Easy pace for recovery',
+          mode: 'active_recovery',
+          isPublished: true,
+        },
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 20,
+        total: 1,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+      ordering: {
+        applied: 'published_at_desc_created_at_desc_id_asc',
+      },
+    }),
+    {
+      workouts: [
+        {
+          id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+          title: 'Zone 2 Bike 30',
+          description: 'Easy pace for recovery',
+          mode: 'active_recovery',
+          isPublished: true,
+        },
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 20,
+        total: 1,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+      ordering: {
+        applied: 'published_at_desc_created_at_desc_id_asc',
+      },
+    },
+  );
+
+  assert.deepEqual(
     authSessionSchema.parse({
       sessionToken: 'session-token-123',
       expiresAt: '2026-05-10T00:00:00.000Z',
@@ -136,6 +200,8 @@ test('schema validations reject invalid data', () => {
   assert.throws(() => preferencesSchema.parse({ theme: 'light', units: 'metric', reminderTime: '8:30' }));
   assert.throws(() => notificationDeviceSchema.parse({ platform: 'desktop', pushToken: 'token-123' }));
   assert.throws(() => workoutModeSchema.parse('hyrox'));
+  assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', page: 0 }));
+  assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', pageSize: 100 }));
   assert.throws(() =>
     workoutSchema.parse({
       id: 'not-a-uuid',

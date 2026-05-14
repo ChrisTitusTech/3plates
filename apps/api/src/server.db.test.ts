@@ -381,6 +381,17 @@ test('DB-backed workouts endpoint filters by mode and returns published entries 
           mode: string;
           isPublished: boolean;
         }>;
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+          hasNextPage: boolean;
+          hasPreviousPage: boolean;
+        };
+        ordering: {
+          applied: string;
+        };
       };
 
       assert.equal(body.workouts.length, 1);
@@ -401,6 +412,17 @@ test('DB-backed workouts endpoint filters by mode and returns published entries 
             isPublished: true,
           },
         ],
+        pagination: {
+          page: 1,
+          pageSize: 20,
+          total: 1,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+        ordering: {
+          applied: 'published_at_desc_created_at_desc_id_asc',
+        },
       });
     } finally {
       await close();

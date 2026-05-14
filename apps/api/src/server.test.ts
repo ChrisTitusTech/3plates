@@ -641,12 +641,32 @@ test('workouts endpoint returns published workouts filtered by selected mode', a
       mode: string;
       isPublished: boolean;
     }>;
+    pagination: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+    };
+    ordering: {
+      applied: string;
+    };
   };
 
   assert.equal(body.workouts.length, 1);
   assert.equal(body.workouts[0]?.title, 'Easy Row 20');
   assert.equal(body.workouts[0]?.mode, 'active_recovery');
   assert.equal(body.workouts[0]?.isPublished, true);
+  assert.deepEqual(body.pagination, {
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  });
+  assert.equal(body.ordering.applied, 'published_at_desc_created_at_desc_id_asc');
 });
 
 test('stateful user endpoints require an authenticated user session', async (t) => {

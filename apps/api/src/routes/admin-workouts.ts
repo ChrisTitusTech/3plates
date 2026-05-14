@@ -4,10 +4,11 @@ import {
   adminWorkoutUpdateSchema,
 } from '@3plates/contract';
 import type { FastifyInstance } from 'fastify';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 import { adminAuthRequiredError, serializeApiError } from '../api-error.js';
-import { env } from '../env.js';
+import { getConfiguredAdminApiKey } from '../env.js';
 import type { UserStateStore } from '../user-state-store.js';
 
 const workoutParamsSchema = z.object({
@@ -15,14 +16,20 @@ const workoutParamsSchema = z.object({
 });
 
 function resolveAdminIdentity(request: { headers: Record<string, string | string[] | undefined> }) {
-  const configuredApiKey = env.ADMIN_API_KEY;
+  const configuredApiKey = getConfiguredAdminApiKey();
   if (!configuredApiKey) {
     return null;
   }
 
   const headerValue = request.headers['x-admin-key'];
   const providedApiKey = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  if (!providedApiKey || providedApiKey !== configuredApiKey) {
+  if (!providedApiKey) {
+    return null;
+  }
+
+  const configuredDigest = createHash('sha256').update(configuredApiKey).digest();
+  const providedDigest = createHash('sha256').update(providedApiKey).digest();
+  if (!timingSafeEqual(providedDigest, configuredDigest)) {
     return null;
   }
 

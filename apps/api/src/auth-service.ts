@@ -592,6 +592,11 @@ export function createAuthService(input: {
         return null;
       }
 
+      if (session.expiresAt.getTime() <= Date.now()) {
+        await input.authRepository.revokeSessionByToken(token);
+        return null;
+      }
+
       await input.authRepository.revokeSessionByToken(token);
 
       const user = await input.userStateStore.getUserById(session.userId);

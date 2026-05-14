@@ -712,9 +712,45 @@ test('admin workouts routes require admin key authentication', async (t) => {
     await app.close();
   });
 
+  const originalAdminApiKey = env.ADMIN_API_KEY;
+  env.ADMIN_API_KEY = 'test-admin-key';
+  t.after(() => {
+    env.ADMIN_API_KEY = originalAdminApiKey;
+  });
+
   const response = await app.inject({
     method: 'POST',
     url: '/admin/workouts',
+    payload: {
+      title: 'Admin Workout',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: false,
+    },
+  });
+
+  assert.equal(response.statusCode, 401);
+  assertApiError(response.json(), 'admin_auth_required', 'Admin authentication required.');
+});
+
+test('admin workouts routes reject placeholder admin key configuration', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const originalAdminApiKey = env.ADMIN_API_KEY;
+  env.ADMIN_API_KEY = 'replace-me-admin-key';
+  t.after(() => {
+    env.ADMIN_API_KEY = originalAdminApiKey;
+  });
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/workouts',
+    headers: {
+      'x-admin-key': 'replace-me-admin-key',
+    },
     payload: {
       title: 'Admin Workout',
       description: null,
@@ -731,6 +767,12 @@ test('admin workout write path supports create, update, publish and unpublish wi
   const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();
+  });
+
+  const originalAdminApiKey = env.ADMIN_API_KEY;
+  env.ADMIN_API_KEY = 'test-admin-key';
+  t.after(() => {
+    env.ADMIN_API_KEY = originalAdminApiKey;
   });
 
   assert.ok(env.ADMIN_API_KEY, 'ADMIN_API_KEY must be set for admin route tests.');
@@ -891,6 +933,55 @@ test('auth session routes require a bearer token for refresh and link', async (t
 
   assert.equal(linkResponse.statusCode, 401);
   assertApiError(linkResponse.json(), 'invalid_auth', 'Authentication required.');
+});
+
+test('auth refresh rejects expired session tokens', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const startResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+
+  assert.equal(startResponse.statusCode, 200);
+  const startBody = startResponse.json();
+
+  const callbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+  });
+
+  assert.equal(callbackResponse.statusCode, 200);
+  const callbackBody = callbackResponse.json() as {
+    sessionToken: string;
+    expiresAt: string;
+  };
+
+  const originalDateNow = Date.now;
+  t.after(() => {
+    Date.now = originalDateNow;
+  });
+
+  const sessionExpiresAtMs = Date.parse(callbackBody.expiresAt);
+  Date.now = () => sessionExpiresAtMs + 1;
+
+  const refreshResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/refresh',
+    headers: {
+      authorization: `Bearer ${callbackBody.sessionToken}`,
+    },
+  });
+
+  assert.equal(refreshResponse.statusCode, 401);
+  assertApiError(refreshResponse.json(), 'invalid_auth', 'Authentication required.');
 });
 
 test('progress updates apply last-write-wins conflict semantics', async (t) => {

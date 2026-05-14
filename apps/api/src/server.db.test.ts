@@ -579,91 +579,97 @@ test('DB-backed login streak is idempotent when updateStreakOnLogin is called tw
 
 test('DB-backed admin workout write path enforces admin auth and publish controls user visibility', async () => {
   await withDbApp(async ({ app }) => {
+    const originalAdminApiKey = env.ADMIN_API_KEY;
+    env.ADMIN_API_KEY = 'test-admin-key';
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
-    assert.ok(env.ADMIN_API_KEY, 'ADMIN_API_KEY must be set for admin route tests.');
+    try {
+      assert.ok(env.ADMIN_API_KEY, 'ADMIN_API_KEY must be set for admin route tests.');
 
-    const unauthorizedCreateResponse = await app.inject({
-      method: 'POST',
-      url: '/admin/workouts',
-      payload: {
-        title: 'Admin DB Workout',
-        description: null,
-        mode: 'active_recovery',
-        isPublished: false,
-      },
-    });
+      const unauthorizedCreateResponse = await app.inject({
+        method: 'POST',
+        url: '/admin/workouts',
+        payload: {
+          title: 'Admin DB Workout',
+          description: null,
+          mode: 'active_recovery',
+          isPublished: false,
+        },
+      });
 
-    assert.equal(unauthorizedCreateResponse.statusCode, 401);
+      assert.equal(unauthorizedCreateResponse.statusCode, 401);
 
-    const createResponse = await app.inject({
-      method: 'POST',
-      url: '/admin/workouts',
-      headers: {
-        'x-admin-key': env.ADMIN_API_KEY,
-      },
-      payload: {
-        title: 'Admin DB Workout',
-        description: null,
-        mode: 'active_recovery',
-        isPublished: false,
-      },
-    });
+      const createResponse = await app.inject({
+        method: 'POST',
+        url: '/admin/workouts',
+        headers: {
+          'x-admin-key': env.ADMIN_API_KEY,
+        },
+        payload: {
+          title: 'Admin DB Workout',
+          description: null,
+          mode: 'active_recovery',
+          isPublished: false,
+        },
+      });
 
-    assert.equal(createResponse.statusCode, 200);
-    const created = createResponse.json() as {
-      id: string;
-      version: number;
-    };
-    assert.equal(created.version, 1);
+      assert.equal(createResponse.statusCode, 200);
+      const created = createResponse.json() as {
+        id: string;
+        version: number;
+      };
+      assert.equal(created.version, 1);
 
-    const prePublishReadResponse = await app.inject({
-      method: 'GET',
-      url: '/workouts?mode=active_recovery',
-      headers: {
-        authorization: `Bearer ${signedIn.sessionToken}`,
-      },
-    });
+      const prePublishReadResponse = await app.inject({
+        method: 'GET',
+        url: '/workouts?mode=active_recovery',
+        headers: {
+          authorization: `Bearer ${signedIn.sessionToken}`,
+        },
+      });
 
-    assert.equal(prePublishReadResponse.statusCode, 200);
-    assert.equal(prePublishReadResponse.json().workouts.length, 0);
+      assert.equal(prePublishReadResponse.statusCode, 200);
+      assert.equal(prePublishReadResponse.json().workouts.length, 0);
 
-    const publishResponse = await app.inject({
-      method: 'POST',
-      url: `/admin/workouts/${created.id}/publish`,
-      headers: {
-        'x-admin-key': env.ADMIN_API_KEY,
-      },
-      payload: {
-        expectedVersion: 1,
-      },
-    });
+      const publishResponse = await app.inject({
+        method: 'POST',
+        url: `/admin/workouts/${created.id}/publish`,
+        headers: {
+          'x-admin-key': env.ADMIN_API_KEY,
+        },
+        payload: {
+          expectedVersion: 1,
+        },
+      });
 
-    assert.equal(publishResponse.statusCode, 200);
-    assert.equal(publishResponse.json().version, 2);
+      assert.equal(publishResponse.statusCode, 200);
+      assert.equal(publishResponse.json().version, 2);
 
-    const stalePublishResponse = await app.inject({
-      method: 'POST',
-      url: `/admin/workouts/${created.id}/publish`,
-      headers: {
-        'x-admin-key': env.ADMIN_API_KEY,
-      },
-      payload: {
-        expectedVersion: 1,
-      },
-    });
+      const stalePublishResponse = await app.inject({
+        method: 'POST',
+        url: `/admin/workouts/${created.id}/publish`,
+        headers: {
+          'x-admin-key': env.ADMIN_API_KEY,
+        },
+        payload: {
+          expectedVersion: 1,
+        },
+      });
 
-    assert.equal(stalePublishResponse.statusCode, 409);
+      assert.equal(stalePublishResponse.statusCode, 409);
 
-    const postPublishReadResponse = await app.inject({
-      method: 'GET',
-      url: '/workouts?mode=active_recovery',
-      headers: {
-        authorization: `Bearer ${signedIn.sessionToken}`,
-      },
-    });
+      const postPublishReadResponse = await app.inject({
+        method: 'GET',
+        url: '/workouts?mode=active_recovery',
+        headers: {
+          authorization: `Bearer ${signedIn.sessionToken}`,
+        },
+      });
 
-    assert.equal(postPublishReadResponse.statusCode, 200);
-    assert.equal(postPublishReadResponse.json().workouts.length, 1);
-    assert.equal(postPublishReadResponse.json().workouts[0].title, 'Admin DB Workout');
+      assert.equal(postPublishReadResponse.statusCode, 200);
+      assert.equal(postPublishReadResponse.json().workouts.length, 1);
+      assert.equal(postPublishReadResponse.json().workouts[0].title, 'Admin DB Workout');
+    } finally {
+      env.ADMIN_API_KEY = originalAdminApiKey;
+    }
   });
 });

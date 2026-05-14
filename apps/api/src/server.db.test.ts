@@ -3,6 +3,10 @@ import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
+import { notificationDevices } from '@3plates/db';
+import { createDatabaseClient } from '@3plates/db';
+import { eq } from 'drizzle-orm';
+
 import { createAuthService, createDbAuthRepository } from './auth-service.js';
 import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import { env } from './env.js';
@@ -295,5 +299,117 @@ test('DB-backed progress, preferences, and devices persist through Postgres', as
     });
 
     assert.equal(unauthorizedResponse.statusCode, 401);
+  });
+});
+
+test('DB-backed progress updates use last-write-wins conflict semantics', async () => {
+  await withDbApp(async ({ app }) => {
+    const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+
+    const firstUpdateResponse = await app.inject({
+      method: 'PUT',
+      url: '/users/me/progress',
+      headers: {
+        authorization: `Bearer ${signedIn.sessionToken}`,
+      },
+      payload: {
+        streakDays: 2,
+        completedWorkouts: 12,
+        lastWorkoutAt: '2026-05-08T09:00:00.000Z',
+      },
+    });
+
+    assert.equal(firstUpdateResponse.statusCode, 200);
+
+    const secondUpdateResponse = await app.inject({
+      method: 'PUT',
+      url: '/users/me/progress',
+      headers: {
+        authorization: `Bearer ${signedIn.sessionToken}`,
+      },
+      payload: {
+        streakDays: 6,
+        completedWorkouts: 21,
+        lastWorkoutAt: '2026-05-12T07:45:00.000Z',
+      },
+    });
+
+    assert.equal(secondUpdateResponse.statusCode, 200);
+
+    const persistedProgressResponse = await app.inject({
+      method: 'GET',
+      url: '/users/me/progress',
+      headers: {
+        authorization: `Bearer ${signedIn.sessionToken}`,
+      },
+    });
+
+    assert.equal(persistedProgressResponse.statusCode, 200);
+    assert.deepEqual(persistedProgressResponse.json(), {
+      streakDays: 6,
+      completedWorkouts: 21,
+      lastWorkoutAt: '2026-05-12T07:45:00.000Z',
+    });
+  });
+});
+
+test('DB-backed notification registration dedupes by push token across users', async () => {
+  await withDbApp(async ({ app }) => {
+    const googleSession = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    const appleSession = await signIn(app, 'apple', 'http://localhost:3000/welcome');
+    const sharedPushToken = `push-token-${randomUUID()}`;
+
+    const firstRegistrationResponse = await app.inject({
+      method: 'POST',
+      url: '/notifications/devices',
+      headers: {
+        authorization: `Bearer ${googleSession.sessionToken}`,
+      },
+      payload: {
+        platform: 'web',
+        pushToken: sharedPushToken,
+      },
+    });
+
+    assert.equal(firstRegistrationResponse.statusCode, 200);
+
+    const secondRegistrationResponse = await app.inject({
+      method: 'POST',
+      url: '/notifications/devices',
+      headers: {
+        authorization: `Bearer ${appleSession.sessionToken}`,
+      },
+      payload: {
+        platform: 'android',
+        pushToken: sharedPushToken,
+      },
+    });
+
+    assert.equal(secondRegistrationResponse.statusCode, 200);
+
+    if (!env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is required for DB-backed device dedupe verification.');
+    }
+
+    const { db, close } = createDatabaseClient(env.DATABASE_URL);
+    try {
+      const rows = await db
+        .select({
+          userId: notificationDevices.userId,
+          platform: notificationDevices.platform,
+          pushToken: notificationDevices.pushToken,
+        })
+        .from(notificationDevices)
+        .where(eq(notificationDevices.pushToken, sharedPushToken));
+
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0], {
+        userId: appleSession.user.id,
+        platform: 'android',
+        pushToken: sharedPushToken,
+      });
+    } finally {
+      await close();
+    }
   });
 });

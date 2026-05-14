@@ -76,11 +76,11 @@ Definition of done:
 ## Priority 5: Test Expansion
 
 - [x] Add DB-backed integration tests for API routes.
-- [ ] Add auth session and guard tests.
-- [ ] Add conflict and dedupe behavior tests:
-	- [ ] Progress update conflict semantics
-	- [ ] Notification device dedupe
-- [ ] Keep contract and API tests passing at root.
+- [x] Add auth session and guard tests.
+- [x] Add conflict and dedupe behavior tests:
+	- [x] Progress update conflict semantics
+	- [x] Notification device dedupe
+- [x] Keep contract and API tests passing at root.
 
 Definition of done:
 
@@ -112,5 +112,5 @@ Definition of done:
 - [x] P2 Auth and account linking
 - [x] P3 Contract and error hardening
 - [x] P4 Mobile wiring
-- [ ] P5 Test expansion
+- [x] P5 Test expansion
 - [ ] P6 CI and delivery safety

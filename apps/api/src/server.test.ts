@@ -551,3 +551,155 @@ test('stateful user endpoints require an authenticated user session', async (t) 
   assert.equal(response.statusCode, 401);
   assertApiError(response.json(), 'invalid_auth', 'Authentication required.');
 });
+
+test('auth guard returns typed invalid_auth for unknown session tokens', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers: {
+      authorization: 'Bearer not-a-real-session-token',
+    },
+  });
+
+  assert.equal(response.statusCode, 401);
+  assertApiError(response.json(), 'invalid_auth', 'Authentication required.');
+});
+
+test('auth session routes require a bearer token for refresh and link', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const refreshResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/refresh',
+  });
+
+  assert.equal(refreshResponse.statusCode, 401);
+  assertApiError(refreshResponse.json(), 'invalid_auth', 'Authentication required.');
+
+  const linkResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/link',
+    payload: {
+      provider: 'apple',
+      redirectTo: 'http://localhost:3000/settings',
+    },
+  });
+
+  assert.equal(linkResponse.statusCode, 401);
+  assertApiError(linkResponse.json(), 'invalid_auth', 'Authentication required.');
+});
+
+test('progress updates apply last-write-wins conflict semantics', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const session = await signIn(app, 'google');
+
+  const firstUpdateResponse = await app.inject({
+    method: 'PUT',
+    url: '/users/me/progress',
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
+    payload: {
+      streakDays: 3,
+      completedWorkouts: 10,
+      lastWorkoutAt: '2026-05-10T08:00:00.000Z',
+    },
+  });
+
+  assert.equal(firstUpdateResponse.statusCode, 200);
+
+  const secondUpdateResponse = await app.inject({
+    method: 'PUT',
+    url: '/users/me/progress',
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
+    payload: {
+      streakDays: 8,
+      completedWorkouts: 30,
+      lastWorkoutAt: '2026-05-11T09:15:00.000Z',
+    },
+  });
+
+  assert.equal(secondUpdateResponse.statusCode, 200);
+
+  const persistedProgressResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
+  });
+
+  assert.equal(persistedProgressResponse.statusCode, 200);
+  assert.deepEqual(persistedProgressResponse.json(), {
+    streakDays: 8,
+    completedWorkouts: 30,
+    lastWorkoutAt: '2026-05-11T09:15:00.000Z',
+  });
+});
+
+test('notification registration dedupes by push token and reassigns ownership', async (t) => {
+  const { app, store } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const googleSession = await signIn(app, 'google');
+  const appleSession = await signIn(app, 'apple');
+
+  const sharedPushToken = `push-token-${randomUUID()}`;
+
+  const firstRegistration = await app.inject({
+    method: 'POST',
+    url: '/notifications/devices',
+    headers: {
+      authorization: `Bearer ${googleSession.sessionToken}`,
+    },
+    payload: {
+      platform: 'web',
+      pushToken: sharedPushToken,
+    },
+  });
+
+  assert.equal(firstRegistration.statusCode, 200);
+  assert.deepEqual(store.listDevicesForUser(googleSession.user.id), [
+    {
+      platform: 'web',
+      pushToken: sharedPushToken,
+    },
+  ]);
+
+  const secondRegistration = await app.inject({
+    method: 'POST',
+    url: '/notifications/devices',
+    headers: {
+      authorization: `Bearer ${appleSession.sessionToken}`,
+    },
+    payload: {
+      platform: 'android',
+      pushToken: sharedPushToken,
+    },
+  });
+
+  assert.equal(secondRegistration.statusCode, 200);
+  assert.deepEqual(store.listDevicesForUser(googleSession.user.id), []);
+  assert.deepEqual(store.listDevicesForUser(appleSession.user.id), [
+    {
+      platform: 'android',
+      pushToken: sharedPushToken,
+    },
+  ]);
+});

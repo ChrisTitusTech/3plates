@@ -6,6 +6,7 @@ import { createServer } from './server.js';
 import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
 import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import { createMemoryUserStateStore } from './user-state-store.js';
+import { computeStreakUpdate } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
 
 function createFakeProvider(provider: AuthProviderName, profile: OAuthIdentity): OAuthProviderAdapter {
@@ -82,6 +83,7 @@ function createMissingUserStateApp() {
     updatePreferences: async () => undefined,
     registerDevice: async () => undefined,
     listWorkouts: async () => [],
+    updateStreakOnLogin: async () => undefined,
     close: async () => undefined,
   };
 
@@ -529,7 +531,7 @@ test('stateful user endpoints persist per-user state using bearer sessions', asy
 
   assert.equal(progressGet.statusCode, 200);
   assert.deepEqual(progressGet.json(), {
-    streakDays: 0,
+    streakDays: 1,
     completedWorkouts: 0,
     lastWorkoutAt: null,
   });
@@ -812,4 +814,51 @@ test('notification registration dedupes by push token and reassigns ownership', 
       pushToken: sharedPushToken,
     },
   ]);
+});
+
+test('streak engine: first sign-in sets streak day count to 1', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const session = await signIn(app, 'google');
+
+  const progressGet = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers: { authorization: `Bearer ${session.sessionToken}` },
+  });
+
+  assert.equal(progressGet.statusCode, 200);
+  assert.equal(progressGet.json().streakDays, 1);
+});
+
+test('streak engine: computeStreakUpdate - first login initializes streak', () => {
+  const result = computeStreakUpdate({ streakDays: 0, lastStreakDate: null }, '2026-05-15');
+  assert.deepEqual(result, { streakDays: 1, lastStreakDate: '2026-05-15' });
+});
+
+test('streak engine: computeStreakUpdate - same-day login is idempotent', () => {
+  const today = '2026-05-15';
+  const first = computeStreakUpdate({ streakDays: 0, lastStreakDate: null }, today);
+  const second = computeStreakUpdate(first, today);
+  assert.deepEqual(second, { streakDays: 1, lastStreakDate: today });
+});
+
+test('streak engine: computeStreakUpdate - consecutive days increment streak', () => {
+  const day1 = '2026-05-14';
+  const day2 = '2026-05-15';
+  const after1 = computeStreakUpdate({ streakDays: 0, lastStreakDate: null }, day1);
+  const after2 = computeStreakUpdate(after1, day2);
+  assert.equal(after2.streakDays, 2);
+  assert.equal(after2.lastStreakDate, day2);
+});
+
+test('streak engine: computeStreakUpdate - missed day resets streak to 1', () => {
+  const day1 = '2026-05-12';
+  const day3 = '2026-05-14';
+  const after1 = computeStreakUpdate({ streakDays: 5, lastStreakDate: day1 }, day3);
+  assert.equal(after1.streakDays, 1);
+  assert.equal(after1.lastStreakDate, day3);
 });

@@ -99,10 +99,10 @@ Definition of done:
 
 Depends on: Phase 1
 
-- [ ] Add server-side streak update on authenticated login completion.
-- [ ] Increment streak at most once per user per local day.
-- [ ] Reset streak after missed-day boundary based on selected timezone policy.
-- [ ] Persist last streak update metadata for idempotency and replay safety.
+- [x] Add server-side streak update on authenticated login completion.
+- [x] Increment streak at most once per user per local day.
+- [x] Reset streak after missed-day boundary based on selected timezone policy.
+- [x] Persist last streak update metadata for idempotency and replay safety.
 
 Definition of done:
 

@@ -534,6 +534,8 @@ export function createAuthService(input: {
         linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
       });
 
+      await input.userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
+
       const sessionToken = buildSessionToken();
       const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
       await input.authRepository.createSession(resolved.user.id, hashToken(sessionToken), expiresAt);

@@ -15,7 +15,7 @@ import {
   users,
   workouts,
 } from '@3plates/db';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -50,6 +50,7 @@ export interface UserStateStore {
   updatePreferences(userId: string, preferences: PreferencesRecord): Promise<void>;
   registerDevice(userId: string, device: NotificationDeviceRecord): Promise<void>;
   listWorkouts(mode: WorkoutMode): Promise<WorkoutRecord[]>;
+  updateStreakOnLogin(userId: string, nowUtc: Date): Promise<void>;
   close?(): Promise<void>;
 }
 
@@ -64,6 +65,36 @@ const defaultPreferences = Object.freeze<PreferencesRecord>({
   units: 'metric',
   reminderTime: '07:00',
 });
+
+function toLocalDateString(nowUtc: Date, timezone: string | null | undefined): string {
+  const tz = timezone || 'UTC';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(nowUtc);
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(nowUtc);
+  }
+}
+
+export function computeStreakUpdate(
+  current: { streakDays: number; lastStreakDate: string | null },
+  today: string,
+): { streakDays: number; lastStreakDate: string } {
+  if (current.lastStreakDate === today) {
+    return { streakDays: current.streakDays, lastStreakDate: today };
+  }
+
+  if (current.lastStreakDate !== null) {
+    // Use noon UTC to avoid DST edge cases in day arithmetic
+    const lastMs = new Date(current.lastStreakDate + 'T12:00:00Z').getTime();
+    const todayMs = new Date(today + 'T12:00:00Z').getTime();
+    const diffDays = Math.round((todayMs - lastMs) / 86_400_000);
+    if (diffDays === 1) {
+      return { streakDays: current.streakDays + 1, lastStreakDate: today };
+    }
+  }
+
+  return { streakDays: 1, lastStreakDate: today };
+}
 
 function mapUser(row: { id: string; email: string; displayName: string | null }): UserRecord {
   return userSchema.parse({
@@ -89,11 +120,13 @@ function mapPreferences(row: {
   theme: string;
   units: string;
   reminderTime: string;
+  timezone: string | null;
 }): PreferencesRecord {
   return preferencesSchema.parse({
     theme: row.theme,
     units: row.units,
     reminderTime: row.reminderTime,
+    timezone: row.timezone,
   });
 }
 
@@ -399,6 +432,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           theme: userPreferences.theme,
           units: userPreferences.units,
           reminderTime: userPreferences.reminderTime,
+          timezone: userPreferences.timezone,
         })
         .from(userPreferences)
         .where(eq(userPreferences.userId, userId))
@@ -421,6 +455,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           theme: userPreferences.theme,
           units: userPreferences.units,
           reminderTime: userPreferences.reminderTime,
+          timezone: userPreferences.timezone,
         });
 
       return mapPreferences(createdPreferences);
@@ -436,6 +471,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           theme: payload.theme,
           units: payload.units,
           reminderTime: payload.reminderTime,
+          timezone: payload.timezone ?? null,
           updatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -444,6 +480,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             theme: payload.theme,
             units: payload.units,
             reminderTime: payload.reminderTime,
+            timezone: payload.timezone !== undefined ? payload.timezone : sql`user_preferences.timezone`,
             updatedAt: new Date(),
           },
         });
@@ -489,6 +526,52 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
       return rows.map(mapWorkout);
     },
 
+    async updateStreakOnLogin(userId, nowUtc) {
+      await db.transaction(async (transaction) => {
+        const [prefs] = await transaction
+          .select({ timezone: userPreferences.timezone })
+          .from(userPreferences)
+          .where(eq(userPreferences.userId, userId))
+          .limit(1);
+
+        const today = toLocalDateString(nowUtc, prefs?.timezone ?? null);
+
+        const [progress] = await transaction
+          .select({ streakDays: userProgress.streakDays, lastStreakDate: userProgress.lastStreakDate })
+          .from(userProgress)
+          .where(eq(userProgress.userId, userId))
+          .limit(1);
+
+        const current = {
+          streakDays: progress?.streakDays ?? 0,
+          lastStreakDate: progress?.lastStreakDate ?? null,
+        };
+
+        const updated = computeStreakUpdate(current, today);
+
+        if (updated.streakDays === current.streakDays && updated.lastStreakDate === current.lastStreakDate) {
+          return; // idempotent no-op
+        }
+
+        await transaction
+          .insert(userProgress)
+          .values({
+            userId,
+            streakDays: updated.streakDays,
+            lastStreakDate: updated.lastStreakDate,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: userProgress.userId,
+            set: {
+              streakDays: updated.streakDays,
+              lastStreakDate: updated.lastStreakDate,
+              updatedAt: new Date(),
+            },
+          });
+      });
+    },
+
     close,
   };
 }
@@ -507,6 +590,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
   const workoutsById = new Map<string, WorkoutRecord>();
   const levelsByUserId = new Map<string, number>();
+  const streakByUserId = new Map<string, { streakDays: number; lastStreakDate: string | null }>();
 
   function identityKey(provider: string, providerSubjectId: string) {
     return `${provider}:${providerSubjectId}`;
@@ -654,6 +738,16 @@ export function createMemoryUserStateStore(): UserStateStore & {
       return Array.from(devicesByToken.values())
         .filter((device) => device.userId === userId)
         .map(({ platform, pushToken }) => ({ platform, pushToken }));
+    },
+
+    async updateStreakOnLogin(userId, nowUtc) {
+      const prefs = preferencesByUserId.get(userId) ?? defaultPreferences;
+      const today = toLocalDateString(nowUtc, prefs.timezone ?? null);
+      const current = streakByUserId.get(userId) ?? { streakDays: 0, lastStreakDate: null };
+      const updated = computeStreakUpdate(current, today);
+      streakByUserId.set(userId, updated);
+      const existing = progressByUserId.get(userId) ?? defaultProgress;
+      progressByUserId.set(userId, progressSchema.parse({ ...existing, streakDays: updated.streakDays }));
     },
 
     async close() {

@@ -106,6 +106,7 @@ export const userProgress = pgTable('user_progress', {
   streakDays: integer('streak_days').notNull().default(0),
   completedWorkouts: integer('completed_workouts').notNull().default(0),
   lastWorkoutAt: timestamp('last_workout_at', { withTimezone: true }),
+  lastStreakDate: text('last_streak_date'),
   payload: jsonb('payload').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -120,6 +121,7 @@ export const userPreferences = pgTable('user_preferences', {
   theme: text('theme').notNull().default('system'),
   units: text('units').notNull().default('metric'),
   reminderTime: text('reminder_time').notNull().default('07:00'),
+  timezone: text('timezone'),
   payload: jsonb('payload').notNull().default({}),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

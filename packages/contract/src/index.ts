@@ -21,6 +21,7 @@ export const preferencesSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']),
   units: z.enum(['metric', 'imperial']),
   reminderTime: z.string().regex(/^\d{2}:\d{2}$/),
+  timezone: z.string().nullable().optional(),
 });
 
 export const notificationDeviceSchema = z.object({

@@ -293,6 +293,7 @@ test('DB-backed progress, preferences, and devices persist through Postgres', as
       theme: 'dark',
       units: 'imperial',
       reminderTime: '06:45',
+      timezone: null,
     });
 
     const deviceFirst = await app.inject({
@@ -516,5 +517,40 @@ test('DB-backed notification registration dedupes by push token across users', a
     } finally {
       await close();
     }
+  });
+});
+
+test('DB-backed login streak is set to 1 on first sign-in and persists to Postgres', async () => {
+  await withDbApp(async ({ app }) => {
+    const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+
+    const progressGet = await app.inject({
+      method: 'GET',
+      url: '/users/me/progress',
+      headers: { authorization: `Bearer ${signedIn.sessionToken}` },
+    });
+
+    assert.equal(progressGet.statusCode, 200);
+    assert.equal(progressGet.json().streakDays, 1);
+  });
+});
+
+test('DB-backed login streak is idempotent when updateStreakOnLogin is called twice on the same day', async () => {
+  await withDbApp(async ({ app, store }) => {
+    const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    // Use a past date safely distant from today to avoid consecutive-day false positives
+    const sameDay = new Date('2020-01-15T12:00:00Z');
+
+    await store.updateStreakOnLogin(signedIn.user.id, sameDay);
+    await store.updateStreakOnLogin(signedIn.user.id, sameDay);
+
+    const progressGet = await app.inject({
+      method: 'GET',
+      url: '/users/me/progress',
+      headers: { authorization: `Bearer ${signedIn.sessionToken}` },
+    });
+
+    assert.equal(progressGet.statusCode, 200);
+    assert.equal(progressGet.json().streakDays, 1);
   });
 });

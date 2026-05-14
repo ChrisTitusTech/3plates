@@ -43,6 +43,13 @@
       "when": 1778606000000,
       "tag": "0005_auth_level_bootstrap",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778730829020,
+      "tag": "0006_streak_engine",
+      "breakpoints": true
     }
   ]
 }

@@ -88,10 +88,10 @@ Definition of done:
 
 ## Priority 6: CI and Delivery Safety
 
-- [ ] Add CI workflow to run on push and pull request.
-- [ ] Run install, test, and typecheck in CI.
-- [ ] Add migration checks when DB migrations are introduced.
-- [ ] Fail fast on contract drift or type errors.
+- [x] Add CI workflow to run on push and pull request.
+- [x] Run install, test, and typecheck in CI.
+- [x] Add migration checks when DB migrations are introduced.
+- [x] Fail fast on contract drift or type errors.
 
 Definition of done:
 
@@ -113,4 +113,4 @@ Definition of done:
 - [x] P3 Contract and error hardening
 - [x] P4 Mobile wiring
 - [x] P5 Test expansion
-- [ ] P6 CI and delivery safety
+- [x] P6 CI and delivery safety

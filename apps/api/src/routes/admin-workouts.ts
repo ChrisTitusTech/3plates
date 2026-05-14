@@ -4,7 +4,7 @@ import {
   adminWorkoutUpdateSchema,
 } from '@3plates/contract';
 import type { FastifyInstance } from 'fastify';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 import { adminAuthRequiredError, serializeApiError } from '../api-error.js';
@@ -27,9 +27,13 @@ function resolveAdminIdentity(request: { headers: Record<string, string | string
     return null;
   }
 
-  const configuredDigest = createHash('sha256').update(configuredApiKey).digest();
-  const providedDigest = createHash('sha256').update(providedApiKey).digest();
-  if (!timingSafeEqual(providedDigest, configuredDigest)) {
+  const configuredBytes = Buffer.from(configuredApiKey, 'utf8');
+  const providedBytes = Buffer.from(providedApiKey, 'utf8');
+  if (providedBytes.length !== configuredBytes.length) {
+    return null;
+  }
+
+  if (!timingSafeEqual(providedBytes, configuredBytes)) {
     return null;
   }
 

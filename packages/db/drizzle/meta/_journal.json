@@ -6,28 +6,28 @@
       "idx": 0,
       "version": "7",
       "when": 1778468813253,
-      "tag": "0000_amazing_doctor_doom",
+      "tag": "0000_initial_schema",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
       "when": 1778469300000,
-      "tag": "0001_bootstrap_removed",
+      "tag": "0001_pgcrypto_extension",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
       "when": 1778469779934,
-      "tag": "0002_absent_vision",
+      "tag": "0002_auth_sessions",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
       "when": 1778472310360,
-      "tag": "0003_careful_makkari",
+      "tag": "0003_mobile_auth_exchanges",
       "breakpoints": true
     },
     {
@@ -35,6 +35,13 @@
       "version": "7",
       "when": 1778600000000,
       "tag": "0004_workout_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778606000000,
+      "tag": "0005_auth_level_bootstrap",
       "breakpoints": true
     }
   ]

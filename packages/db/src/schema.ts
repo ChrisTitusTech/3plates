@@ -86,6 +86,8 @@ export const mobileAuthExchanges = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     userEmail: text('user_email'),
     userDisplayName: text('user_display_name'),
+    isNewUser: boolean('is_new_user').notNull().default(false),
+    effectiveLevel: integer('effective_level').notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     exchangeExpiresAt: timestamp('exchange_expires_at', { withTimezone: true }).notNull(),
   },
@@ -100,6 +102,7 @@ export const userProgress = pgTable('user_progress', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' })
     .unique(),
+  level: integer('level').notNull().default(1),
   streakDays: integer('streak_days').notNull().default(0),
   completedWorkouts: integer('completed_workouts').notNull().default(0),
   lastWorkoutAt: timestamp('last_workout_at', { withTimezone: true }),

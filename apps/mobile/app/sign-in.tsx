@@ -22,6 +22,7 @@ import {
   refreshSessionAndPersist,
   setSessionToken,
   startAuth,
+  startAuthLink,
 } from '../src/lib/api';
 
 function formatError(error: unknown) {
@@ -286,6 +287,45 @@ export default function SignInScreen() {
           </Pressable>
         </View>
       </View>
+
+      {currentUser ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Link another account</Text>
+          <Text style={styles.body}>Connect a second provider to your existing identity.</Text>
+          <View style={styles.row}>
+            {(['google', 'apple'] as AuthProvider[]).map((candidate) => (
+              <Pressable
+                key={candidate}
+                style={[styles.choice, provider === candidate ? styles.choiceActive : null]}
+                onPress={() => setProvider(candidate)}
+                disabled={busy}
+              >
+                <Text
+                  style={[
+                    styles.choiceLabel,
+                    provider === candidate ? styles.choiceLabelActive : null,
+                  ]}
+                >
+                  {candidate}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            style={styles.buttonSecondary}
+            disabled={busy}
+            onPress={() => {
+              void runBusyAction(async () => {
+                const started = await startAuthLink(provider, mobileRedirectUrl);
+                setMessage('Link OAuth started. Complete sign-in in the browser and return to the app.');
+                await Linking.openURL(started.next);
+              });
+            }}
+          >
+            <Text style={styles.buttonSecondaryText}>Link {provider} account</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {loading ? <Text style={styles.meta}>Loading session state...</Text> : null}
       {activeToken ? <Text style={styles.meta}>Token saved: yes</Text> : <Text style={styles.meta}>Token saved: no</Text>}

@@ -81,15 +81,15 @@ Definition of done:
 Depends on: Phase 0
 
 - [x] Keep backend login/session OAuth flow foundation used by mobile via [apps/api/src/auth-service.ts](../apps/api/src/auth-service.ts).
-- [ ] Implement Expo web UI flow on top of the existing backend OAuth/session model.
+- [x] Implement Expo web UI flow on top of the existing backend OAuth/session model.
 - [x] Keep backend account linking foundation so one person can keep one cross-platform identity.
-- [ ] Add web account-linking UX parity with existing linked-identity backend behavior.
-- [ ] On first successful login, assign user level 1 server-side and persist it.
-- [ ] Expose first-login signal in auth/session response so clients can drive onboarding UI.
+- [x] Add web account-linking UX parity with existing linked-identity backend behavior.
+- [x] On first successful login, assign user level 1 server-side and persist it.
+- [x] Expose first-login signal in auth/session response so clients can drive onboarding UI.
 - [x] Keep backend refresh and session-expiry semantics aligned for shared clients.
-- [ ] Implement web refresh-token and session-expiry handling parity in client UX.
-- [ ] Implement explicit sign-out behavior parity in web UX.
-- [ ] Ensure returning logins preserve level and never re-run bootstrap.
+- [x] Implement web refresh-token and session-expiry handling parity in client UX.
+- [x] Implement explicit sign-out behavior parity in web UX.
+- [x] Ensure returning logins preserve level and never re-run bootstrap.
 
 Definition of done:
 

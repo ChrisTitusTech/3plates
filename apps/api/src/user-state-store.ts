@@ -33,11 +33,17 @@ export type PreferencesRecord = z.infer<typeof preferencesSchema>;
 export type NotificationDeviceRecord = z.infer<typeof notificationDeviceSchema>;
 export type WorkoutMode = z.infer<typeof workoutModeSchema>;
 export type WorkoutRecord = z.infer<typeof workoutSchema>;
+export type AuthBootstrapResult = {
+  user: UserRecord;
+  isNewUser: boolean;
+  effectiveLevel: number;
+};
 
 export interface UserStateStore {
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
   getUserById(userId: string): Promise<UserRecord | null>;
-  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null }): Promise<UserRecord>;
+  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null }): Promise<AuthBootstrapResult>;
+  getUserEffectiveLevel(userId: string): Promise<number>;
   getProgress(userId: string): Promise<ProgressRecord>;
   updateProgress(userId: string, progress: ProgressRecord): Promise<void>;
   getPreferences(userId: string): Promise<PreferencesRecord>;
@@ -110,6 +116,32 @@ function mapWorkout(row: {
 export function createDbUserStateStore(connectionString: string): UserStateStore {
   const { db, close } = createDatabaseClient(connectionString);
 
+  const getOrCreateUserLevel = async (executor: typeof db, userId: string): Promise<number> => {
+    const [existingProgress] = await executor
+      .select({
+        level: userProgress.level,
+      })
+      .from(userProgress)
+      .where(eq(userProgress.userId, userId))
+      .limit(1);
+
+    if (existingProgress) {
+      return existingProgress.level;
+    }
+
+    const [createdProgress] = await executor
+      .insert(userProgress)
+      .values({
+        userId,
+        level: 1,
+      })
+      .returning({
+        level: userProgress.level,
+      });
+
+    return createdProgress.level;
+  };
+
   const getUserById = async (userId: string): Promise<UserRecord | null> => {
     const [user] = await db
       .select({
@@ -149,7 +181,13 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           if (!user) {
             throw missingUserStateError('Identity references a missing user.');
           }
-          return user;
+
+          const effectiveLevel = await getOrCreateUserLevel(transaction, user.id);
+          return {
+            user,
+            isNewUser: false,
+            effectiveLevel,
+          };
         }
 
         if (identity.linkedUserId) {
@@ -182,7 +220,12 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             throw missingUserStateError('Linked account is missing.');
           }
 
-          return linkedUser;
+          const effectiveLevel = await getOrCreateUserLevel(transaction, linkedUser.id);
+          return {
+            user: linkedUser,
+            isNewUser: false,
+            effectiveLevel,
+          };
         }
 
         if (identity.email && identity.emailVerified) {
@@ -204,7 +247,13 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
               email: identity.email,
             });
 
-            return mapUser(existingUserByEmail);
+            const user = mapUser(existingUserByEmail);
+            const effectiveLevel = await getOrCreateUserLevel(transaction, user.id);
+            return {
+              user,
+              isNewUser: false,
+              effectiveLevel,
+            };
           }
         }
 
@@ -227,8 +276,18 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           email: identity.email,
         });
 
-        return mapUser(createdUser);
+        const effectiveLevel = await getOrCreateUserLevel(transaction, createdUser.id);
+
+        return {
+          user: mapUser(createdUser),
+          isNewUser: true,
+          effectiveLevel,
+        };
       });
+    },
+
+    async getUserEffectiveLevel(userId) {
+      return getOrCreateUserLevel(db, userId);
     },
 
     async getOrCreateUser(input) {
@@ -447,6 +506,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const preferencesByUserId = new Map<string, PreferencesRecord>();
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
   const workoutsById = new Map<string, WorkoutRecord>();
+  const levelsByUserId = new Map<string, number>();
 
   function identityKey(provider: string, providerSubjectId: string) {
     return `${provider}:${providerSubjectId}`;
@@ -491,7 +551,13 @@ export function createMemoryUserStateStore(): UserStateStore & {
           throw missingUserStateError('Identity references a missing user.');
         }
 
-        return existingUser;
+        const effectiveLevel = levelsByUserId.get(existingUser.id) ?? 1;
+        levelsByUserId.set(existingUser.id, effectiveLevel);
+        return {
+          user: existingUser,
+          isNewUser: false,
+          effectiveLevel,
+        };
       }
 
       if (input.linkedUserId) {
@@ -501,14 +567,26 @@ export function createMemoryUserStateStore(): UserStateStore & {
         }
 
         identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), linkedUser.id);
-        return linkedUser;
+        const effectiveLevel = levelsByUserId.get(linkedUser.id) ?? 1;
+        levelsByUserId.set(linkedUser.id, effectiveLevel);
+        return {
+          user: linkedUser,
+          isNewUser: false,
+          effectiveLevel,
+        };
       }
 
       if (input.email && input.emailVerified) {
         const existingUserByEmail = usersByEmail.get(input.email);
         if (existingUserByEmail) {
           identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), existingUserByEmail.id);
-          return existingUserByEmail;
+          const effectiveLevel = levelsByUserId.get(existingUserByEmail.id) ?? 1;
+          levelsByUserId.set(existingUserByEmail.id, effectiveLevel);
+          return {
+            user: existingUserByEmail,
+            isNewUser: false,
+            effectiveLevel,
+          };
         }
       }
 
@@ -522,7 +600,18 @@ export function createMemoryUserStateStore(): UserStateStore & {
       usersByEmail.set(createdEmail, createdUser);
       usersById.set(createdUser.id, createdUser);
       identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), createdUser.id);
-      return createdUser;
+      levelsByUserId.set(createdUser.id, 1);
+      return {
+        user: createdUser,
+        isNewUser: true,
+        effectiveLevel: 1,
+      };
+    },
+
+    async getUserEffectiveLevel(userId) {
+      const effectiveLevel = levelsByUserId.get(userId) ?? 1;
+      levelsByUserId.set(userId, effectiveLevel);
+      return effectiveLevel;
     },
 
     async getProgress(userId) {

@@ -36,6 +36,8 @@ export type MobileAuthExchangeRecord = {
   sessionToken: string;
   sessionExpiresAt: Date;
   user: UserRecord;
+  isNewUser: boolean;
+  effectiveLevel: number;
   exchangeExpiresAt: Date;
 };
 
@@ -63,14 +65,35 @@ export type AuthService = {
     code: string;
     state: string;
     callbackUrl: string;
-  }): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord; redirectTo: string | null }>;
+  }): Promise<{
+    sessionToken: string;
+    expiresAt: string;
+    user: UserRecord;
+    isNewUser: boolean;
+    effectiveLevel: number;
+    redirectTo: string | null;
+  }>;
   issueMobileAuthExchangeCode(input: {
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
+    isNewUser: boolean;
+    effectiveLevel: number;
   }): Promise<{ code: string; exchangeExpiresAt: string }>;
-  redeemMobileAuthExchangeCode(code: string): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord } | null>;
-  refreshSession(token: string): Promise<{ sessionToken: string; expiresAt: string; user: UserRecord } | null>;
+  redeemMobileAuthExchangeCode(code: string): Promise<{
+    sessionToken: string;
+    expiresAt: string;
+    user: UserRecord;
+    isNewUser: boolean;
+    effectiveLevel: number;
+  } | null>;
+  refreshSession(token: string): Promise<{
+    sessionToken: string;
+    expiresAt: string;
+    user: UserRecord;
+    isNewUser: boolean;
+    effectiveLevel: number;
+  } | null>;
   resolveRequestUser(token: string): Promise<UserRecord | null>;
 };
 
@@ -192,6 +215,8 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         userId: input.user.id,
         userEmail: input.user.email,
         userDisplayName: input.user.displayName,
+        isNewUser: input.isNewUser,
+        effectiveLevel: input.effectiveLevel,
         exchangeExpiresAt: input.exchangeExpiresAt,
       });
     },
@@ -208,6 +233,8 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
           userId: mobileAuthExchanges.userId,
           userEmail: mobileAuthExchanges.userEmail,
           userDisplayName: mobileAuthExchanges.userDisplayName,
+          isNewUser: mobileAuthExchanges.isNewUser,
+          effectiveLevel: mobileAuthExchanges.effectiveLevel,
           exchangeExpiresAt: mobileAuthExchanges.exchangeExpiresAt,
         });
 
@@ -219,6 +246,8 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         code: exchange.code,
         sessionToken: exchange.sessionToken,
         sessionExpiresAt: exchange.sessionExpiresAt,
+        isNewUser: exchange.isNewUser,
+        effectiveLevel: exchange.effectiveLevel,
         exchangeExpiresAt: exchange.exchangeExpiresAt,
         user: {
           id: exchange.userId,
@@ -500,24 +529,26 @@ export function createAuthService(input: {
         codeVerifier: transaction.codeVerifier,
       });
 
-      const user = await input.userStateStore.resolveOAuthIdentity({
+      const resolved = await input.userStateStore.resolveOAuthIdentity({
         ...identity,
         linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
       });
 
       const sessionToken = buildSessionToken();
       const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
-      await input.authRepository.createSession(user.id, hashToken(sessionToken), expiresAt);
+      await input.authRepository.createSession(resolved.user.id, hashToken(sessionToken), expiresAt);
 
       return {
         sessionToken,
         expiresAt: expiresAt.toISOString(),
-        user,
+        user: resolved.user,
+        isNewUser: resolved.isNewUser,
+        effectiveLevel: resolved.effectiveLevel,
         redirectTo: transaction.redirectTo,
       };
     },
 
-    async issueMobileAuthExchangeCode({ sessionToken, expiresAt, user }) {
+    async issueMobileAuthExchangeCode({ sessionToken, expiresAt, user, isNewUser, effectiveLevel }) {
       const exchangeCode = randomUUID();
       const exchangeExpiresAt = new Date(Date.now() + mobileExchangeTtlMilliseconds);
       const sessionExpiresAt = new Date(expiresAt);
@@ -527,6 +558,8 @@ export function createAuthService(input: {
         sessionToken,
         sessionExpiresAt,
         user,
+        isNewUser,
+        effectiveLevel,
         exchangeExpiresAt,
       });
 
@@ -546,6 +579,8 @@ export function createAuthService(input: {
         sessionToken: exchange.sessionToken,
         expiresAt: exchange.sessionExpiresAt.toISOString(),
         user: exchange.user,
+        isNewUser: exchange.isNewUser,
+        effectiveLevel: exchange.effectiveLevel,
       };
     },
 
@@ -561,6 +596,7 @@ export function createAuthService(input: {
       if (!user) {
         throw missingUserStateError('Session belongs to a deleted user.');
       }
+      const effectiveLevel = await input.userStateStore.getUserEffectiveLevel(user.id);
 
       const sessionToken = buildSessionToken();
       const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
@@ -570,6 +606,8 @@ export function createAuthService(input: {
         sessionToken,
         expiresAt: expiresAt.toISOString(),
         user,
+        isNewUser: false,
+        effectiveLevel,
       };
     },
 

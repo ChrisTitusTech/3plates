@@ -34,10 +34,16 @@ function getAuthorizationToken(request: FastifyRequest) {
   return authorizationHeader.slice('Bearer '.length).trim() || null;
 }
 
-function isNativeRedirectTarget(redirectTo: string) {
+function requiresExchangeHandoff(redirectTo: string) {
   try {
     const redirectUrl = new URL(redirectTo);
-    return redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:';
+    // Native app schemes always need exchange handoff
+    if (redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:') {
+      return true;
+    }
+    // Web app callback paths also need exchange handoff so the browser
+    // is redirected back to the Expo web app with the exchange code
+    return redirectUrl.pathname === '/auth/callback';
   } catch {
     return false;
   }
@@ -119,12 +125,14 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       callbackUrl: getCallbackUrl(request),
     });
 
-    if (completedAuth.redirectTo && isNativeRedirectTarget(completedAuth.redirectTo)) {
+    if (completedAuth.redirectTo && requiresExchangeHandoff(completedAuth.redirectTo)) {
       const redirectUrl = new URL(completedAuth.redirectTo);
       const exchange = await authService.issueMobileAuthExchangeCode({
         sessionToken: completedAuth.sessionToken,
         expiresAt: completedAuth.expiresAt,
         user: completedAuth.user,
+        isNewUser: completedAuth.isNewUser,
+        effectiveLevel: completedAuth.effectiveLevel,
       });
 
       redirectUrl.searchParams.set('provider', providerResult.data);
@@ -144,6 +152,8 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       sessionToken: completedAuth.sessionToken,
       expiresAt: completedAuth.expiresAt,
       user: completedAuth.user,
+      isNewUser: completedAuth.isNewUser,
+      effectiveLevel: completedAuth.effectiveLevel,
     };
   });
 
@@ -170,6 +180,8 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       sessionToken: refreshedSession.sessionToken,
       expiresAt: refreshedSession.expiresAt,
       user: refreshedSession.user,
+      isNewUser: refreshedSession.isNewUser,
+      effectiveLevel: refreshedSession.effectiveLevel,
     };
   });
 
@@ -196,6 +208,8 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       sessionToken: exchangeRecord.sessionToken,
       expiresAt: exchangeRecord.expiresAt,
       user: exchangeRecord.user,
+      isNewUser: exchangeRecord.isNewUser,
+      effectiveLevel: exchangeRecord.effectiveLevel,
     };
   });
 }

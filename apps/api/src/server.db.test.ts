@@ -3,9 +3,8 @@ import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { notificationDevices, workouts } from '@3plates/db';
-import { createDatabaseClient } from '@3plates/db';
-import { eq } from 'drizzle-orm';
+import { createDatabaseClient, notificationDevices, users, workouts } from '@3plates/db';
+import { eq, sql } from 'drizzle-orm';
 
 import { createAuthService, createDbAuthRepository } from './auth-service.js';
 import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
@@ -70,6 +69,13 @@ function createDbApp() {
 async function withDbApp<T>(run: (context: ReturnType<typeof createDbApp>) => Promise<T>) {
   execSync('pnpm db:setup', { cwd: repoRootDirectory, stdio: 'inherit' });
 
+  const { db: cleanupDb, close: cleanupClose } = createDatabaseClient(process.env['DATABASE_URL'] ?? '');
+  try {
+    await cleanupDb.execute(sql`TRUNCATE workouts, users CASCADE`);
+  } finally {
+    await cleanupClose();
+  }
+
   const context = createDbApp();
 
   try {
@@ -104,6 +110,8 @@ async function signIn(app: ReturnType<typeof createDbApp>['app'], provider: Auth
     sessionToken: string;
     expiresAt: string;
     user: { id: string; email: string | null; displayName: string | null };
+    isNewUser: boolean;
+    effectiveLevel: number;
     redirectTo: string | null;
   };
 }
@@ -111,6 +119,8 @@ async function signIn(app: ReturnType<typeof createDbApp>['app'], provider: Auth
 test('DB-backed auth sessions persist through Postgres', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    assert.equal(signedIn.isNewUser, true);
+    assert.equal(signedIn.effectiveLevel, 1);
 
     const meResponse = await app.inject({
       method: 'GET',
@@ -132,9 +142,16 @@ test('DB-backed auth sessions persist through Postgres', async () => {
     });
 
     assert.equal(refreshResponse.statusCode, 200);
-    const refreshed = refreshResponse.json() as { sessionToken: string; user: { id: string } };
+    const refreshed = refreshResponse.json() as {
+      sessionToken: string;
+      user: { id: string };
+      isNewUser: boolean;
+      effectiveLevel: number;
+    };
     assert.notEqual(refreshed.sessionToken, signedIn.sessionToken);
     assert.equal(refreshed.user.id, signedIn.user.id);
+    assert.equal(refreshed.isNewUser, false);
+    assert.equal(refreshed.effectiveLevel, 1);
 
     const oldTokenResponse = await app.inject({
       method: 'GET',
@@ -156,6 +173,19 @@ test('DB-backed auth sessions persist through Postgres', async () => {
 
     assert.equal(refreshedTokenResponse.statusCode, 200);
     assert.equal(refreshedTokenResponse.json().id, signedIn.user.id);
+  });
+});
+
+test('DB-backed returning sign-in keeps level and is not new user', async () => {
+  await withDbApp(async ({ app }) => {
+    const first = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    assert.equal(first.isNewUser, true);
+    assert.equal(first.effectiveLevel, 1);
+
+    const second = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    assert.equal(second.isNewUser, false);
+    assert.equal(second.effectiveLevel, 1);
+    assert.equal(second.user.id, first.user.id);
   });
 });
 

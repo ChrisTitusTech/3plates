@@ -70,7 +70,12 @@ function createMissingUserStateApp() {
   const store: UserStateStore = {
     getOrCreateUser: async () => sessionUser,
     getUserById: async () => null,
-    resolveOAuthIdentity: async () => sessionUser,
+    resolveOAuthIdentity: async () => ({
+      user: sessionUser,
+      isNewUser: false,
+      effectiveLevel: 1,
+    }),
+    getUserEffectiveLevel: async () => 1,
     getProgress: async () => ({ streakDays: 0, completedWorkouts: 0, lastWorkoutAt: null }),
     updateProgress: async () => undefined,
     getPreferences: async () => ({ theme: 'system', units: 'metric', reminderTime: '07:00' }),
@@ -199,6 +204,8 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
   assert.equal(callbackBody.ok, true);
   assert.equal(callbackBody.provider, 'google');
   assert.equal(callbackBody.user.email, callbackBody.user.email?.toLowerCase());
+  assert.equal(callbackBody.isNewUser, true);
+  assert.equal(callbackBody.effectiveLevel, 1);
 
   const meResponse = await app.inject({
     method: 'GET',
@@ -224,6 +231,8 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
   assert.equal(refreshBody.ok, true);
   assert.equal(refreshBody.user.id, callbackBody.user.id);
   assert.notEqual(refreshBody.sessionToken, callbackBody.sessionToken);
+  assert.equal(refreshBody.isNewUser, false);
+  assert.equal(refreshBody.effectiveLevel, 1);
 
   const oldTokenResponse = await app.inject({
     method: 'GET',
@@ -442,6 +451,8 @@ test('auth link keeps the existing account and links a second identity', async (
   assert.equal(linkCallbackResponse.statusCode, 200);
   const linkCallbackBody = linkCallbackResponse.json();
   assert.equal(linkCallbackBody.user.id, googleSession.user.id);
+  assert.equal(linkCallbackBody.isNewUser, false);
+  assert.equal(linkCallbackBody.effectiveLevel, 1);
 
   const linkedUserResponse = await app.inject({
     method: 'GET',
@@ -453,6 +464,51 @@ test('auth link keeps the existing account and links a second identity', async (
 
   assert.equal(linkedUserResponse.statusCode, 200);
   assert.equal(linkedUserResponse.json().id, googleSession.user.id);
+});
+
+test('returning sign-in is not marked as a new user and keeps level', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const startFirst = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+  assert.equal(startFirst.statusCode, 200);
+  const firstState = startFirst.json().state as string;
+
+  const firstCallback = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(firstState)}`,
+  });
+  assert.equal(firstCallback.statusCode, 200);
+  assert.equal(firstCallback.json().isNewUser, true);
+  assert.equal(firstCallback.json().effectiveLevel, 1);
+
+  const startSecond = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'google',
+      redirectTo: 'http://localhost:3000/welcome',
+    },
+  });
+  assert.equal(startSecond.statusCode, 200);
+  const secondState = startSecond.json().state as string;
+
+  const secondCallback = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(secondState)}`,
+  });
+  assert.equal(secondCallback.statusCode, 200);
+  assert.equal(secondCallback.json().isNewUser, false);
+  assert.equal(secondCallback.json().effectiveLevel, 1);
 });
 
 test('stateful user endpoints persist per-user state using bearer sessions', async (t) => {

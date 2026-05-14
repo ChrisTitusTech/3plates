@@ -90,6 +90,8 @@ test('schema validations accept valid data', () => {
     authSessionSchema.parse({
       sessionToken: 'session-token-123',
       expiresAt: '2026-05-10T00:00:00.000Z',
+      isNewUser: true,
+      effectiveLevel: 1,
       user: {
         id: 'user_1',
         email: 'user@example.com',
@@ -99,6 +101,8 @@ test('schema validations accept valid data', () => {
     {
       sessionToken: 'session-token-123',
       expiresAt: '2026-05-10T00:00:00.000Z',
+      isNewUser: true,
+      effectiveLevel: 1,
       user: {
         id: 'user_1',
         email: 'user@example.com',

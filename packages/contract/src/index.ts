@@ -58,6 +58,8 @@ export const authSessionSchema = z.object({
   sessionToken: z.string().min(1),
   expiresAt: z.string().datetime(),
   user: userSchema,
+  isNewUser: z.boolean(),
+  effectiveLevel: z.number().int().min(1),
 });
 
 export const appContract = c.router({

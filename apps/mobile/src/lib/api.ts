@@ -27,6 +27,7 @@ type StorageLike = {
 type ContractClientLike = Pick<
   typeof apiClient,
   'authStart'
+  | 'authLinkStart'
   | 'authCallback'
   | 'authExchange'
   | 'authRefresh'
@@ -323,6 +324,27 @@ export async function clearSession() {
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
   const response = await contractClient.authStart({
+    body: {
+      provider,
+      ...(redirectTo ? { redirectTo } : {}),
+    },
+  });
+
+  if (response.status !== 200) {
+    throw toApiRequestError(response.status, response.body);
+  }
+
+  return response.body;
+}
+
+export async function startAuthLink(provider: AuthProvider, redirectTo?: string) {
+  const token = await getSessionToken();
+  if (!token) {
+    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
+  }
+
+  const response = await contractClient.authLinkStart({
+    extraHeaders: buildAuthHeaders(token),
     body: {
       provider,
       ...(redirectTo ? { redirectTo } : {}),

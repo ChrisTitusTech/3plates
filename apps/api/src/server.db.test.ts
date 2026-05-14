@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { notificationDevices } from '@3plates/db';
+import { notificationDevices, workouts } from '@3plates/db';
 import { createDatabaseClient } from '@3plates/db';
 import { eq } from 'drizzle-orm';
 
@@ -299,6 +299,81 @@ test('DB-backed progress, preferences, and devices persist through Postgres', as
     });
 
     assert.equal(unauthorizedResponse.statusCode, 401);
+  });
+});
+
+test('DB-backed workouts endpoint filters by mode and returns published entries only', async () => {
+  await withDbApp(async ({ app }) => {
+    const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    const databaseUrl = env.DATABASE_URL ?? '';
+    const { db, close } = createDatabaseClient(databaseUrl);
+
+    try {
+      await db.insert(workouts).values([
+        {
+          title: 'Walk 45',
+          description: 'Low intensity recovery walk',
+          mode: 'active_recovery',
+          isPublished: true,
+          publishedAt: new Date('2026-05-13T10:00:00.000Z'),
+        },
+        {
+          title: 'Barbell Metcon',
+          description: 'Strength metcon complex',
+          mode: 'strength_metcon',
+          isPublished: true,
+          publishedAt: new Date('2026-05-13T11:00:00.000Z'),
+        },
+        {
+          title: 'Hidden Recovery Draft',
+          description: null,
+          mode: 'active_recovery',
+          isPublished: false,
+          publishedAt: null,
+        },
+      ]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/workouts?mode=active_recovery',
+        headers: {
+          authorization: `Bearer ${signedIn.sessionToken}`,
+        },
+      });
+
+      assert.equal(response.statusCode, 200);
+      const body = response.json() as {
+        workouts: Array<{
+          id: string;
+          title: string;
+          description: string | null;
+          mode: string;
+          isPublished: boolean;
+        }>;
+      };
+
+      assert.equal(body.workouts.length, 1);
+      assert.deepEqual(body.workouts[0], {
+        id: body.workouts[0]?.id,
+        title: 'Walk 45',
+        description: 'Low intensity recovery walk',
+        mode: 'active_recovery',
+        isPublished: true,
+      });
+      assert.deepEqual(body, {
+        workouts: [
+          {
+            id: body.workouts[0]?.id,
+            title: 'Walk 45',
+            description: 'Low intensity recovery walk',
+            mode: 'active_recovery',
+            isPublished: true,
+          },
+        ],
+      });
+    } finally {
+      await close();
+    }
   });
 });
 

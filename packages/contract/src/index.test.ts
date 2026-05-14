@@ -9,6 +9,8 @@ import {
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
+  workoutModeSchema,
+  workoutSchema,
   userSchema,
 } from './index.js';
 
@@ -65,6 +67,25 @@ test('schema validations accept valid data', () => {
     },
   );
 
+  assert.equal(workoutModeSchema.parse('active_recovery'), 'active_recovery');
+
+  assert.deepEqual(
+    workoutSchema.parse({
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      title: 'Zone 2 Bike 30',
+      description: 'Easy pace for recovery',
+      mode: 'active_recovery',
+      isPublished: true,
+    }),
+    {
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      title: 'Zone 2 Bike 30',
+      description: 'Easy pace for recovery',
+      mode: 'active_recovery',
+      isPublished: true,
+    },
+  );
+
   assert.deepEqual(
     authSessionSchema.parse({
       sessionToken: 'session-token-123',
@@ -110,6 +131,16 @@ test('schema validations reject invalid data', () => {
   assert.throws(() => progressSchema.parse({ streakDays: -1, completedWorkouts: 1, lastWorkoutAt: null }));
   assert.throws(() => preferencesSchema.parse({ theme: 'light', units: 'metric', reminderTime: '8:30' }));
   assert.throws(() => notificationDeviceSchema.parse({ platform: 'desktop', pushToken: 'token-123' }));
+  assert.throws(() => workoutModeSchema.parse('hyrox'));
+  assert.throws(() =>
+    workoutSchema.parse({
+      id: 'not-a-uuid',
+      title: 'Bad workout',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: true,
+    }),
+  );
 });
 
 test('contract routes expose expected endpoint paths', () => {
@@ -124,4 +155,5 @@ test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.preferences.path, '/users/me/preferences');
   assert.equal(appContract.updatePreferences.path, '/users/me/preferences');
   assert.equal(appContract.registerDevice.path, '/notifications/devices');
+  assert.equal(appContract.workoutsByMode.path, '/workouts');
 });

@@ -10,6 +10,7 @@ import {
   completeAuthCallback,
   fetchMe,
   fetchProgress,
+  fetchWorkoutsByMode,
   flushPendingMutations,
   getPendingMutationCount,
   getSessionToken,
@@ -63,6 +64,7 @@ function createClientOverrides(overrides: Record<string, unknown>) {
     preferences: async () => ({ status: 500, body: null }),
     updatePreferences: async () => ({ status: 500, body: null }),
     registerDevice: async () => ({ status: 500, body: null }),
+    workoutsByMode: async () => ({ status: 500, body: null }),
     ...overrides,
   };
 }
@@ -308,4 +310,53 @@ test('queued notification device registration flushes when online again', async 
 
   await clearSession();
   assert.equal(await getSessionToken(), null);
+});
+
+test('workout mode read falls back to cached value on network failure', async (t) => {
+  const storage = createMemoryStorage();
+  let callCount = 0;
+  const workouts = [
+    {
+      id: '1f7c40d2-4f31-4fd3-91c5-f8ef9ed6e8af',
+      title: 'Bike Recovery 30',
+      description: 'Zone 2 spin',
+      mode: 'active_recovery' as const,
+      isPublished: true,
+    },
+  ];
+
+  const client = createClientOverrides({
+    workoutsByMode: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          status: 200,
+          body: {
+            workouts,
+          },
+        };
+      }
+
+      throw new Error('Network request failed');
+    },
+  });
+
+  __setApiTestAdapters({
+    storage,
+    client: client as never,
+  });
+
+  t.after(() => {
+    __resetApiTestAdapters();
+  });
+
+  await setSessionToken('token-workouts');
+
+  const first = await fetchWorkoutsByMode('active_recovery');
+  assert.equal(first.source, 'network');
+  assert.deepEqual(first.data, workouts);
+
+  const second = await fetchWorkoutsByMode('active_recovery');
+  assert.equal(second.source, 'cache');
+  assert.deepEqual(second.data, workouts);
 });

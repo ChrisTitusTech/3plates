@@ -76,6 +76,7 @@ function createMissingUserStateApp() {
     getPreferences: async () => ({ theme: 'system', units: 'metric', reminderTime: '07:00' }),
     updatePreferences: async () => undefined,
     registerDevice: async () => undefined,
+    listWorkouts: async () => [],
     close: async () => undefined,
   };
 
@@ -535,6 +536,59 @@ test('stateful user endpoints persist per-user state using bearer sessions', asy
   });
 
   assert.equal(notificationResponse.statusCode, 200);
+});
+
+test('workouts endpoint returns published workouts filtered by selected mode', async (t) => {
+  const { app, store } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  store.seedWorkout({
+    id: randomUUID(),
+    title: 'Easy Row 20',
+    description: 'Recovery pace',
+    mode: 'active_recovery',
+    isPublished: true,
+  });
+  store.seedWorkout({
+    id: randomUUID(),
+    title: 'Heavy Fran',
+    description: 'Strength metcon session',
+    mode: 'strength_metcon',
+    isPublished: true,
+  });
+  store.seedWorkout({
+    id: randomUUID(),
+    title: 'Draft Workout',
+    description: null,
+    mode: 'active_recovery',
+    isPublished: false,
+  });
+
+  const session = await signIn(app, 'google');
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/workouts?mode=active_recovery',
+    headers: {
+      authorization: `Bearer ${session.sessionToken}`,
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    workouts: Array<{
+      title: string;
+      mode: string;
+      isPublished: boolean;
+    }>;
+  };
+
+  assert.equal(body.workouts.length, 1);
+  assert.equal(body.workouts[0]?.title, 'Easy Row 20');
+  assert.equal(body.workouts[0]?.mode, 'active_recovery');
+  assert.equal(body.workouts[0]?.isPublished, true);
 });
 
 test('stateful user endpoints require an authenticated user session', async (t) => {

@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 const tiles = [
   { href: '/sign-in', label: 'Sign in' },
   { href: '/progress', label: 'Progress' },
+  { href: '/workouts', label: 'Workouts' },
   { href: '/preferences', label: 'Preferences' },
   { href: '/notifications', label: 'Notifications' },
 ];

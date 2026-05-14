@@ -2,6 +2,8 @@ import {
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
+  workoutModeSchema,
+  workoutSchema,
   userSchema,
 } from '@3plates/contract';
 import { createDatabaseClient } from '@3plates/db';
@@ -11,8 +13,9 @@ import {
   userPreferences,
   userProgress,
   users,
+  workouts,
 } from '@3plates/db';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -28,6 +31,8 @@ export type UserRecord = z.infer<typeof userSchema>;
 export type ProgressRecord = z.infer<typeof progressSchema>;
 export type PreferencesRecord = z.infer<typeof preferencesSchema>;
 export type NotificationDeviceRecord = z.infer<typeof notificationDeviceSchema>;
+export type WorkoutMode = z.infer<typeof workoutModeSchema>;
+export type WorkoutRecord = z.infer<typeof workoutSchema>;
 
 export interface UserStateStore {
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
@@ -38,6 +43,7 @@ export interface UserStateStore {
   getPreferences(userId: string): Promise<PreferencesRecord>;
   updatePreferences(userId: string, preferences: PreferencesRecord): Promise<void>;
   registerDevice(userId: string, device: NotificationDeviceRecord): Promise<void>;
+  listWorkouts(mode: WorkoutMode): Promise<WorkoutRecord[]>;
   close?(): Promise<void>;
 }
 
@@ -82,6 +88,22 @@ function mapPreferences(row: {
     theme: row.theme,
     units: row.units,
     reminderTime: row.reminderTime,
+  });
+}
+
+function mapWorkout(row: {
+  id: string;
+  title: string;
+  description: string | null;
+  mode: string;
+  isPublished: boolean;
+}): WorkoutRecord {
+  return workoutSchema.parse({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    mode: row.mode,
+    isPublished: row.isPublished,
   });
 }
 
@@ -391,6 +413,23 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         });
     },
 
+    async listWorkouts(mode) {
+      const selectedMode = workoutModeSchema.parse(mode);
+      const rows = await db
+        .select({
+          id: workouts.id,
+          title: workouts.title,
+          description: workouts.description,
+          mode: workouts.mode,
+          isPublished: workouts.isPublished,
+        })
+        .from(workouts)
+        .where(and(eq(workouts.mode, selectedMode), eq(workouts.isPublished, true)))
+        .orderBy(desc(workouts.publishedAt), desc(workouts.createdAt));
+
+      return rows.map(mapWorkout);
+    },
+
     close,
   };
 }
@@ -399,6 +438,7 @@ type MemoryUser = UserRecord;
 
 export function createMemoryUserStateStore(): UserStateStore & {
   listDevicesForUser(userId: string): NotificationDeviceRecord[];
+  seedWorkout(workout: WorkoutRecord): void;
 } {
   const usersByEmail = new Map<string, MemoryUser>();
   const usersById = new Map<string, MemoryUser>();
@@ -406,6 +446,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const progressByUserId = new Map<string, ProgressRecord>();
   const preferencesByUserId = new Map<string, PreferencesRecord>();
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
+  const workoutsById = new Map<string, WorkoutRecord>();
 
   function identityKey(provider: string, providerSubjectId: string) {
     return `${provider}:${providerSubjectId}`;
@@ -506,6 +547,18 @@ export function createMemoryUserStateStore(): UserStateStore & {
         ...payload,
         userId,
       });
+    },
+
+    async listWorkouts(mode) {
+      const selectedMode = workoutModeSchema.parse(mode);
+      return Array.from(workoutsById.values())
+        .filter((workout) => workout.isPublished && workout.mode === selectedMode)
+        .sort((a, b) => a.title.localeCompare(b.title));
+    },
+
+    seedWorkout(workout) {
+      const payload = workoutSchema.parse(workout);
+      workoutsById.set(payload.id, payload);
     },
 
     listDevicesForUser(userId) {

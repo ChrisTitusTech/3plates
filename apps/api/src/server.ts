@@ -17,6 +17,7 @@ import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerPreferencesRoutes } from './routes/preferences.js';
 import { registerProgressRoutes } from './routes/progress.js';
 import { registerUserRoutes } from './routes/users.js';
+import { registerWorkoutRoutes } from './routes/workouts.js';
 import { createDbUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
 import {
@@ -134,6 +135,7 @@ export function createServer(options: CreateServerOptions = {}) {
     await registerProgressRoutes(statefulApp, store);
     await registerPreferencesRoutes(statefulApp, store);
     await registerNotificationRoutes(statefulApp, store);
+    await registerWorkoutRoutes(statefulApp, store);
   });
 
   return app;

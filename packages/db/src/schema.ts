@@ -148,3 +148,14 @@ export const progressEvents = pgTable('progress_events', {
   value: jsonb('value').notNull().default({}),
   recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const workouts = pgTable('workouts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  title: text('title').notNull(),
+  description: text('description'),
+  mode: text('mode').notNull(),
+  isPublished: boolean('is_published').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+});

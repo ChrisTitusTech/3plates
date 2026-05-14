@@ -28,6 +28,16 @@ export const notificationDeviceSchema = z.object({
   pushToken: z.string().min(1),
 });
 
+export const workoutModeSchema = z.enum(['active_recovery', 'strength_metcon']);
+
+export const workoutSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1),
+  description: z.string().nullable(),
+  mode: workoutModeSchema,
+  isPublished: z.boolean(),
+});
+
 export const apiErrorCodeSchema = z.enum([
   'invalid_auth',
   'invalid_request_payload',
@@ -213,6 +223,20 @@ export const appContract = c.router({
       }),
     },
   },
+  workoutsByMode: {
+    method: 'GET',
+    path: '/workouts',
+    query: z.object({
+      mode: workoutModeSchema,
+    }),
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      200: z.object({
+        workouts: z.array(workoutSchema),
+      }),
+    },
+  },
 });
 
 export type AppContract = typeof appContract;
@@ -221,3 +245,5 @@ export type User = z.infer<typeof userSchema>;
 export type Progress = z.infer<typeof progressSchema>;
 export type Preferences = z.infer<typeof preferencesSchema>;
 export type NotificationDevice = z.infer<typeof notificationDeviceSchema>;
+export type WorkoutMode = z.infer<typeof workoutModeSchema>;
+export type Workout = z.infer<typeof workoutSchema>;

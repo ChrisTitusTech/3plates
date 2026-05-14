@@ -7,6 +7,8 @@ import type {
   NotificationDevice,
   Preferences,
   Progress,
+  Workout,
+  WorkoutMode,
   User,
 } from '@3plates/contract';
 
@@ -34,6 +36,7 @@ type ContractClientLike = Pick<
   | 'preferences'
   | 'updatePreferences'
   | 'registerDevice'
+  | 'workoutsByMode'
 >;
 
 const defaultStorage: StorageLike = AsyncStorage;
@@ -46,6 +49,7 @@ const storageKeys = {
   me: '@3plates/cache/me',
   progress: '@3plates/cache/progress',
   preferences: '@3plates/cache/preferences',
+  workoutsPrefix: '@3plates/cache/workouts/',
   pendingMutations: '@3plates/pending-mutations',
 } as const;
 
@@ -536,6 +540,49 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
     }
 
     const cached = await readCache<Preferences>(storageKeys.preferences);
+    if (!cached) {
+      throw error;
+    }
+
+    return {
+      data: cached,
+      source: 'cache',
+    };
+  }
+}
+
+export async function fetchWorkoutsByMode(mode: WorkoutMode): Promise<CachedReadResult<Workout[]>> {
+  const token = await getSessionToken();
+  if (!token) {
+    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
+  }
+
+  const cacheKey = `${storageKeys.workoutsPrefix}${mode}`;
+
+  try {
+    const response = await contractClient.workoutsByMode({
+      extraHeaders: buildAuthHeaders(token),
+      query: {
+        mode,
+      },
+    });
+
+    if (response.status !== 200) {
+      throw toApiRequestError(response.status, response.body);
+    }
+
+    await writeCache(cacheKey, response.body.workouts);
+
+    return {
+      data: response.body.workouts,
+      source: 'network',
+    };
+  } catch (error) {
+    if (!isNetworkFailure(error)) {
+      throw error;
+    }
+
+    const cached = await readCache<Workout[]>(cacheKey);
     if (!cached) {
       throw error;
     }

@@ -21,6 +21,7 @@ const envSchema = z.object({
   AUTH_APPLE_CLIENT_ID: z.string().min(1).optional(),
   AUTH_APPLE_CLIENT_SECRET: z.string().min(1).optional(),
   AUTH_SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  ADMIN_API_KEY: z.string().min(1).default('replace-me-admin-key'),
 });
 
 export const env = envSchema.parse(process.env);

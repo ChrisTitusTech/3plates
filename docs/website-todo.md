@@ -127,12 +127,12 @@ Definition of done:
 
 Depends on: Phase 3
 
-- [ ] Define admin write path for adding new workouts over time.
-- [ ] Define admin authorization model and enforce it at API layer for all workout write endpoints.
-- [ ] Support safe publish/unpublish without breaking client reads.
-- [ ] Add audit fields (createdAt, updatedAt, publishedAt, createdBy where available).
-- [ ] Add optimistic concurrency rule for admin updates (version or precondition check).
-- [ ] Add contract-validated admin payload schema for workout entries.
+- [x] Define admin write path for adding new workouts over time.
+- [x] Define admin authorization model and enforce it at API layer for all workout write endpoints.
+- [x] Support safe publish/unpublish without breaking client reads.
+- [x] Add audit fields (createdAt, updatedAt, publishedAt, createdBy where available).
+- [x] Add optimistic concurrency rule for admin updates (version or precondition check).
+- [x] Add contract-validated admin payload schema for workout entries.
 
 Definition of done:
 
@@ -160,8 +160,8 @@ Depends on: all prior phases
 - [ ] Add contract tests for new workout and streak fields in [packages/contract/src/index.test.ts](../packages/contract/src/index.test.ts).
 - [ ] Add DB-backed API integration tests for first-login level assignment and streak idempotency in [apps/api/src/server.db.test.ts](../apps/api/src/server.db.test.ts).
 - [x] Add API tests for workout mode filtering.
-- [ ] Add API tests for admin publish behavior.
-- [ ] Add API tests for admin authorization and optimistic concurrency conflict behavior.
+- [x] Add API tests for admin publish behavior.
+- [x] Add API tests for admin authorization and optimistic concurrency conflict behavior.
 - [ ] Validate web behavior manually in Expo web plus regression checks on iOS/Android clients.
 - [ ] Validate web accessibility and responsive behavior (keyboard navigation, semantic labels, mobile breakpoints).
 

@@ -1,4 +1,8 @@
 import {
+  adminWorkoutCreateSchema,
+  adminWorkoutPublishSchema,
+  adminWorkoutSchema,
+  adminWorkoutUpdateSchema,
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
@@ -15,7 +19,7 @@ import {
   users,
   workouts,
 } from '@3plates/db';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -33,6 +37,7 @@ export type PreferencesRecord = z.infer<typeof preferencesSchema>;
 export type NotificationDeviceRecord = z.infer<typeof notificationDeviceSchema>;
 export type WorkoutMode = z.infer<typeof workoutModeSchema>;
 export type WorkoutRecord = z.infer<typeof workoutSchema>;
+export type AdminWorkoutRecord = z.infer<typeof adminWorkoutSchema>;
 export type AuthBootstrapResult = {
   user: UserRecord;
   isNewUser: boolean;
@@ -50,6 +55,13 @@ export interface UserStateStore {
   updatePreferences(userId: string, preferences: PreferencesRecord): Promise<void>;
   registerDevice(userId: string, device: NotificationDeviceRecord): Promise<void>;
   listWorkouts(mode: WorkoutMode): Promise<WorkoutRecord[]>;
+  createWorkoutAdmin(createdBy: string | null, workout: z.infer<typeof adminWorkoutCreateSchema>): Promise<AdminWorkoutRecord>;
+  updateWorkoutAdmin(workoutId: string, update: z.infer<typeof adminWorkoutUpdateSchema>): Promise<AdminWorkoutRecord>;
+  setWorkoutPublishedAdmin(
+    workoutId: string,
+    published: boolean,
+    update: z.infer<typeof adminWorkoutPublishSchema>,
+  ): Promise<AdminWorkoutRecord>;
   updateStreakOnLogin(userId: string, nowUtc: Date): Promise<void>;
   close?(): Promise<void>;
 }
@@ -146,10 +158,38 @@ function mapWorkout(row: {
   });
 }
 
+function mapAdminWorkout(row: {
+  id: string;
+  title: string;
+  description: string | null;
+  mode: string;
+  isPublished: boolean;
+  version: number;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+}): AdminWorkoutRecord {
+  return adminWorkoutSchema.parse({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    mode: row.mode,
+    isPublished: row.isPublished,
+    version: row.version,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    publishedAt: row.publishedAt?.toISOString() ?? null,
+  });
+}
+
 export function createDbUserStateStore(connectionString: string): UserStateStore {
   const { db, close } = createDatabaseClient(connectionString);
 
-  const getOrCreateUserLevel = async (executor: typeof db, userId: string): Promise<number> => {
+  type DbExecutor = Pick<typeof db, 'select' | 'insert'>;
+
+  const getOrCreateUserLevel = async (executor: DbExecutor, userId: string): Promise<number> => {
     const [existingProgress] = await executor
       .select({
         level: userProgress.level,
@@ -521,9 +561,107 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         })
         .from(workouts)
         .where(and(eq(workouts.mode, selectedMode), eq(workouts.isPublished, true)))
-        .orderBy(desc(workouts.publishedAt), desc(workouts.createdAt));
+        .orderBy(desc(workouts.publishedAt), desc(workouts.createdAt), asc(workouts.id));
 
       return rows.map(mapWorkout);
+    },
+
+    async createWorkoutAdmin(createdBy, workout) {
+      const payload = adminWorkoutCreateSchema.parse(workout);
+      const now = new Date();
+      const publishedAt = payload.isPublished ? now : null;
+
+      const [created] = await db
+        .insert(workouts)
+        .values({
+          title: payload.title,
+          description: payload.description,
+          mode: payload.mode,
+          isPublished: payload.isPublished,
+          createdBy,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+          publishedAt,
+        })
+        .returning({
+          id: workouts.id,
+          title: workouts.title,
+          description: workouts.description,
+          mode: workouts.mode,
+          isPublished: workouts.isPublished,
+          version: workouts.version,
+          createdBy: workouts.createdBy,
+          createdAt: workouts.createdAt,
+          updatedAt: workouts.updatedAt,
+          publishedAt: workouts.publishedAt,
+        });
+
+      return mapAdminWorkout(created);
+    },
+
+    async updateWorkoutAdmin(workoutId, update) {
+      const payload = adminWorkoutUpdateSchema.parse(update);
+      const [updated] = await db
+        .update(workouts)
+        .set({
+          ...(payload.title !== undefined ? { title: payload.title } : {}),
+          ...(payload.description !== undefined ? { description: payload.description } : {}),
+          ...(payload.mode !== undefined ? { mode: payload.mode } : {}),
+          updatedAt: new Date(),
+          version: sql`${workouts.version} + 1`,
+        })
+        .where(and(eq(workouts.id, workoutId), eq(workouts.version, payload.expectedVersion)))
+        .returning({
+          id: workouts.id,
+          title: workouts.title,
+          description: workouts.description,
+          mode: workouts.mode,
+          isPublished: workouts.isPublished,
+          version: workouts.version,
+          createdBy: workouts.createdBy,
+          createdAt: workouts.createdAt,
+          updatedAt: workouts.updatedAt,
+          publishedAt: workouts.publishedAt,
+        });
+
+      if (!updated) {
+        throw conflictOrStaleUpdateError('Workout update is stale or the workout is missing.');
+      }
+
+      return mapAdminWorkout(updated);
+    },
+
+    async setWorkoutPublishedAdmin(workoutId, published, update) {
+      const payload = adminWorkoutPublishSchema.parse(update);
+      const now = new Date();
+      const [updated] = await db
+        .update(workouts)
+        .set({
+          isPublished: published,
+          publishedAt: published ? now : null,
+          updatedAt: now,
+          version: sql`${workouts.version} + 1`,
+        })
+        .where(and(eq(workouts.id, workoutId), eq(workouts.version, payload.expectedVersion)))
+        .returning({
+          id: workouts.id,
+          title: workouts.title,
+          description: workouts.description,
+          mode: workouts.mode,
+          isPublished: workouts.isPublished,
+          version: workouts.version,
+          createdBy: workouts.createdBy,
+          createdAt: workouts.createdAt,
+          updatedAt: workouts.updatedAt,
+          publishedAt: workouts.publishedAt,
+        });
+
+      if (!updated) {
+        throw conflictOrStaleUpdateError('Workout publish state is stale or the workout is missing.');
+      }
+
+      return mapAdminWorkout(updated);
     },
 
     async updateStreakOnLogin(userId, nowUtc) {
@@ -588,7 +726,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const progressByUserId = new Map<string, ProgressRecord>();
   const preferencesByUserId = new Map<string, PreferencesRecord>();
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
-  const workoutsById = new Map<string, WorkoutRecord>();
+  const workoutsById = new Map<string, AdminWorkoutRecord>();
   const levelsByUserId = new Map<string, number>();
   const streakByUserId = new Map<string, { streakDays: number; lastStreakDate: string | null }>();
 
@@ -726,12 +864,93 @@ export function createMemoryUserStateStore(): UserStateStore & {
       const selectedMode = workoutModeSchema.parse(mode);
       return Array.from(workoutsById.values())
         .filter((workout) => workout.isPublished && workout.mode === selectedMode)
-        .sort((a, b) => a.title.localeCompare(b.title));
+        .sort((a, b) => {
+          const aPublished = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+          const bPublished = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+          if (aPublished !== bPublished) {
+            return bPublished - aPublished;
+          }
+          const aCreated = new Date(a.createdAt).getTime();
+          const bCreated = new Date(b.createdAt).getTime();
+          if (aCreated !== bCreated) {
+            return bCreated - aCreated;
+          }
+          return a.id.localeCompare(b.id);
+        })
+        .map((workout) => workoutSchema.parse(workout));
     },
 
     seedWorkout(workout) {
       const payload = workoutSchema.parse(workout);
-      workoutsById.set(payload.id, payload);
+      const now = new Date().toISOString();
+      workoutsById.set(payload.id, {
+        ...payload,
+        version: 1,
+        createdBy: null,
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: payload.isPublished ? now : null,
+      });
+    },
+
+    async createWorkoutAdmin(createdBy, workout) {
+      const payload = adminWorkoutCreateSchema.parse(workout);
+      const now = new Date().toISOString();
+      const created = adminWorkoutSchema.parse({
+        id: crypto.randomUUID(),
+        title: payload.title,
+        description: payload.description,
+        mode: payload.mode,
+        isPublished: payload.isPublished,
+        version: 1,
+        createdBy,
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: payload.isPublished ? now : null,
+      });
+
+      workoutsById.set(created.id, created);
+      return created;
+    },
+
+    async updateWorkoutAdmin(workoutId, update) {
+      const payload = adminWorkoutUpdateSchema.parse(update);
+      const existing = workoutsById.get(workoutId);
+      if (!existing || existing.version !== payload.expectedVersion) {
+        throw conflictOrStaleUpdateError('Workout update is stale or the workout is missing.');
+      }
+
+      const updated = adminWorkoutSchema.parse({
+        ...existing,
+        ...(payload.title !== undefined ? { title: payload.title } : {}),
+        ...(payload.description !== undefined ? { description: payload.description } : {}),
+        ...(payload.mode !== undefined ? { mode: payload.mode } : {}),
+        version: existing.version + 1,
+        updatedAt: new Date().toISOString(),
+      });
+
+      workoutsById.set(workoutId, updated);
+      return updated;
+    },
+
+    async setWorkoutPublishedAdmin(workoutId, published, update) {
+      const payload = adminWorkoutPublishSchema.parse(update);
+      const existing = workoutsById.get(workoutId);
+      if (!existing || existing.version !== payload.expectedVersion) {
+        throw conflictOrStaleUpdateError('Workout publish state is stale or the workout is missing.');
+      }
+
+      const now = new Date().toISOString();
+      const updated = adminWorkoutSchema.parse({
+        ...existing,
+        isPublished: published,
+        publishedAt: published ? now : null,
+        version: existing.version + 1,
+        updatedAt: now,
+      });
+
+      workoutsById.set(workoutId, updated);
+      return updated;
     },
 
     listDevicesForUser(userId) {

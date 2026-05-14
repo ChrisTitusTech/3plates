@@ -50,6 +50,36 @@ export const workoutSchema = z.object({
   isPublished: z.boolean(),
 });
 
+export const adminWorkoutSchema = workoutSchema.extend({
+  version: z.number().int().min(1),
+  createdBy: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  publishedAt: z.string().datetime().nullable(),
+});
+
+export const adminWorkoutCreateSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().nullable(),
+  mode: workoutModeSchema,
+  isPublished: z.boolean().optional().default(false),
+});
+
+export const adminWorkoutUpdateSchema = z
+  .object({
+    expectedVersion: z.number().int().min(1),
+    title: z.string().min(1).optional(),
+    description: z.string().nullable().optional(),
+    mode: workoutModeSchema.optional(),
+  })
+  .refine((value) => value.title !== undefined || value.description !== undefined || value.mode !== undefined, {
+    message: 'At least one workout field must be provided.',
+  });
+
+export const adminWorkoutPublishSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+});
+
 export const workoutListResponseSchema = z.object({
   workouts: z.array(workoutSchema),
   pagination: z.object({
@@ -67,6 +97,7 @@ export const workoutListResponseSchema = z.object({
 
 export const apiErrorCodeSchema = z.enum([
   'invalid_auth',
+  'admin_auth_required',
   'invalid_request_payload',
   'missing_user_state',
   'conflict_or_stale_update',
@@ -262,6 +293,49 @@ export const appContract = c.router({
       200: workoutListResponseSchema,
     },
   },
+  adminCreateWorkout: {
+    method: 'POST',
+    path: '/admin/workouts',
+    body: adminWorkoutCreateSchema,
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      200: adminWorkoutSchema,
+    },
+  },
+  adminUpdateWorkout: {
+    method: 'PATCH',
+    path: '/admin/workouts/:workoutId',
+    body: adminWorkoutUpdateSchema,
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      409: apiErrorSchema,
+      200: adminWorkoutSchema,
+    },
+  },
+  adminPublishWorkout: {
+    method: 'POST',
+    path: '/admin/workouts/:workoutId/publish',
+    body: adminWorkoutPublishSchema,
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      409: apiErrorSchema,
+      200: adminWorkoutSchema,
+    },
+  },
+  adminUnpublishWorkout: {
+    method: 'POST',
+    path: '/admin/workouts/:workoutId/unpublish',
+    body: adminWorkoutPublishSchema,
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      409: apiErrorSchema,
+      200: adminWorkoutSchema,
+    },
+  },
 });
 
 export type AppContract = typeof appContract;
@@ -275,3 +349,7 @@ export type Workout = z.infer<typeof workoutSchema>;
 export type WorkoutListOrder = z.infer<typeof workoutListOrderSchema>;
 export type WorkoutListQuery = z.infer<typeof workoutListQuerySchema>;
 export type WorkoutListResponse = z.infer<typeof workoutListResponseSchema>;
+export type AdminWorkout = z.infer<typeof adminWorkoutSchema>;
+export type AdminWorkoutCreate = z.infer<typeof adminWorkoutCreateSchema>;
+export type AdminWorkoutUpdate = z.infer<typeof adminWorkoutUpdateSchema>;
+export type AdminWorkoutPublish = z.infer<typeof adminWorkoutPublishSchema>;

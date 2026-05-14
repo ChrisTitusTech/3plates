@@ -12,6 +12,7 @@ import {
 import type { AuthService } from './auth-service.js';
 import { env } from './env.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerAdminWorkoutRoutes } from './routes/admin-workouts.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerPreferencesRoutes } from './routes/preferences.js';
@@ -131,6 +132,7 @@ export function createServer(options: CreateServerOptions = {}) {
     await registerAuthRoutes(authApp, authService);
   });
   app.register(async (statefulApp) => {
+    await registerAdminWorkoutRoutes(statefulApp, store);
     await registerUserRoutes(statefulApp);
     await registerProgressRoutes(statefulApp, store);
     await registerPreferencesRoutes(statefulApp, store);

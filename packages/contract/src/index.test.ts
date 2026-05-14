@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  adminWorkoutCreateSchema,
+  adminWorkoutPublishSchema,
+  adminWorkoutSchema,
+  adminWorkoutUpdateSchema,
   appContract,
   apiErrorSchema,
   authProviderSchema,
@@ -151,6 +155,64 @@ test('schema validations accept valid data', () => {
   );
 
   assert.deepEqual(
+    adminWorkoutCreateSchema.parse({
+      title: 'Tempo Run 30',
+      description: 'Threshold intervals',
+      mode: 'strength_metcon',
+      isPublished: false,
+    }),
+    {
+      title: 'Tempo Run 30',
+      description: 'Threshold intervals',
+      mode: 'strength_metcon',
+      isPublished: false,
+    },
+  );
+
+  assert.deepEqual(
+    adminWorkoutUpdateSchema.parse({
+      expectedVersion: 2,
+      title: 'Tempo Run 35',
+    }),
+    {
+      expectedVersion: 2,
+      title: 'Tempo Run 35',
+    },
+  );
+
+  assert.deepEqual(
+    adminWorkoutPublishSchema.parse({ expectedVersion: 3 }),
+    { expectedVersion: 3 },
+  );
+
+  assert.deepEqual(
+    adminWorkoutSchema.parse({
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      title: 'Tempo Run 35',
+      description: 'Threshold intervals',
+      mode: 'strength_metcon',
+      isPublished: true,
+      version: 4,
+      createdBy: 'api-key',
+      createdAt: '2026-05-13T10:00:00.000Z',
+      updatedAt: '2026-05-13T11:00:00.000Z',
+      publishedAt: '2026-05-13T11:00:00.000Z',
+    }),
+    {
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      title: 'Tempo Run 35',
+      description: 'Threshold intervals',
+      mode: 'strength_metcon',
+      isPublished: true,
+      version: 4,
+      createdBy: 'api-key',
+      createdAt: '2026-05-13T10:00:00.000Z',
+      updatedAt: '2026-05-13T11:00:00.000Z',
+      publishedAt: '2026-05-13T11:00:00.000Z',
+    },
+  );
+
+  assert.deepEqual(
     authSessionSchema.parse({
       sessionToken: 'session-token-123',
       expiresAt: '2026-05-10T00:00:00.000Z',
@@ -202,6 +264,8 @@ test('schema validations reject invalid data', () => {
   assert.throws(() => workoutModeSchema.parse('hyrox'));
   assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', page: 0 }));
   assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', pageSize: 100 }));
+  assert.throws(() => adminWorkoutUpdateSchema.parse({ expectedVersion: 1 }));
+  assert.throws(() => adminWorkoutPublishSchema.parse({ expectedVersion: 0 }));
   assert.throws(() =>
     workoutSchema.parse({
       id: 'not-a-uuid',
@@ -226,4 +290,8 @@ test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.updatePreferences.path, '/users/me/preferences');
   assert.equal(appContract.registerDevice.path, '/notifications/devices');
   assert.equal(appContract.workoutsByMode.path, '/workouts');
+  assert.equal(appContract.adminCreateWorkout.path, '/admin/workouts');
+  assert.equal(appContract.adminUpdateWorkout.path, '/admin/workouts/:workoutId');
+  assert.equal(appContract.adminPublishWorkout.path, '/admin/workouts/:workoutId/publish');
+  assert.equal(appContract.adminUnpublishWorkout.path, '/admin/workouts/:workoutId/unpublish');
 });

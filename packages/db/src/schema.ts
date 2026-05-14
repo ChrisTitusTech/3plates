@@ -160,6 +160,8 @@ export const workouts = pgTable('workouts', {
   description: text('description'),
   mode: text('mode').notNull(),
   isPublished: boolean('is_published').notNull().default(false),
+  createdBy: text('created_by'),
+  version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   publishedAt: timestamp('published_at', { withTimezone: true }),

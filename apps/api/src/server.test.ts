@@ -5,6 +5,7 @@ import test from 'node:test';
 import { createServer } from './server.js';
 import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
 import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
+import { env } from './env.js';
 import { createMemoryUserStateStore } from './user-state-store.js';
 import { computeStreakUpdate } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
@@ -83,6 +84,42 @@ function createMissingUserStateApp() {
     updatePreferences: async () => undefined,
     registerDevice: async () => undefined,
     listWorkouts: async () => [],
+    createWorkoutAdmin: async () => ({
+      id: randomUUID(),
+      title: 'placeholder',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: false,
+      version: 1,
+      createdBy: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      publishedAt: null,
+    }),
+    updateWorkoutAdmin: async () => ({
+      id: randomUUID(),
+      title: 'placeholder',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: false,
+      version: 1,
+      createdBy: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      publishedAt: null,
+    }),
+    setWorkoutPublishedAdmin: async () => ({
+      id: randomUUID(),
+      title: 'placeholder',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: false,
+      version: 1,
+      createdBy: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      publishedAt: null,
+    }),
     updateStreakOnLogin: async () => undefined,
     close: async () => undefined,
   };
@@ -667,6 +704,133 @@ test('workouts endpoint returns published workouts filtered by selected mode', a
     hasPreviousPage: false,
   });
   assert.equal(body.ordering.applied, 'published_at_desc_created_at_desc_id_asc');
+});
+
+test('admin workouts routes require admin key authentication', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/workouts',
+    payload: {
+      title: 'Admin Workout',
+      description: null,
+      mode: 'active_recovery',
+      isPublished: false,
+    },
+  });
+
+  assert.equal(response.statusCode, 401);
+  assertApiError(response.json(), 'admin_auth_required', 'Admin authentication required.');
+});
+
+test('admin workout write path supports create, update, publish and unpublish with optimistic concurrency', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  assert.ok(env.ADMIN_API_KEY, 'ADMIN_API_KEY must be set for admin route tests.');
+  const adminHeaders = {
+    'x-admin-key': env.ADMIN_API_KEY as string,
+  };
+
+  const createResponse = await app.inject({
+    method: 'POST',
+    url: '/admin/workouts',
+    headers: adminHeaders,
+    payload: {
+      title: 'Tempo Intervals',
+      description: 'Threshold session',
+      mode: 'strength_metcon',
+      isPublished: false,
+    },
+  });
+
+  assert.equal(createResponse.statusCode, 200);
+  const created = createResponse.json() as {
+    id: string;
+    version: number;
+    isPublished: boolean;
+    createdBy: string | null;
+    publishedAt: string | null;
+  };
+  assert.equal(created.version, 1);
+  assert.equal(created.isPublished, false);
+  assert.equal(created.createdBy, 'api-key');
+  assert.equal(created.publishedAt, null);
+
+  const staleUpdateResponse = await app.inject({
+    method: 'PATCH',
+    url: `/admin/workouts/${created.id}`,
+    headers: adminHeaders,
+    payload: {
+      expectedVersion: 999,
+      title: 'Should Fail',
+    },
+  });
+
+  assert.equal(staleUpdateResponse.statusCode, 409);
+  assertApiError(staleUpdateResponse.json(), 'conflict_or_stale_update', 'Workout update is stale or the workout is missing.');
+
+  const updateResponse = await app.inject({
+    method: 'PATCH',
+    url: `/admin/workouts/${created.id}`,
+    headers: adminHeaders,
+    payload: {
+      expectedVersion: 1,
+      title: 'Tempo Intervals 2',
+    },
+  });
+
+  assert.equal(updateResponse.statusCode, 200);
+  const updated = updateResponse.json() as {
+    version: number;
+    title: string;
+  };
+  assert.equal(updated.version, 2);
+  assert.equal(updated.title, 'Tempo Intervals 2');
+
+  const publishResponse = await app.inject({
+    method: 'POST',
+    url: `/admin/workouts/${created.id}/publish`,
+    headers: adminHeaders,
+    payload: {
+      expectedVersion: 2,
+    },
+  });
+
+  assert.equal(publishResponse.statusCode, 200);
+  const published = publishResponse.json() as {
+    version: number;
+    isPublished: boolean;
+    publishedAt: string | null;
+  };
+  assert.equal(published.version, 3);
+  assert.equal(published.isPublished, true);
+  assert.match(published.publishedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
+
+  const unpublishResponse = await app.inject({
+    method: 'POST',
+    url: `/admin/workouts/${created.id}/unpublish`,
+    headers: adminHeaders,
+    payload: {
+      expectedVersion: 3,
+    },
+  });
+
+  assert.equal(unpublishResponse.statusCode, 200);
+  const unpublished = unpublishResponse.json() as {
+    version: number;
+    isPublished: boolean;
+    publishedAt: string | null;
+  };
+  assert.equal(unpublished.version, 4);
+  assert.equal(unpublished.isPublished, false);
+  assert.equal(unpublished.publishedAt, null);
 });
 
 test('stateful user endpoints require an authenticated user session', async (t) => {

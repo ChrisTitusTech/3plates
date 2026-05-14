@@ -1,5 +1,6 @@
 export type ApiErrorCode =
   | 'invalid_auth'
+  | 'admin_auth_required'
   | 'invalid_request_payload'
   | 'missing_user_state'
   | 'conflict_or_stale_update'
@@ -19,6 +20,10 @@ export class ApiError extends Error {
 
 export function invalidAuthError(message = 'Authentication required.') {
   return new ApiError(401, 'invalid_auth', message);
+}
+
+export function adminAuthRequiredError(message = 'Admin authentication required.') {
+  return new ApiError(401, 'admin_auth_required', message);
 }
 
 export function invalidRequestPayloadError(message = 'Request payload is invalid.') {

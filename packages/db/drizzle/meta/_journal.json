@@ -50,6 +50,13 @@
       "when": 1778730829020,
       "tag": "0006_streak_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778733000000,
+      "tag": "0007_admin_workout_growth",
+      "breakpoints": true
     }
   ]
 }

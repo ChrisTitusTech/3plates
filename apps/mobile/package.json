@@ -15,7 +15,7 @@
     "@react-native-async-storage/async-storage": "^3.0.2",
     "@ts-rest/core": "^3.52.1",
     "expo": "^55.0.23",
-    "expo-constants": "~55.0.16",
+    "expo-constants": "~56.0.15",
     "expo-linking": "~55.0.15",
     "expo-router": "^55.0.14",
     "expo-secure-store": "^55.0.13",

@@ -59,9 +59,10 @@ Track remaining VPS and website validation work in [VPS And Website Tasks](vps-w
 
 1. In the GitHub repository, open **Settings**.
 2. Open **Pages**.
-3. Set **Source** to deploy from a branch.
-4. Select branch `main` and folder `/docs`.
-5. Save the settings and wait for GitHub Pages to publish the docs site.
+3. Set **Source** to **GitHub Actions**.
+4. Keep `.github/workflows/jekyll-gh-pages.yml` enabled on `main`.
+5. The workflow builds Jekyll from `./docs`, uploads `./_site`, and deploys to GitHub Pages.
+6. Confirm the latest Pages workflow run succeeds and the docs site loads.
 
 ## Publishing rule
 

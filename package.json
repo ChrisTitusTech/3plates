@@ -2,6 +2,10 @@
   "name": "3plates",
   "private": true,
   "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20 <21",
+    "pnpm": "9.15.4"
+  },
   "pnpm": {
     "overrides": {
       "@babel/core": "7.29.7",

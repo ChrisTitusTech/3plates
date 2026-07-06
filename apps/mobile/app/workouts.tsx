@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { Workout, WorkoutMode } from '@3plates/contract';
+import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
 import { ApiRequestError, fetchWorkoutsByMode } from '../src/lib/api';
 
@@ -22,22 +22,24 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
   { value: 'strength_metcon', label: 'Strength metcon' },
 ];
 
+const pageSize = 10;
+
 export default function WorkoutsScreen() {
   const [mode, setMode] = useState<WorkoutMode>('active_recovery');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [source, setSource] = useState<'network' | 'cache' | null>(null);
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [workoutList, setWorkoutList] = useState<WorkoutListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const loadWorkouts = async (nextMode: WorkoutMode) => {
+  const loadWorkouts = async (nextMode: WorkoutMode, page = 1) => {
     setStatus('loading');
     setError(null);
     setMessage(null);
 
     try {
-      const result = await fetchWorkoutsByMode(nextMode);
-      setWorkouts(result.data);
+      const result = await fetchWorkoutsByMode(nextMode, { page, pageSize });
+      setWorkoutList(result.data);
       setSource(result.source);
       setStatus('ready');
 
@@ -45,7 +47,7 @@ export default function WorkoutsScreen() {
         setMessage('Showing cached workouts while offline.');
       }
 
-      if (result.data.length === 0) {
+      if (result.data.workouts.length === 0) {
         setMessage('No workouts are published for this mode yet.');
       }
     } catch (loadError) {
@@ -55,8 +57,11 @@ export default function WorkoutsScreen() {
   };
 
   useEffect(() => {
-    void loadWorkouts(mode);
+    void loadWorkouts(mode, 1);
   }, [mode]);
+
+  const workouts = workoutList?.workouts ?? [];
+  const pagination = workoutList?.pagination ?? null;
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -72,6 +77,11 @@ export default function WorkoutsScreen() {
             style={[styles.choice, mode === candidate.value ? styles.choiceActive : null]}
             onPress={() => setMode(candidate.value)}
             disabled={status === 'loading'}
+            accessibilityRole="button"
+            accessibilityState={{
+              selected: mode === candidate.value,
+              disabled: status === 'loading',
+            }}
           >
             <Text style={[styles.choiceLabel, mode === candidate.value ? styles.choiceLabelActive : null]}>
               {candidate.label}
@@ -82,6 +92,11 @@ export default function WorkoutsScreen() {
 
       {status === 'loading' ? <Text style={styles.meta}>Loading workouts...</Text> : null}
       <Text style={styles.meta}>Source: {source ?? 'unknown'}</Text>
+      {pagination ? (
+        <Text style={styles.meta}>
+          Showing {workouts.length} of {pagination.total} workouts
+        </Text>
+      ) : null}
 
       <View style={styles.list}>
         {workouts.map((workout) => (
@@ -96,12 +111,56 @@ export default function WorkoutsScreen() {
       {message ? <Text style={styles.success}>{message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
+      {pagination && pagination.totalPages > 0 ? (
+        <View style={styles.paginationRow}>
+          <Pressable
+            style={[
+              styles.pageButton,
+              !pagination.hasPreviousPage || status === 'loading' ? styles.buttonDisabled : null,
+            ]}
+            disabled={!pagination.hasPreviousPage || status === 'loading'}
+            onPress={() => {
+              void loadWorkouts(mode, pagination.page - 1);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{
+              disabled: !pagination.hasPreviousPage || status === 'loading',
+            }}
+          >
+            <Text style={styles.pageButtonText}>Previous</Text>
+          </Pressable>
+
+          <Text style={styles.pageSummary}>
+            Page {pagination.page} of {pagination.totalPages}
+          </Text>
+
+          <Pressable
+            style={[
+              styles.pageButton,
+              !pagination.hasNextPage || status === 'loading' ? styles.buttonDisabled : null,
+            ]}
+            disabled={!pagination.hasNextPage || status === 'loading'}
+            onPress={() => {
+              void loadWorkouts(mode, pagination.page + 1);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{
+              disabled: !pagination.hasNextPage || status === 'loading',
+            }}
+          >
+            <Text style={styles.pageButtonText}>Next</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <Pressable
         style={styles.retry}
         disabled={status === 'loading'}
         onPress={() => {
-          void loadWorkouts(mode);
+          void loadWorkouts(mode, pagination?.page ?? 1);
         }}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: status === 'loading' }}
       >
         <Text style={styles.retryText}>Retry load</Text>
       </Pressable>
@@ -200,5 +259,30 @@ const styles = StyleSheet.create({
   retryText: {
     color: '#8b5e34',
     fontWeight: '700',
+  },
+  paginationRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pageButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1f1a17',
+    backgroundColor: '#fff7ef',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  pageButtonText: {
+    color: '#1f1a17',
+    fontWeight: '700',
+  },
+  pageSummary: {
+    color: '#2f251f',
+    fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
 });

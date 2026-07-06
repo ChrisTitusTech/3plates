@@ -7,7 +7,8 @@ import type {
   NotificationDevice,
   Preferences,
   Progress,
-  Workout,
+  WorkoutListOrder,
+  WorkoutListResponse,
   WorkoutMode,
   User,
 } from '@3plates/contract';
@@ -155,6 +156,12 @@ type ApiErrorBody = {
     code: string;
     message: string;
   };
+};
+
+type FetchWorkoutsOptions = {
+  page?: number;
+  pageSize?: number;
+  order?: WorkoutListOrder;
 };
 
 export class ApiRequestError extends Error {
@@ -573,19 +580,28 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
   }
 }
 
-export async function fetchWorkoutsByMode(mode: WorkoutMode): Promise<CachedReadResult<Workout[]>> {
+export async function fetchWorkoutsByMode(
+  mode: WorkoutMode,
+  options: FetchWorkoutsOptions = {},
+): Promise<CachedReadResult<WorkoutListResponse>> {
   const token = await getSessionToken();
   if (!token) {
     throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
   }
 
-  const cacheKey = `${storageKeys.workoutsPrefix}${mode}`;
+  const page = options.page ?? 1;
+  const pageSize = options.pageSize ?? 20;
+  const order = options.order ?? 'published_at_desc_created_at_desc_id_asc';
+  const cacheKey = `${storageKeys.workoutsPrefix}${mode}/${page}/${pageSize}/${order}`;
 
   try {
     const response = await contractClient.workoutsByMode({
       extraHeaders: buildAuthHeaders(token),
       query: {
         mode,
+        page,
+        pageSize,
+        order,
       },
     });
 
@@ -593,10 +609,10 @@ export async function fetchWorkoutsByMode(mode: WorkoutMode): Promise<CachedRead
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(cacheKey, response.body.workouts);
+    await writeCache(cacheKey, response.body);
 
     return {
-      data: response.body.workouts,
+      data: response.body,
       source: 'network',
     };
   } catch (error) {
@@ -604,7 +620,7 @@ export async function fetchWorkoutsByMode(mode: WorkoutMode): Promise<CachedRead
       throw error;
     }
 
-    const cached = await readCache<Workout[]>(cacheKey);
+    const cached = await readCache<WorkoutListResponse>(cacheKey);
     if (!cached) {
       throw error;
     }

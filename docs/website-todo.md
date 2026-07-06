@@ -215,7 +215,7 @@ Minimum auth/session parity additions:
 - [ ] Workout list comes from DB based on selected mode.
 - [ ] Newly published admin workouts appear in user lists without client updates.
 - [ ] Admin permissions are enforced for workout writes and covered by tests.
-- [ ] Workout list pagination and ordering are deterministic and documented.
+- [x] Workout list pagination and ordering are deterministic and documented.
 - [ ] Account linking, refresh, expiry, and sign-out behavior match across all clients.
 - [x] Web push token registration uses same backend model as mobile clients.
 - [ ] Web accessibility and responsive acceptance checks pass.

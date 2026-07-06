@@ -312,9 +312,10 @@ test('queued notification device registration flushes when online again', async 
   assert.equal(await getSessionToken(), null);
 });
 
-test('workout mode read falls back to cached value on network failure', async (t) => {
+test('workout mode read sends pagination query and falls back to cached value', async (t) => {
   const storage = createMemoryStorage();
   let callCount = 0;
+  const requestedQueries: unknown[] = [];
   const workouts = [
     {
       id: '1f7c40d2-4f31-4fd3-91c5-f8ef9ed6e8af',
@@ -324,16 +325,29 @@ test('workout mode read falls back to cached value on network failure', async (t
       isPublished: true,
     },
   ];
+  const responseBody = {
+    workouts,
+    pagination: {
+      page: 2,
+      pageSize: 5,
+      total: 6,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true,
+    },
+    ordering: {
+      applied: 'published_at_desc_created_at_desc_id_asc' as const,
+    },
+  };
 
   const client = createClientOverrides({
-    workoutsByMode: async () => {
+    workoutsByMode: async (input: { query: unknown }) => {
       callCount += 1;
+      requestedQueries.push(input.query);
       if (callCount === 1) {
         return {
           status: 200,
-          body: {
-            workouts,
-          },
+          body: responseBody,
         };
       }
 
@@ -352,11 +366,17 @@ test('workout mode read falls back to cached value on network failure', async (t
 
   await setSessionToken('token-workouts');
 
-  const first = await fetchWorkoutsByMode('active_recovery');
+  const first = await fetchWorkoutsByMode('active_recovery', { page: 2, pageSize: 5 });
   assert.equal(first.source, 'network');
-  assert.deepEqual(first.data, workouts);
+  assert.deepEqual(first.data, responseBody);
+  assert.deepEqual(requestedQueries[0], {
+    mode: 'active_recovery',
+    page: 2,
+    pageSize: 5,
+    order: 'published_at_desc_created_at_desc_id_asc',
+  });
 
-  const second = await fetchWorkoutsByMode('active_recovery');
+  const second = await fetchWorkoutsByMode('active_recovery', { page: 2, pageSize: 5 });
   assert.equal(second.source, 'cache');
-  assert.deepEqual(second.data, workouts);
+  assert.deepEqual(second.data, responseBody);
 });

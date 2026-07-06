@@ -16,6 +16,14 @@ Use this checklist to rebuild the current 3plates VPS database and API validatio
 - Docker with the Compose plugin, or `docker-compose`.
 - `curl`.
 
+## VPS operating constraints
+
+- Treat the VPS as slow and capacity-constrained.
+- Run only one remote command or SSH session at a time against the VPS.
+- Allow at least 5 minutes for a remote task to finish before treating it as timed out.
+- Before killing a remote task, first verify with `ps aux` that the target process is not using CPU.
+- Do not start a replacement deployment, restart, or validation command while a prior remote task is still running.
+
 ## Repository setup
 
 1. Clone the repository onto the VPS.

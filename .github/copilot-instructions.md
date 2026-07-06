@@ -47,8 +47,9 @@ This app has three client surfaces: a website, an Android app, and an iOS app. A
 ## Dependency Version Guardrails
 
 - Keep these package versions at or above the current baseline unless there is a validated compatibility reason to change them:
+	- `node`: `24.x` LTS runtime
 	- `typescript`: `6.0.3` (workspace baseline)
-	- `@types/node`: `25.6.2`
+	- `@types/node`: `24.13.2`
 	- `expo-constants`: `55.0.16`
 	- `expo-status-bar`: `55.0.6`
   - `react`: `19.2.6`

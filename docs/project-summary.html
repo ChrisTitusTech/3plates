@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>3plates Project Summary</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --text: #17202a;
+        --muted: #596575;
+        --line: #d8dee8;
+        --accent: #0f766e;
+        --accent-soft: #e0f2ef;
+        --warn: #a8550c;
+        --warn-soft: #fff3df;
+        --done: #166534;
+        --done-soft: #e7f6ec;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+      }
+
+      header {
+        margin-bottom: 28px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 10px;
+        font-size: clamp(2rem, 4vw, 3.6rem);
+        line-height: 1.05;
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: 1.35rem;
+      }
+
+      h3 {
+        margin-bottom: 8px;
+        font-size: 1rem;
+      }
+
+      p {
+        color: var(--muted);
+      }
+
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .lead {
+        max-width: 800px;
+        font-size: 1.08rem;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      section,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      section {
+        margin-top: 16px;
+        padding: 22px;
+      }
+
+      .card {
+        padding: 18px;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+
+      .status.done {
+        background: var(--done-soft);
+        color: var(--done);
+      }
+
+      .status.todo {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .status.info {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 8px 0;
+      }
+
+      .metric {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .metric strong {
+        font-size: 1.7rem;
+        line-height: 1;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .phase-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .phase {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .check {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--done-soft);
+        color: var(--done);
+        font-weight: 800;
+      }
+
+      code {
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: #edf1f5;
+        color: #243040;
+        font-size: 0.92em;
+      }
+
+      footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 24px, 1120px);
+          padding-top: 28px;
+        }
+
+        .grid.two,
+        .grid.three {
+          grid-template-columns: 1fr;
+        }
+
+        section {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Project overview</div>
+        <h1>3plates</h1>
+        <p class="lead">
+          3plates is a contract-first, cross-platform fitness app for web,
+          Android, and iOS. The backend owns account identity, progress,
+          preferences, streaks, notification devices, and workout catalog data.
+        </p>
+      </header>
+
+      <section>
+        <h2>Current State</h2>
+        <div class="grid three">
+          <div class="card metric">
+            <strong>6/6</strong>
+            <span>Scaffold roadmap priorities complete</span>
+            <span class="status done">Foundation complete</span>
+          </div>
+          <div class="card metric">
+            <strong>6/6</strong>
+            <span>Website implementation phases built</span>
+            <span class="status done">Feature work complete</span>
+          </div>
+          <div class="card metric">
+            <strong>2</strong>
+            <span>Manual acceptance checks still open</span>
+            <span class="status todo">Validation remaining</span>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>What Is Built</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>Product Surface</h3>
+            <ul>
+              <li>Expo app targets web, Android, and iOS from <code>apps/mobile</code>.</li>
+              <li>Sign-in, progress, preferences, notifications, and workouts screens are wired to backend APIs.</li>
+              <li>Offline cache and queued write behavior exist for client state flows.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Backend</h3>
+            <ul>
+              <li>Fastify API in <code>apps/api</code> serves auth, user state, preferences, progress, notifications, and workouts.</li>
+              <li>OAuth start/callback, account linking, session refresh, expiry, and sign-out are implemented.</li>
+              <li>Admin workout create, update, publish, and unpublish paths enforce authorization and concurrency checks.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Data Layer</h3>
+            <ul>
+              <li>Postgres and Drizzle live in <code>packages/db</code>.</li>
+              <li>User identities, sessions, progress, preferences, notification devices, streak data, and workout catalog records persist in the database.</li>
+              <li>Migrations are self-contained and include the database prerequisites for UUID generation.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Contracts And Quality Gates</h3>
+            <ul>
+              <li><code>packages/contract</code> is the shared request and response source.</li>
+              <li>Typed error responses cover auth, payload validation, missing state, and conflict cases.</li>
+              <li>Root scripts run install, typecheck, API tests, contract tests, and mobile tests.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Completed Roadmap</h2>
+        <div class="phase-list">
+          <div class="phase">
+            <div class="check">✓</div>
+            <div>
+              <h3>Database-backed API state</h3>
+              <p>Progress, preferences, notification devices, and workouts use persisted records instead of demo responses.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="check">✓</div>
+            <div>
+              <h3>Authentication and account linking</h3>
+              <p>Google and Apple OAuth flows, linked identities, sessions, guards, refresh, and sign-out are implemented.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="check">✓</div>
+            <div>
+              <h3>Web product behavior</h3>
+              <p>First-login level assignment, daily streak updates, mode selection, workout lists, and web notification registration are built.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="check">✓</div>
+            <div>
+              <h3>Admin workout catalog</h3>
+              <p>Admin write paths support adding, editing, publishing, unpublishing, and protecting workout content.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="check">✓</div>
+            <div>
+              <h3>Automated tests and CI direction</h3>
+              <p>Contract, API, DB-backed integration, mobile behavior, and accessibility guard tests are present.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>What Is Left To Do</h2>
+        <div class="grid two">
+          <div class="card">
+            <span class="status todo">Open acceptance check</span>
+            <h3>Manual web validation</h3>
+            <ul>
+              <li>Run the Expo web app in a browser and verify login, account linking, streak, mode selection, workout list, notification registration, refresh, expiry, and sign-out behavior.</li>
+              <li>Confirm browser behavior against the same backend state used by native clients.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="status todo">Open acceptance check</span>
+            <h3>Cross-platform regression pass</h3>
+            <ul>
+              <li>Validate iOS and Android behavior for login, streak, workout mode selection, and workout options.</li>
+              <li>Confirm parity with Expo web for account and state flows.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="status todo">Open acceptance check</span>
+            <h3>Accessibility and responsive QA</h3>
+            <ul>
+              <li>Check keyboard navigation, focus order, labels, screen semantics, and touch target behavior.</li>
+              <li>Review mobile and desktop breakpoints for the web experience.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="status info">Operational follow-up</span>
+            <h3>Local smoke test cleanup</h3>
+            <ul>
+              <li><code>pnpm db:test</code> reaches Postgres and the API, but its persisted round-trip still uses legacy <code>x-user-*</code> headers.</li>
+              <li>Update the smoke script to create or accept a bearer session before calling authenticated user-state endpoints.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Recommended Next Steps</h2>
+        <ol>
+          <li>Update <code>scripts/db-smoke-test.sh</code> so it matches the current bearer-auth API.</li>
+          <li>Run <code>pnpm dev:api</code> and <code>pnpm dev:mobile</code>, then complete the Expo web manual acceptance checklist.</li>
+          <li>Run the same core flows on Android and iOS to close cross-platform parity.</li>
+          <li>Record any UX or accessibility defects as follow-up tickets before production rollout.</li>
+        </ol>
+      </section>
+
+      <footer>
+        Generated from repository docs on July 6, 2026. Primary sources:
+        <code>README.md</code>, <code>docs/scaffold-todo.md</code>,
+        <code>docs/website-todo.md</code>, <code>docs/requirements.md</code>,
+        and <code>docs/architecture.md</code>.
+      </footer>
+    </main>
+  </body>
+</html>

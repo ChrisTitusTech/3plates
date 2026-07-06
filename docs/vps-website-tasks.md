@@ -21,7 +21,7 @@ Finish the remaining VPS setup, website validation, and documentation publishing
 - [x] Validate VPS recreation with production-like `.env` values, Postgres bound to `127.0.0.1`, migrations applied, and API connectivity confirmed.
 - [x] Verify GitHub Pages publishes the documentation from the `/docs` folder on `main`.
 - [x] Run Expo web manual acceptance for login, account linking, streak updates, workout mode selection, workout list rendering, web push registration, refresh, expiry, and sign-out.
-- [ ] Validate web accessibility and responsive behavior, including keyboard navigation, semantic labels, and mobile/desktop breakpoints.
+- [x] Validate web accessibility and responsive behavior, including keyboard navigation, semantic labels, and mobile/desktop breakpoints.
 
 ## Latest local validation
 
@@ -37,6 +37,7 @@ Finish the remaining VPS setup, website validation, and documentation publishing
 - 2026-07-06: Public DNS resolvers returned `64.52.108.248` for `3spinningplates.com` and `api.3spinningplates.com`; the local resolver still had the previous address cached during validation.
 - 2026-07-06: GitHub Pages is configured with the `jekyll-gh-pages.yml` workflow on `main`; the workflow builds from `./docs`, recent runs passed, and `https://christitustech.github.io/3plates/` served the generated docs site.
 - 2026-07-06: Local Expo web acceptance passed against `http://localhost:8081` and the local API on `http://localhost:3000`, covering expired bearer-token rejection, valid bearer login, session refresh, account-link OAuth start, progress and streak update, preference update, workout mode selection and published list rendering, web push token registration, and sign-out.
+- 2026-07-06: Local Expo web accessibility and responsive sweep passed on desktop `1366x900` and mobile `390x844` viewports for home, sign-in, progress, preferences, workouts, and notifications, including named links/buttons, labeled inputs, keyboard tab stops, and horizontal overflow checks.
 
 ## Acceptance
 

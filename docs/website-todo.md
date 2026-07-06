@@ -143,11 +143,11 @@ Definition of done:
 
 Depends on: Phases 2-4
 
-- [ ] Build website screens in [apps/mobile/app](../apps/mobile/app/) with web-compatible layout behavior.
-- [ ] Add login, streak, mode selection, and workout list screens/states.
-- [ ] Reuse shared API client patterns from [apps/mobile/src/lib/api.ts](../apps/mobile/src/lib/api.ts).
+- [x] Build website screens in [apps/mobile/app](../apps/mobile/app/) with web-compatible layout behavior.
+- [x] Add login, streak, mode selection, and workout list screens/states.
+- [x] Reuse shared API client patterns from [apps/mobile/src/lib/api.ts](../apps/mobile/src/lib/api.ts).
 - [x] Add web notification token registration path aligned to existing notification device model.
-- [ ] Keep language and state names identical across web, Android, and iOS.
+- [x] Keep language and state names identical across web, Android, and iOS.
 
 Definition of done:
 

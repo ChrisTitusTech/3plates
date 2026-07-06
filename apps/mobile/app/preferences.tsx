@@ -88,7 +88,7 @@ export default function PreferencesScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.title}>Preferences</Text>
       <Text style={styles.body}>
         Keep shared user settings synced through the backend, with cache and pending updates for offline sessions.
@@ -102,9 +102,15 @@ export default function PreferencesScreen() {
           {(['light', 'dark', 'system'] as Preferences['theme'][]).map((candidate) => (
             <Pressable
               key={candidate}
-              style={[styles.choice, theme === candidate ? styles.choiceActive : null]}
+              style={[
+                styles.choice,
+                theme === candidate ? styles.choiceActive : null,
+                busy ? styles.buttonDisabled : null,
+              ]}
               onPress={() => setTheme(candidate)}
               disabled={busy}
+              accessibilityRole="button"
+              accessibilityState={{ selected: theme === candidate, disabled: busy }}
             >
               <Text style={[styles.choiceText, theme === candidate ? styles.choiceTextActive : null]}>
                 {candidate}
@@ -118,9 +124,15 @@ export default function PreferencesScreen() {
           {(['metric', 'imperial'] as Preferences['units'][]).map((candidate) => (
             <Pressable
               key={candidate}
-              style={[styles.choice, units === candidate ? styles.choiceActive : null]}
+              style={[
+                styles.choice,
+                units === candidate ? styles.choiceActive : null,
+                busy ? styles.buttonDisabled : null,
+              ]}
               onPress={() => setUnits(candidate)}
               disabled={busy}
+              accessibilityRole="button"
+              accessibilityState={{ selected: units === candidate, disabled: busy }}
             >
               <Text style={[styles.choiceText, units === candidate ? styles.choiceTextActive : null]}>
                 {candidate}
@@ -132,8 +144,10 @@ export default function PreferencesScreen() {
         <Text style={styles.label}>Reminder time (HH:MM)</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Reminder time"
           placeholder="07:00"
           autoCapitalize="none"
+          returnKeyType="done"
           value={reminderTime}
           onChangeText={setReminderTime}
           editable={!busy}
@@ -141,8 +155,10 @@ export default function PreferencesScreen() {
 
         <View style={styles.row}>
           <Pressable
-            style={styles.button}
+            style={[styles.button, busy || status === 'loading' ? styles.buttonDisabled : null]}
             disabled={busy || status === 'loading'}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy || status === 'loading' }}
             onPress={() => {
               void withBusy(async () => {
                 const nextPreferences: Preferences = {
@@ -158,8 +174,10 @@ export default function PreferencesScreen() {
             <Text style={styles.buttonText}>Save preferences</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void withBusy(async () => {
                 const flushed = await flushPendingMutations();
@@ -178,7 +196,13 @@ export default function PreferencesScreen() {
       {message ? <Text style={styles.success}>{message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Pressable style={styles.retry} disabled={busy} onPress={() => void loadPreferences()}>
+      <Pressable
+        style={[styles.retry, busy ? styles.buttonDisabled : null]}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: busy }}
+        onPress={() => void loadPreferences()}
+      >
         <Text style={styles.retryText}>Retry load</Text>
       </Pressable>
     </ScrollView>
@@ -186,7 +210,14 @@ export default function PreferencesScreen() {
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
     backgroundColor: '#f6f1e8',
@@ -269,6 +300,9 @@ const styles = StyleSheet.create({
   buttonSecondaryText: {
     color: '#1f1a17',
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   meta: {
     color: '#5b4e45',

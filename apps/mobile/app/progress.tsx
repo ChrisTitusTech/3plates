@@ -98,7 +98,7 @@ export default function ProgressScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.title}>Progress</Text>
       <Text style={styles.body}>
         Read and update progress against the backend, with cached fallback and queued offline writes.
@@ -110,7 +110,9 @@ export default function ProgressScreen() {
         <Text style={styles.label}>Streak days</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Streak days"
           keyboardType="number-pad"
+          returnKeyType="done"
           value={streakDays}
           onChangeText={setStreakDays}
           editable={!busy}
@@ -119,7 +121,9 @@ export default function ProgressScreen() {
         <Text style={styles.label}>Completed workouts</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Completed workouts"
           keyboardType="number-pad"
+          returnKeyType="done"
           value={completedWorkouts}
           onChangeText={setCompletedWorkouts}
           editable={!busy}
@@ -128,8 +132,10 @@ export default function ProgressScreen() {
         <Text style={styles.label}>Last workout at (ISO datetime)</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Last workout at ISO datetime"
           placeholder="2026-05-10T18:30:00.000Z"
           autoCapitalize="none"
+          returnKeyType="done"
           value={lastWorkoutAt}
           onChangeText={setLastWorkoutAt}
           editable={!busy}
@@ -137,8 +143,10 @@ export default function ProgressScreen() {
 
         <View style={styles.row}>
           <Pressable
-            style={styles.button}
+            style={[styles.button, busy || status === 'loading' ? styles.buttonDisabled : null]}
             disabled={busy || status === 'loading'}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy || status === 'loading' }}
             onPress={() => {
               void withBusy(async () => {
                 const result = await updateProgress(progressPayload);
@@ -149,8 +157,10 @@ export default function ProgressScreen() {
             <Text style={styles.buttonText}>Save progress</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void withBusy(async () => {
                 const flushed = await flushPendingMutations();
@@ -169,7 +179,13 @@ export default function ProgressScreen() {
       {message ? <Text style={styles.success}>{message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Pressable style={styles.retry} disabled={busy} onPress={() => void loadProgress()}>
+      <Pressable
+        style={[styles.retry, busy ? styles.buttonDisabled : null]}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: busy }}
+        onPress={() => void loadProgress()}
+      >
         <Text style={styles.retryText}>Retry load</Text>
       </Pressable>
     </ScrollView>
@@ -177,7 +193,14 @@ export default function ProgressScreen() {
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
     backgroundColor: '#f6f1e8',
@@ -242,6 +265,9 @@ const styles = StyleSheet.create({
   buttonSecondaryText: {
     color: '#1f1a17',
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   meta: {
     color: '#5b4e45',

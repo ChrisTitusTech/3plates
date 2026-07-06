@@ -105,7 +105,7 @@ export default function NotificationsScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.title}>Notifications</Text>
       <Text style={styles.body}>
         Register this device token with the backend and queue registration if the network is unavailable.
@@ -119,9 +119,15 @@ export default function NotificationsScreen() {
           {(['ios', 'android', 'web'] as NotificationDevice['platform'][]).map((candidate) => (
             <Pressable
               key={candidate}
-              style={[styles.choice, platform === candidate ? styles.choiceActive : null]}
+              style={[
+                styles.choice,
+                platform === candidate ? styles.choiceActive : null,
+                busy ? styles.buttonDisabled : null,
+              ]}
               onPress={() => setPlatform(candidate)}
               disabled={busy}
+              accessibilityRole="button"
+              accessibilityState={{ selected: platform === candidate, disabled: busy }}
             >
               <Text style={[styles.choiceText, platform === candidate ? styles.choiceTextActive : null]}>
                 {candidate}
@@ -133,8 +139,10 @@ export default function NotificationsScreen() {
         <Text style={styles.label}>Push token</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Push token"
           autoCapitalize="none"
           placeholder="ExponentPushToken[...]"
+          returnKeyType="done"
           value={pushToken}
           onChangeText={setPushToken}
           editable={!busy}
@@ -142,8 +150,10 @@ export default function NotificationsScreen() {
 
         <View style={styles.row}>
           <Pressable
-            style={styles.button}
+            style={[styles.button, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void withBusy(async () => {
                 const result = await requestNotificationDeviceRegistration();
@@ -161,8 +171,15 @@ export default function NotificationsScreen() {
             <Text style={styles.buttonText}>Use this device</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[
+              styles.buttonSecondary,
+              busy || pushToken.trim().length === 0 ? styles.buttonDisabled : null,
+            ]}
             disabled={busy || pushToken.trim().length === 0}
+            accessibilityRole="button"
+            accessibilityState={{
+              disabled: busy || pushToken.trim().length === 0,
+            }}
             onPress={() => {
               void withBusy(async () => {
                 await registerResolvedDevice({
@@ -175,8 +192,10 @@ export default function NotificationsScreen() {
             <Text style={styles.buttonSecondaryText}>Register token</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void withBusy(async () => {
                 const flushed = await flushPendingMutations();
@@ -203,7 +222,13 @@ export default function NotificationsScreen() {
       {message ? <Text style={styles.success}>{message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Pressable style={styles.retry} disabled={busy} onPress={() => void loadState()}>
+      <Pressable
+        style={[styles.retry, busy ? styles.buttonDisabled : null]}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: busy }}
+        onPress={() => void loadState()}
+      >
         <Text style={styles.retryText}>Retry load</Text>
       </Pressable>
     </ScrollView>
@@ -211,7 +236,14 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
     backgroundColor: '#f6f1e8',
@@ -294,6 +326,9 @@ const styles = StyleSheet.create({
   buttonSecondaryText: {
     color: '#1f1a17',
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   infoCard: {
     borderRadius: 14,

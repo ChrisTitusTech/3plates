@@ -64,7 +64,7 @@ export default function WorkoutsScreen() {
   const pagination = workoutList?.pagination ?? null;
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.title}>Workout options</Text>
       <Text style={styles.body}>
         Choose a workout mode and load the published workout list from the backend catalog.
@@ -74,9 +74,14 @@ export default function WorkoutsScreen() {
         {modes.map((candidate) => (
           <Pressable
             key={candidate.value}
-            style={[styles.choice, mode === candidate.value ? styles.choiceActive : null]}
+            style={[
+              styles.choice,
+              mode === candidate.value ? styles.choiceActive : null,
+              status === 'loading' ? styles.buttonDisabled : null,
+            ]}
             onPress={() => setMode(candidate.value)}
             disabled={status === 'loading'}
+            accessibilityLabel={`Show ${candidate.label} workouts`}
             accessibilityRole="button"
             accessibilityState={{
               selected: mode === candidate.value,
@@ -122,6 +127,7 @@ export default function WorkoutsScreen() {
             onPress={() => {
               void loadWorkouts(mode, pagination.page - 1);
             }}
+            accessibilityLabel="Load previous workout page"
             accessibilityRole="button"
             accessibilityState={{
               disabled: !pagination.hasPreviousPage || status === 'loading',
@@ -143,6 +149,7 @@ export default function WorkoutsScreen() {
             onPress={() => {
               void loadWorkouts(mode, pagination.page + 1);
             }}
+            accessibilityLabel="Load next workout page"
             accessibilityRole="button"
             accessibilityState={{
               disabled: !pagination.hasNextPage || status === 'loading',
@@ -159,6 +166,7 @@ export default function WorkoutsScreen() {
         onPress={() => {
           void loadWorkouts(mode, pagination?.page ?? 1);
         }}
+        accessibilityLabel="Retry loading workouts"
         accessibilityRole="button"
         accessibilityState={{ disabled: status === 'loading' }}
       >
@@ -169,7 +177,14 @@ export default function WorkoutsScreen() {
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
     backgroundColor: '#f6f1e8',

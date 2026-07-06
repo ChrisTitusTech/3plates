@@ -167,7 +167,7 @@ export default function SignInScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.title}>Sign in and session management</Text>
       <Text style={styles.body}>
         Start OAuth from mobile and complete callback automatically through deep links,
@@ -180,9 +180,15 @@ export default function SignInScreen() {
           {(['google', 'apple'] as AuthProvider[]).map((candidate) => (
             <Pressable
               key={candidate}
-              style={[styles.choice, provider === candidate ? styles.choiceActive : null]}
+              style={[
+                styles.choice,
+                provider === candidate ? styles.choiceActive : null,
+                busy ? styles.buttonDisabled : null,
+              ]}
               onPress={() => setProvider(candidate)}
               disabled={busy}
+              accessibilityRole="button"
+              accessibilityState={{ selected: provider === candidate, disabled: busy }}
             >
               <Text
                 style={[
@@ -196,8 +202,10 @@ export default function SignInScreen() {
           ))}
         </View>
         <Pressable
-          style={styles.button}
+          style={[styles.button, busy ? styles.buttonDisabled : null]}
           disabled={busy}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy }}
           onPress={() => {
             void runBusyAction(async () => {
               const started = await startAuth(provider, mobileRedirectUrl);
@@ -215,16 +223,20 @@ export default function SignInScreen() {
         <Text style={styles.sectionTitle}>Token</Text>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Session token"
           placeholder="session token"
           autoCapitalize="none"
+          returnKeyType="done"
           value={tokenInput}
           onChangeText={setTokenInput}
           editable={!busy}
         />
         <View style={styles.row}>
           <Pressable
-            style={styles.button}
+            style={[styles.button, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void runBusyAction(async () => {
                 const token = tokenInput.trim();
@@ -237,8 +249,10 @@ export default function SignInScreen() {
             <Text style={styles.buttonText}>Save token</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void runBusyAction(async () => {
                 const refreshed = await refreshSessionAndPersist();
@@ -254,8 +268,10 @@ export default function SignInScreen() {
         </View>
         <View style={styles.row}>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void runBusyAction(async () => {
                 const meResult = await fetchMe();
@@ -271,8 +287,10 @@ export default function SignInScreen() {
             <Text style={styles.buttonSecondaryText}>Load account</Text>
           </Pressable>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void runBusyAction(async () => {
                 const result = await signOutAndClearSession();
@@ -300,9 +318,15 @@ export default function SignInScreen() {
             {(['google', 'apple'] as AuthProvider[]).map((candidate) => (
               <Pressable
                 key={candidate}
-                style={[styles.choice, provider === candidate ? styles.choiceActive : null]}
+                style={[
+                  styles.choice,
+                  provider === candidate ? styles.choiceActive : null,
+                  busy ? styles.buttonDisabled : null,
+                ]}
                 onPress={() => setProvider(candidate)}
                 disabled={busy}
+                accessibilityRole="button"
+                accessibilityState={{ selected: provider === candidate, disabled: busy }}
               >
                 <Text
                   style={[
@@ -316,8 +340,10 @@ export default function SignInScreen() {
             ))}
           </View>
           <Pressable
-            style={styles.buttonSecondary}
+            style={[styles.buttonSecondary, busy ? styles.buttonDisabled : null]}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
             onPress={() => {
               void runBusyAction(async () => {
                 const started = await startAuthLink(provider, mobileRedirectUrl);
@@ -347,7 +373,13 @@ export default function SignInScreen() {
       {message ? <Text style={styles.success}>{message}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Pressable style={styles.retryButton} disabled={busy || loading} onPress={() => void loadSession()}>
+      <Pressable
+        style={[styles.retryButton, busy || loading ? styles.buttonDisabled : null]}
+        disabled={busy || loading}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: busy || loading }}
+        onPress={() => void loadSession()}
+      >
         <Text style={styles.retryText}>Retry load</Text>
       </Pressable>
     </ScrollView>
@@ -355,7 +387,14 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
     backgroundColor: '#f6f1e8',
@@ -438,6 +477,9 @@ const styles = StyleSheet.create({
   buttonSecondaryText: {
     color: '#1f1a17',
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   card: {
     borderRadius: 14,

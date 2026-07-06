@@ -1,5 +1,5 @@
 import { Link } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const tiles = [
   { href: '/sign-in', label: 'Sign in' },
@@ -11,7 +11,7 @@ const tiles = [
 
 export default function HomeScreen() {
   return (
-    <View style={styles.page}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <Text style={styles.kicker}>3plates</Text>
       <Text style={styles.title}>One account. Three surfaces. One source of truth.</Text>
       <Text style={styles.body}>
@@ -21,18 +21,26 @@ export default function HomeScreen() {
 
       <View style={styles.grid}>
         {tiles.map((tile) => (
-          <Link key={tile.href} href={tile.href} style={styles.tile}>
-            <Text style={styles.tileLabel}>{tile.label}</Text>
+          <Link key={tile.href} href={tile.href} asChild>
+            <Pressable style={styles.tile} accessibilityRole="link">
+              <Text style={styles.tileLabel}>{tile.label}</Text>
+            </Pressable>
           </Link>
         ))}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: '#f6f1e8',
+  },
   page: {
-    flex: 1,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    flexGrow: 1,
     backgroundColor: '#f6f1e8',
     padding: 24,
     justifyContent: 'center',

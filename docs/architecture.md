@@ -5,7 +5,7 @@ title: Architecture
 
 # Architecture
 
-## Recommended layout
+## Repository layout
 
 ```text
 apps/
@@ -14,7 +14,6 @@ apps/
 packages/
   contract/      ts-rest route definitions and shared request/response types
   db/            Drizzle schema, migrations, and database helpers
-  ui/            Optional shared React Native components
 ```
 
 ## Recommended stack

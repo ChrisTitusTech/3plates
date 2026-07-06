@@ -14,10 +14,14 @@ This documentation set captures the product requirements, implementation rules, 
 - Central storage for user progress, preferences, and account state.
 - Contract-first client and backend integration.
 
-## Start here
+## Core docs
 
 - [Requirements](requirements.md)
 - [Architecture](architecture.md)
 - [Setup](setup.md)
-- [Scaffold Roadmap](scaffold-todo.md)
-- [Website Implementation Spec](website-todo.md)
+- [VPS Setup Checklist](vps-setup-checklist.md)
+
+## Active task lists
+
+- [VPS And Website Tasks](vps-website-tasks.md)
+- [Mobile Tasks](mobile-tasks.md)

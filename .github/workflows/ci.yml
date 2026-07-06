@@ -87,3 +87,31 @@ jobs:
 
       - name: Run workspace tests
         run: pnpm test
+
+      - name: Run database smoke test
+        shell: bash
+        run: |
+          pnpm dev:api > /tmp/3plates-api.log 2>&1 &
+          api_pid=$!
+
+          cleanup() {
+            kill "$api_pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then
+              pnpm db:test
+              exit 0
+            fi
+
+            if ! kill -0 "$api_pid" >/dev/null 2>&1; then
+              cat /tmp/3plates-api.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          cat /tmp/3plates-api.log
+          exit 1

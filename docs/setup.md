@@ -7,7 +7,7 @@ title: Setup
 
 ## Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 24.
 - pnpm 9 or newer.
 - A local Postgres database.
 - Expo tooling for mobile development.
@@ -49,11 +49,11 @@ Copy `.env.example` to `.env` and fill in the values for:
 
 ## VPS recreation
 
-1. Copy the same `.env` values to the VPS.
-2. Run `pnpm db:setup` or `docker-compose up -d postgres && pnpm db:migrate` on the VPS.
-3. Keep the port binding on `127.0.0.1` so Postgres is only reachable from services on that server.
-4. If the API also runs on the VPS host, keep `DATABASE_URL` pointed at `localhost`.
-5. If the API later moves into Docker on the same compose network, remove the published port and connect to the `postgres` service name instead.
+Use [VPS Setup Checklist](vps-setup-checklist.md) for a full rebuild and validation pass.
+
+The database rule is fixed for the current scaffold: keep Postgres bound to `127.0.0.1` and keep `DATABASE_URL` pointed at `localhost` when the API runs on the VPS host. If the API later moves into Docker on the same compose network, remove the published Postgres port and connect to the `postgres` service name instead.
+
+Track remaining VPS and website validation work in [VPS And Website Tasks](vps-website-tasks.md).
 
 ## GitHub Pages setup
 

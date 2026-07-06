@@ -277,6 +277,64 @@ test('schema validations reject invalid data', () => {
   );
 });
 
+test('session, streak, and workout list fields stay explicit in the contract', () => {
+  assert.equal(
+    authSessionSchema.parse({
+      sessionToken: 'session-token-123',
+      expiresAt: '2026-05-10T00:00:00.000Z',
+      isNewUser: false,
+      effectiveLevel: 3,
+      user: {
+        id: 'user_1',
+        email: 'user@example.com',
+        displayName: null,
+      },
+    }).effectiveLevel,
+    3,
+  );
+
+  assert.throws(() =>
+    authSessionSchema.parse({
+      sessionToken: 'session-token-123',
+      expiresAt: '2026-05-10T00:00:00.000Z',
+      user: {
+        id: 'user_1',
+        email: 'user@example.com',
+        displayName: null,
+      },
+    }),
+  );
+
+  assert.equal(
+    progressSchema.parse({
+      streakDays: 7,
+      completedWorkouts: 12,
+      lastWorkoutAt: null,
+    }).streakDays,
+    7,
+  );
+  assert.throws(() => progressSchema.parse({ completedWorkouts: 12, lastWorkoutAt: null }));
+
+  assert.deepEqual(
+    workoutListQuerySchema.parse({ mode: 'strength_metcon' }),
+    {
+      mode: 'strength_metcon',
+      page: 1,
+      pageSize: 20,
+      order: 'published_at_desc_created_at_desc_id_asc',
+    },
+  );
+
+  assert.throws(() =>
+    workoutListResponseSchema.parse({
+      workouts: [],
+      ordering: {
+        applied: 'published_at_desc_created_at_desc_id_asc',
+      },
+    }),
+  );
+});
+
 test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.health.path, '/health');
   assert.equal(appContract.authStart.path, '/auth/start');

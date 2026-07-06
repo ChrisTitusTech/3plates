@@ -157,8 +157,8 @@ Definition of done:
 
 Depends on: all prior phases
 
-- [ ] Add contract tests for new workout and streak fields in [packages/contract/src/index.test.ts](../packages/contract/src/index.test.ts).
-- [ ] Add DB-backed API integration tests for first-login level assignment and streak idempotency in [apps/api/src/server.db.test.ts](../apps/api/src/server.db.test.ts).
+- [x] Add contract tests for new workout and streak fields in [packages/contract/src/index.test.ts](../packages/contract/src/index.test.ts).
+- [x] Add DB-backed API integration tests for first-login level assignment and streak idempotency in [apps/api/src/server.db.test.ts](../apps/api/src/server.db.test.ts).
 - [x] Add API tests for workout mode filtering.
 - [x] Add API tests for admin publish behavior.
 - [x] Add API tests for admin authorization and optimistic concurrency conflict behavior.

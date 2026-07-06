@@ -4,62 +4,20 @@ import test from 'node:test';
 
 import { createServer } from './server.js';
 import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
-import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import { env } from './env.js';
-import { createMemoryUserStateStore } from './user-state-store.js';
-import { computeStreakUpdate } from './user-state-store.js';
+import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-
-function createFakeProvider(provider: AuthProviderName, profile: OAuthIdentity): OAuthProviderAdapter {
-  return {
-    provider,
-    buildAuthorizationUrl({ state }) {
-      return `https://auth.example/${provider}?state=${state}`;
-    },
-    async exchangeCode() {
-      return profile;
-    },
-  };
-}
+import { assertApiError, createFakeProvider, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
   const authRepository = createMemoryAuthRepository();
 
-  const googleProfile: OAuthIdentity = {
-    provider: 'google',
-    providerSubjectId: `google-${randomUUID()}`,
-    email: `google-${randomUUID()}@example.com`,
-    emailVerified: true,
-    displayName: 'Google Demo User',
-  };
-
-  const appleProfile: OAuthIdentity = {
-    provider: 'apple',
-    providerSubjectId: `apple-${randomUUID()}`,
-    email: `apple-${randomUUID()}@example.com`,
-    emailVerified: true,
-    displayName: 'Apple Demo User',
-  };
-
-  const authService = createAuthService({
-    authRepository,
-    userStateStore: store,
-    providers: {
-      google: createFakeProvider('google', googleProfile),
-      apple: createFakeProvider('apple', appleProfile),
-    },
-  });
-
-  const app = createServer({ store, authService });
-
-  return {
-    app,
+  return createTestAuthApp({
     authRepository,
     store,
-    googleProfile,
-    appleProfile,
-  };
+    displayNamePrefix: 'Demo',
+  });
 }
 
 function createMissingUserStateApp() {
@@ -149,48 +107,6 @@ function createMissingUserStateApp() {
 
   return {
     app: createServer({ store, authService }),
-  };
-}
-
-function assertApiError(body: unknown, code: string, message: string) {
-  assert.deepEqual(body, {
-    ok: false,
-    error: {
-      code,
-      message,
-    },
-  });
-}
-
-async function signIn(app: ReturnType<typeof createAuthenticatedApp>['app'], provider: AuthProviderName) {
-  const startResponse = await app.inject({
-    method: 'POST',
-    url: '/auth/start',
-    payload: {
-      provider,
-      redirectTo: 'http://localhost:3000/welcome',
-    },
-  });
-
-  assert.equal(startResponse.statusCode, 200);
-  const startBody = startResponse.json();
-
-  const callbackUrl = new URL('/auth/callback', 'http://localhost:3000');
-  callbackUrl.searchParams.set('provider', provider);
-  callbackUrl.searchParams.set('code', `${provider}-code`);
-  callbackUrl.searchParams.set('state', startBody.state);
-
-  const callbackResponse = await app.inject({
-    method: 'GET',
-    url: callbackUrl.toString(),
-  });
-
-  assert.equal(callbackResponse.statusCode, 200);
-  const callbackBody = callbackResponse.json();
-
-  return {
-    sessionToken: callbackBody.sessionToken as string,
-    user: callbackBody.user as { id: string; email: string | null; displayName: string | null },
   };
 }
 
@@ -549,6 +465,44 @@ test('auth link keeps the existing account and links a second identity', async (
 
   assert.equal(linkedUserResponse.statusCode, 200);
   assert.equal(linkedUserResponse.json().id, googleSession.user.id);
+});
+
+test('auth link rejects an identity already linked to another user', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const googleSession = await signIn(app, 'google');
+  const appleSession = await signIn(app, 'apple');
+  assert.notEqual(appleSession.user.id, googleSession.user.id);
+
+  const linkStartResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/link',
+    headers: {
+      authorization: `Bearer ${googleSession.sessionToken}`,
+    },
+    payload: {
+      provider: 'apple',
+      redirectTo: 'http://localhost:3000/settings',
+    },
+  });
+
+  assert.equal(linkStartResponse.statusCode, 200);
+  const linkStartBody = linkStartResponse.json() as { state: string };
+
+  const linkCallbackResponse = await app.inject({
+    method: 'GET',
+    url: `/auth/callback?provider=apple&code=apple-code&state=${encodeURIComponent(linkStartBody.state)}`,
+  });
+
+  assert.equal(linkCallbackResponse.statusCode, 409);
+  assertApiError(
+    linkCallbackResponse.json(),
+    'conflict_or_stale_update',
+    'Identity is already linked to another account.',
+  );
 });
 
 test('returning sign-in is not marked as a new user and keeps level', async (t) => {

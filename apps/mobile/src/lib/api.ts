@@ -232,6 +232,15 @@ function buildAuthHeaders(token: string | null) {
   };
 }
 
+async function requireSessionToken() {
+  const token = await getSessionToken();
+  if (!token) {
+    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
+  }
+
+  return token;
+}
+
 function toApiRequestError(status: number, body: unknown) {
   if (isApiErrorBody(body)) {
     return new ApiRequestError(status, body.error.message, body.error.code);
@@ -349,10 +358,7 @@ export async function startAuth(provider: AuthProvider, redirectTo?: string) {
 }
 
 export async function startAuthLink(provider: AuthProvider, redirectTo?: string) {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   const response = await contractClient.authLinkStart({
     extraHeaders: buildAuthHeaders(token),
@@ -393,10 +399,7 @@ export async function completeAuthCallback(input: {
 }
 
 export async function refreshSessionAndPersist() {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   const response = await contractClient.authRefresh({
     extraHeaders: buildAuthHeaders(token),
@@ -473,10 +476,7 @@ export async function signOutAndClearSession() {
 }
 
 export async function fetchMe(): Promise<CachedReadResult<User>> {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.me({
@@ -511,10 +511,7 @@ export async function fetchMe(): Promise<CachedReadResult<User>> {
 }
 
 export async function fetchProgress(): Promise<CachedReadResult<Progress>> {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.progress({
@@ -549,10 +546,7 @@ export async function fetchProgress(): Promise<CachedReadResult<Progress>> {
 }
 
 export async function updateProgress(progress: Progress) {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.updateProgress({
@@ -589,10 +583,7 @@ export async function updateProgress(progress: Progress) {
 }
 
 export async function fetchPreferences(): Promise<CachedReadResult<Preferences>> {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.preferences({
@@ -630,10 +621,7 @@ export async function fetchWorkoutsByMode(
   mode: WorkoutMode,
   options: FetchWorkoutsOptions = {},
 ): Promise<CachedReadResult<WorkoutListResponse>> {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   const page = options.page ?? 1;
   const pageSize = options.pageSize ?? 20;
@@ -679,10 +667,7 @@ export async function fetchWorkoutsByMode(
 }
 
 export async function updatePreferences(preferences: Preferences) {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.updatePreferences({
@@ -719,10 +704,7 @@ export async function updatePreferences(preferences: Preferences) {
 }
 
 export async function registerDevice(device: NotificationDevice) {
-  const token = await getSessionToken();
-  if (!token) {
-    throw new ApiRequestError(401, 'No session token is available.', 'invalid_auth');
-  }
+  const token = await requireSessionToken();
 
   try {
     const response = await contractClient.registerDevice({

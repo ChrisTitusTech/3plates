@@ -250,6 +250,10 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           .limit(1);
 
         if (existingIdentity) {
+          if (identity.linkedUserId && existingIdentity.userId !== identity.linkedUserId) {
+            throw conflictOrStaleUpdateError('Identity is already linked to another account.');
+          }
+
           const user = await getUserById(existingIdentity.userId);
           if (!user) {
             throw missingUserStateError('Identity references a missing user.');
@@ -264,23 +268,6 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         }
 
         if (identity.linkedUserId) {
-          const [linkedIdentity] = await transaction
-            .select({
-              userId: userIdentities.userId,
-            })
-            .from(userIdentities)
-            .where(
-              and(
-                eq(userIdentities.provider, identity.provider),
-                eq(userIdentities.providerSubjectId, identity.providerSubjectId),
-              ),
-            )
-            .limit(1);
-
-          if (linkedIdentity && linkedIdentity.userId !== identity.linkedUserId) {
-            throw conflictOrStaleUpdateError('Identity is already linked to another account.');
-          }
-
           await transaction.insert(userIdentities).values({
             userId: identity.linkedUserId,
             provider: identity.provider,
@@ -768,6 +755,10 @@ export function createMemoryUserStateStore(): UserStateStore & {
     async resolveOAuthIdentity(input) {
       const existingUserId = identitiesByKey.get(identityKey(input.provider, input.providerSubjectId));
       if (existingUserId) {
+        if (input.linkedUserId && existingUserId !== input.linkedUserId) {
+          throw conflictOrStaleUpdateError('Identity is already linked to another account.');
+        }
+
         const existingUser = usersById.get(existingUserId);
         if (!existingUser) {
           throw missingUserStateError('Identity references a missing user.');

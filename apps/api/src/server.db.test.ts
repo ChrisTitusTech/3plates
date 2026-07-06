@@ -1,75 +1,86 @@
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { createDatabaseClient, notificationDevices, users, workouts } from '@3plates/db';
 import { eq, sql } from 'drizzle-orm';
 
-import { createAuthService, createDbAuthRepository } from './auth-service.js';
-import type { AuthProviderName, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
+import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { createServer } from './server.js';
+import { createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
+const dbIntegrationSkipReason = getDbIntegrationSkipReason();
+let dbSetupPromise: Promise<void> | null = null;
 
-function createFakeProvider(provider: AuthProviderName, profile: OAuthIdentity): OAuthProviderAdapter {
-  return {
-    provider,
-    buildAuthorizationUrl({ state }) {
-      return `https://auth.example/${provider}?state=${state}`;
-    },
-    async exchangeCode() {
-      return profile;
-    },
-  };
+function commandSucceeds(command: string, args: string[]) {
+  try {
+    execFileSync(command, args, { cwd: repoRootDirectory, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getDbIntegrationSkipReason() {
+  if (!env.DATABASE_URL) {
+    return 'DATABASE_URL is not configured.';
+  }
+
+  if (!commandSucceeds('docker', ['info'])) {
+    return 'Docker is not available to start the Postgres test database.';
+  }
+
+  if (!commandSucceeds('docker', ['compose', 'version']) && !commandSucceeds('docker-compose', ['version'])) {
+    return 'Docker Compose is not available to start the Postgres test database.';
+  }
+
+  return null;
+}
+
+function dbTest(name: string, run: () => Promise<void>) {
+  if (dbIntegrationSkipReason) {
+    test(name, { skip: dbIntegrationSkipReason }, run);
+    return;
+  }
+
+  test(name, run);
+}
+
+function requireDatabaseUrl() {
+  if (!env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for DB-backed API tests.');
+  }
+
+  return env.DATABASE_URL;
+}
+
+async function setupDatabase() {
+  dbSetupPromise ??= Promise.resolve().then(() => {
+    execFileSync('pnpm', ['db:setup'], { cwd: repoRootDirectory, stdio: 'inherit' });
+  });
+
+  await dbSetupPromise;
 }
 
 function createDbApp() {
-  const store = createDbUserStateStore(env.DATABASE_URL ?? '');
-  const authRepository = createDbAuthRepository(env.DATABASE_URL ?? '');
+  const databaseUrl = requireDatabaseUrl();
+  const store = createDbUserStateStore(databaseUrl);
+  const authRepository = createDbAuthRepository(databaseUrl);
 
-  const googleProfile: OAuthIdentity = {
-    provider: 'google',
-    providerSubjectId: `google-${randomUUID()}`,
-    email: `google-${randomUUID()}@example.com`,
-    emailVerified: true,
-    displayName: 'Google Integration User',
-  };
-
-  const appleProfile: OAuthIdentity = {
-    provider: 'apple',
-    providerSubjectId: `apple-${randomUUID()}`,
-    email: `apple-${randomUUID()}@example.com`,
-    emailVerified: true,
-    displayName: 'Apple Integration User',
-  };
-
-  const authService = createAuthService({
+  return createTestAuthApp({
     authRepository,
-    userStateStore: store,
-    providers: {
-      google: createFakeProvider('google', googleProfile),
-      apple: createFakeProvider('apple', appleProfile),
-    },
-  });
-
-  const app = createServer({ store, authService });
-
-  return {
-    app,
     store,
-    authRepository,
-    googleProfile,
-    appleProfile,
-  };
+    displayNamePrefix: 'Integration',
+  });
 }
 
 async function withDbApp<T>(run: (context: ReturnType<typeof createDbApp>) => Promise<T>) {
-  execSync('pnpm db:setup', { cwd: repoRootDirectory, stdio: 'inherit' });
+  await setupDatabase();
 
-  const { db: cleanupDb, close: cleanupClose } = createDatabaseClient(process.env['DATABASE_URL'] ?? '');
+  const { db: cleanupDb, close: cleanupClose } = createDatabaseClient(requireDatabaseUrl());
   try {
     await cleanupDb.execute(sql`TRUNCATE workouts, users CASCADE`);
   } finally {
@@ -87,36 +98,7 @@ async function withDbApp<T>(run: (context: ReturnType<typeof createDbApp>) => Pr
   }
 }
 
-async function signIn(app: ReturnType<typeof createDbApp>['app'], provider: AuthProviderName, redirectTo: string) {
-  const startResponse = await app.inject({
-    method: 'POST',
-    url: '/auth/start',
-    payload: {
-      provider,
-      redirectTo,
-    },
-  });
-
-  assert.equal(startResponse.statusCode, 200);
-  const startBody = startResponse.json();
-
-  const callbackResponse = await app.inject({
-    method: 'GET',
-    url: `/auth/callback?provider=${provider}&code=${provider}-code&state=${encodeURIComponent(startBody.state)}`,
-  });
-
-  assert.equal(callbackResponse.statusCode, 200);
-  return callbackResponse.json() as {
-    sessionToken: string;
-    expiresAt: string;
-    user: { id: string; email: string | null; displayName: string | null };
-    isNewUser: boolean;
-    effectiveLevel: number;
-    redirectTo: string | null;
-  };
-}
-
-test('DB-backed auth sessions persist through Postgres', async () => {
+dbTest('DB-backed auth sessions persist through Postgres', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
     assert.equal(signedIn.isNewUser, true);
@@ -176,7 +158,7 @@ test('DB-backed auth sessions persist through Postgres', async () => {
   });
 });
 
-test('DB-backed returning sign-in keeps level and is not new user', async () => {
+dbTest('DB-backed returning sign-in keeps level and is not new user', async () => {
   await withDbApp(async ({ app }) => {
     const first = await signIn(app, 'google', 'http://localhost:3000/welcome');
     assert.equal(first.isNewUser, true);
@@ -189,7 +171,7 @@ test('DB-backed returning sign-in keeps level and is not new user', async () => 
   });
 });
 
-test('DB-backed linked identities keep the same user record', async () => {
+dbTest('DB-backed linked identities keep the same user record', async () => {
   await withDbApp(async ({ app }) => {
     const googleSession = await signIn(app, 'google', 'http://localhost:3000/welcome');
 
@@ -231,7 +213,44 @@ test('DB-backed linked identities keep the same user record', async () => {
   });
 });
 
-test('DB-backed progress, preferences, and devices persist through Postgres', async () => {
+dbTest('DB-backed auth link rejects an identity already linked to another user', async () => {
+  await withDbApp(async ({ app }) => {
+    const googleSession = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    const appleSession = await signIn(app, 'apple', 'http://localhost:3000/welcome');
+    assert.notEqual(appleSession.user.id, googleSession.user.id);
+
+    const linkStartResponse = await app.inject({
+      method: 'POST',
+      url: '/auth/link',
+      headers: {
+        authorization: `Bearer ${googleSession.sessionToken}`,
+      },
+      payload: {
+        provider: 'apple',
+        redirectTo: 'http://localhost:3000/settings',
+      },
+    });
+
+    assert.equal(linkStartResponse.statusCode, 200);
+    const linkStartBody = linkStartResponse.json() as { state: string };
+
+    const linkCallbackResponse = await app.inject({
+      method: 'GET',
+      url: `/auth/callback?provider=apple&code=apple-code&state=${encodeURIComponent(linkStartBody.state)}`,
+    });
+
+    assert.equal(linkCallbackResponse.statusCode, 409);
+    assert.deepEqual(linkCallbackResponse.json(), {
+      ok: false,
+      error: {
+        code: 'conflict_or_stale_update',
+        message: 'Identity is already linked to another account.',
+      },
+    });
+  });
+});
+
+dbTest('DB-backed progress, preferences, and devices persist through Postgres', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
 
@@ -333,11 +352,10 @@ test('DB-backed progress, preferences, and devices persist through Postgres', as
   });
 });
 
-test('DB-backed workouts endpoint filters by mode and returns published entries only', async () => {
+dbTest('DB-backed workouts endpoint filters by mode and returns published entries only', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
-    const databaseUrl = env.DATABASE_URL ?? '';
-    const { db, close } = createDatabaseClient(databaseUrl);
+    const { db, close } = createDatabaseClient(requireDatabaseUrl());
 
     try {
       await db.insert(workouts).values([
@@ -430,7 +448,7 @@ test('DB-backed workouts endpoint filters by mode and returns published entries 
   });
 });
 
-test('DB-backed progress updates use last-write-wins conflict semantics', async () => {
+dbTest('DB-backed progress updates use last-write-wins conflict semantics', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
 
@@ -481,7 +499,7 @@ test('DB-backed progress updates use last-write-wins conflict semantics', async 
   });
 });
 
-test('DB-backed notification registration dedupes by push token across users', async () => {
+dbTest('DB-backed notification registration dedupes by push token across users', async () => {
   await withDbApp(async ({ app }) => {
     const googleSession = await signIn(app, 'google', 'http://localhost:3000/welcome');
     const appleSession = await signIn(app, 'apple', 'http://localhost:3000/welcome');
@@ -515,11 +533,7 @@ test('DB-backed notification registration dedupes by push token across users', a
 
     assert.equal(secondRegistrationResponse.statusCode, 200);
 
-    if (!env.DATABASE_URL) {
-      throw new Error('DATABASE_URL is required for DB-backed device dedupe verification.');
-    }
-
-    const { db, close } = createDatabaseClient(env.DATABASE_URL);
+    const { db, close } = createDatabaseClient(requireDatabaseUrl());
     try {
       const rows = await db
         .select({
@@ -542,7 +556,7 @@ test('DB-backed notification registration dedupes by push token across users', a
   });
 });
 
-test('DB-backed login streak is set to 1 on first sign-in and persists to Postgres', async () => {
+dbTest('DB-backed login streak is set to 1 on first sign-in and persists to Postgres', async () => {
   await withDbApp(async ({ app }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
 
@@ -557,7 +571,7 @@ test('DB-backed login streak is set to 1 on first sign-in and persists to Postgr
   });
 });
 
-test('DB-backed login streak is idempotent when updateStreakOnLogin is called twice on the same day', async () => {
+dbTest('DB-backed login streak is idempotent when updateStreakOnLogin is called twice on the same day', async () => {
   await withDbApp(async ({ app, store }) => {
     const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
     // Use a past date safely distant from today to avoid consecutive-day false positives
@@ -577,7 +591,7 @@ test('DB-backed login streak is idempotent when updateStreakOnLogin is called tw
   });
 });
 
-test('DB-backed admin workout write path enforces admin auth and publish controls user visibility', async () => {
+dbTest('DB-backed admin workout write path enforces admin auth and publish controls user visibility', async () => {
   await withDbApp(async ({ app }) => {
     const originalAdminApiKey = env.ADMIN_API_KEY;
     env.ADMIN_API_KEY = 'test-admin-key';

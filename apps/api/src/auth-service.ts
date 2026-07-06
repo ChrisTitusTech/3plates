@@ -1,19 +1,19 @@
-import { authSessions, mobileAuthExchanges, oauthTransactions } from '@3plates/db';
-import { createDatabaseClient } from '@3plates/db';
-import { and, eq, gt } from 'drizzle-orm';
+import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions } from '@3plates/db';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
   createHash,
   randomBytes,
   randomUUID,
-  createPrivateKey,
 } from 'node:crypto';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
-import { isNull } from 'drizzle-orm';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
 import { env } from './env.js';
 import type { AuthProviderName, AuthTransactionPurpose, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import type { UserRecord, UserStateStore } from './user-state-store.js';
+
+const oauthTransactionTtlMilliseconds = 10 * 60 * 1000;
+const mobileExchangeTtlMilliseconds = 2 * 60 * 1000;
 
 export type OAuthTransaction = {
   state: string;
@@ -481,17 +481,28 @@ export function createAuthService(input: {
   authRepository: AuthRepository;
   userStateStore: UserStateStore;
   providers: Record<AuthProviderName, OAuthProviderAdapter>;
-}) : AuthService {
+}): AuthService {
+  const { authRepository, providers, userStateStore } = input;
   const sessionTtlMilliseconds = env.AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
-  const mobileExchangeTtlMilliseconds = 2 * 60 * 1000;
+
+  async function issueSession(userId: string) {
+    const sessionToken = buildSessionToken();
+    const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
+    await authRepository.createSession(userId, hashToken(sessionToken), expiresAt);
+
+    return {
+      sessionToken,
+      expiresAt,
+    };
+  }
 
   return {
     async startAuthentication({ provider, purpose, redirectTo, userId, callbackUrl }) {
       const codeVerifier = buildCodeVerifier();
       const state = randomUUID();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + oauthTransactionTtlMilliseconds);
 
-      await input.authRepository.createOAuthTransaction({
+      await authRepository.createOAuthTransaction({
         state,
         provider,
         purpose,
@@ -501,7 +512,7 @@ export function createAuthService(input: {
         expiresAt,
       });
 
-      const next = input.providers[provider].buildAuthorizationUrl({
+      const next = providers[provider].buildAuthorizationUrl({
         redirectUri: callbackUrl,
         state,
         codeChallenge: buildCodeChallenge(codeVerifier),
@@ -511,7 +522,7 @@ export function createAuthService(input: {
     },
 
     async completeAuthentication({ provider, code, state, callbackUrl }) {
-      const transaction = await input.authRepository.consumeOAuthTransaction(state);
+      const transaction = await authRepository.consumeOAuthTransaction(state);
       if (!transaction) {
         throw conflictOrStaleUpdateError('OAuth transaction is missing or expired.');
       }
@@ -524,26 +535,23 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
-      const identity = await input.providers[provider].exchangeCode({
+      const identity = await providers[provider].exchangeCode({
         code,
         redirectUri: callbackUrl,
         codeVerifier: transaction.codeVerifier,
       });
 
-      const resolved = await input.userStateStore.resolveOAuthIdentity({
+      const resolved = await userStateStore.resolveOAuthIdentity({
         ...identity,
         linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
       });
 
-      await input.userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
-
-      const sessionToken = buildSessionToken();
-      const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
-      await input.authRepository.createSession(resolved.user.id, hashToken(sessionToken), expiresAt);
+      await userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
+      const session = await issueSession(resolved.user.id);
 
       return {
-        sessionToken,
-        expiresAt: expiresAt.toISOString(),
+        sessionToken: session.sessionToken,
+        expiresAt: session.expiresAt.toISOString(),
         user: resolved.user,
         isNewUser: resolved.isNewUser,
         effectiveLevel: resolved.effectiveLevel,
@@ -556,7 +564,7 @@ export function createAuthService(input: {
       const exchangeExpiresAt = new Date(Date.now() + mobileExchangeTtlMilliseconds);
       const sessionExpiresAt = new Date(expiresAt);
 
-      await input.authRepository.createMobileAuthExchange({
+      await authRepository.createMobileAuthExchange({
         code: exchangeCode,
         sessionToken,
         sessionExpiresAt,
@@ -573,7 +581,7 @@ export function createAuthService(input: {
     },
 
     async redeemMobileAuthExchangeCode(code) {
-      const exchange = await input.authRepository.consumeMobileAuthExchange(code);
+      const exchange = await authRepository.consumeMobileAuthExchange(code);
       if (!exchange) {
         return null;
       }
@@ -588,31 +596,29 @@ export function createAuthService(input: {
     },
 
     async refreshSession(token) {
-      const session = await input.authRepository.getSessionByToken(token);
+      const session = await authRepository.getSessionByToken(token);
       if (!session) {
         return null;
       }
 
       if (session.expiresAt.getTime() <= Date.now()) {
-        await input.authRepository.revokeSessionByToken(token);
+        await authRepository.revokeSessionByToken(token);
         return null;
       }
 
-      await input.authRepository.revokeSessionByToken(token);
+      await authRepository.revokeSessionByToken(token);
 
-      const user = await input.userStateStore.getUserById(session.userId);
+      const user = await userStateStore.getUserById(session.userId);
       if (!user) {
         throw missingUserStateError('Session belongs to a deleted user.');
       }
-      const effectiveLevel = await input.userStateStore.getUserEffectiveLevel(user.id);
+      const effectiveLevel = await userStateStore.getUserEffectiveLevel(user.id);
 
-      const sessionToken = buildSessionToken();
-      const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
-      await input.authRepository.createSession(user.id, hashToken(sessionToken), expiresAt);
+      const refreshedSession = await issueSession(user.id);
 
       return {
-        sessionToken,
-        expiresAt: expiresAt.toISOString(),
+        sessionToken: refreshedSession.sessionToken,
+        expiresAt: refreshedSession.expiresAt.toISOString(),
         user,
         isNewUser: false,
         effectiveLevel,
@@ -620,18 +626,18 @@ export function createAuthService(input: {
     },
 
     async signOut(token) {
-      const session = await input.authRepository.getSessionByToken(token);
+      const session = await authRepository.getSessionByToken(token);
       if (!session) {
         return false;
       }
 
-      await input.authRepository.revokeSessionByToken(token);
+      await authRepository.revokeSessionByToken(token);
 
       return session.expiresAt.getTime() > Date.now();
     },
 
     async resolveRequestUser(token) {
-      const session = await input.authRepository.getSessionByToken(token);
+      const session = await authRepository.getSessionByToken(token);
       if (!session) {
         return null;
       }
@@ -640,7 +646,7 @@ export function createAuthService(input: {
         return null;
       }
 
-      const user = await input.userStateStore.getUserById(session.userId);
+      const user = await userStateStore.getUserById(session.userId);
       if (!user) {
         throw missingUserStateError('Session belongs to a deleted user.');
       }

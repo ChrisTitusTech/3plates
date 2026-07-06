@@ -162,6 +162,7 @@ Depends on: all prior phases
 - [x] Add API tests for workout mode filtering.
 - [x] Add API tests for admin publish behavior.
 - [x] Add API tests for admin authorization and optimistic concurrency conflict behavior.
+- [x] Add automated screen accessibility guard for shared web/native semantics in [apps/mobile/src/lib/screen-accessibility.test.ts](../apps/mobile/src/lib/screen-accessibility.test.ts).
 - [ ] Validate web behavior manually in Expo web plus regression checks on iOS/Android clients.
 - [ ] Validate web accessibility and responsive behavior (keyboard navigation, semantic labels, mobile breakpoints).
 
@@ -209,12 +210,12 @@ Minimum auth/session parity additions:
 
 ## Acceptance Checklist
 
-- [ ] First login creates user and assigns level 1 exactly once.
-- [ ] Daily streak increases once per day regardless of login client.
-- [ ] User can choose active recovery or strength metcon mode.
-- [ ] Workout list comes from DB based on selected mode.
-- [ ] Newly published admin workouts appear in user lists without client updates.
-- [ ] Admin permissions are enforced for workout writes and covered by tests.
+- [x] First login creates user and assigns level 1 exactly once.
+- [x] Daily streak increases once per day regardless of login client.
+- [x] User can choose active recovery or strength metcon mode.
+- [x] Workout list comes from DB based on selected mode.
+- [x] Newly published admin workouts appear in user lists without client updates.
+- [x] Admin permissions are enforced for workout writes and covered by tests.
 - [x] Workout list pagination and ordering are deterministic and documented.
 - [x] Account linking, refresh, expiry, and sign-out behavior match across all clients.
 - [x] Web push token registration uses same backend model as mobile clients.

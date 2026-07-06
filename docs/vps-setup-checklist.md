@@ -119,6 +119,37 @@ curl -fsS "http://127.0.0.1:${API_PORT}/health"
 4. Confirm the public firewall does not expose Postgres or the API port.
 5. Confirm SSH access still works before ending the maintenance session.
 
+## Public web proxy
+
+The VPS uses Caddy as the public HTTP/S front door. Keep Caddy on public
+`80` and `443`, and keep backend services on loopback-only ports.
+
+Current production routing:
+
+- `forum.christitus.com` -> Discourse on `127.0.0.1:8443`.
+- `3spinningplates.com` -> static Expo web export in `/var/www/3plates`.
+- `api.3spinningplates.com` -> Fastify API on `127.0.0.1:3000`.
+
+Current backend bind rules:
+
+- Discourse exposes `127.0.0.1:8080:80` and `127.0.0.1:8443:443`.
+- The 3plates API uses `API_HOST=127.0.0.1`.
+- Postgres remains on `127.0.0.1:${POSTGRES_PORT}`.
+
+Validate the public routes after any proxy or deployment change:
+
+```bash
+curl -I https://forum.christitus.com
+curl -I https://3spinningplates.com
+curl -fsS https://api.3spinningplates.com/health
+```
+
+Validate the expected listener layout on the VPS:
+
+```bash
+ss -tulpn | grep -E ':(80|443|3000|8080|8443)\b'
+```
+
 ## Ready criteria
 
 - `pnpm typecheck` passes.

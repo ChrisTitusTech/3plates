@@ -38,6 +38,7 @@ Finish the remaining VPS setup, website validation, and documentation publishing
 - 2026-07-06: GitHub Pages is configured with the `jekyll-gh-pages.yml` workflow on `main`; the workflow builds from `./docs`, recent runs passed, and `https://christitustech.github.io/3plates/` served the generated docs site.
 - 2026-07-06: Local Expo web acceptance passed against `http://localhost:8081` and the local API on `http://localhost:3000`, covering expired bearer-token rejection, valid bearer login, session refresh, account-link OAuth start, progress and streak update, preference update, workout mode selection and published list rendering, web push token registration, and sign-out.
 - 2026-07-06: Local Expo web accessibility and responsive sweep passed on desktop `1366x900` and mobile `390x844` viewports for home, sign-in, progress, preferences, workouts, and notifications, including named links/buttons, labeled inputs, keyboard tab stops, and horizontal overflow checks.
+- 2026-07-06: VPS Caddy activation passed with Caddy serving public `80`/`443`, Discourse preserved on loopback backend ports for `forum.christitus.com`, static Expo web served from `/var/www/3plates` for `3spinningplates.com`, and the Fastify API health route served at `https://api.3spinningplates.com/health`.
 
 ## Acceptance
 

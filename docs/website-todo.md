@@ -146,7 +146,7 @@ Depends on: Phases 2-4
 - [ ] Build website screens in [apps/mobile/app](../apps/mobile/app/) with web-compatible layout behavior.
 - [ ] Add login, streak, mode selection, and workout list screens/states.
 - [ ] Reuse shared API client patterns from [apps/mobile/src/lib/api.ts](../apps/mobile/src/lib/api.ts).
-- [ ] Add web notification token registration path aligned to existing notification device model.
+- [x] Add web notification token registration path aligned to existing notification device model.
 - [ ] Keep language and state names identical across web, Android, and iOS.
 
 Definition of done:
@@ -217,7 +217,7 @@ Minimum auth/session parity additions:
 - [ ] Admin permissions are enforced for workout writes and covered by tests.
 - [ ] Workout list pagination and ordering are deterministic and documented.
 - [ ] Account linking, refresh, expiry, and sign-out behavior match across all clients.
-- [ ] Web push token registration uses same backend model as mobile clients.
+- [x] Web push token registration uses same backend model as mobile clients.
 - [ ] Web accessibility and responsive acceptance checks pass.
 - [ ] Web, Android, and iOS behavior matches for login, streak, and workout options.
 

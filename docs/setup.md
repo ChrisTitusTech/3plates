@@ -19,6 +19,7 @@ Copy `.env.example` to `.env` and fill in the values for:
 - `DATABASE_URL`
 - `API_PORT`
 - `EXPO_PUBLIC_API_URL`
+- `EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY` for browser push subscriptions, when web push is enabled.
 - `AUTH_SECRET`
 - `AUTH_BASE_URL`
 - `AUTH_GOOGLE_CLIENT_ID`

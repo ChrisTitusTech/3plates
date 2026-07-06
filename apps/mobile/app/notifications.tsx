@@ -17,6 +17,10 @@ import {
   getPendingMutationCount,
   registerDevice,
 } from '../src/lib/api';
+import {
+  getRuntimeNotificationPlatform,
+  requestNotificationDeviceRegistration,
+} from '../src/lib/notification-registration';
 
 function formatError(error: unknown) {
   if (error instanceof ApiRequestError) {
@@ -32,7 +36,9 @@ function formatError(error: unknown) {
 
 export default function NotificationsScreen() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [platform, setPlatform] = useState<NotificationDevice['platform']>('ios');
+  const [platform, setPlatform] = useState<NotificationDevice['platform']>(
+    getRuntimeNotificationPlatform(),
+  );
   const [pushToken, setPushToken] = useState('');
   const [user, setUser] = useState<User | null>(null);
   const [source, setSource] = useState<'network' | 'cache' | null>(null);
@@ -86,6 +92,18 @@ export default function NotificationsScreen() {
     }
   };
 
+  const registerResolvedDevice = async (device: NotificationDevice) => {
+    setPlatform(device.platform);
+    setPushToken(device.pushToken);
+
+    const result = await registerDevice(device);
+    setMessage(
+      result.queued
+        ? 'Offline: device registration queued.'
+        : 'Device registered on backend.',
+    );
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <Text style={styles.title}>Notifications</Text>
@@ -125,18 +143,36 @@ export default function NotificationsScreen() {
         <View style={styles.row}>
           <Pressable
             style={styles.button}
-            disabled={busy || pushToken.trim().length === 0}
+            disabled={busy}
             onPress={() => {
               void withBusy(async () => {
-                const result = await registerDevice({
-                  platform,
-                  pushToken: pushToken.trim(),
-                });
-                setMessage(result.queued ? 'Offline: device registration queued.' : 'Device registered on backend.');
+                const result = await requestNotificationDeviceRegistration();
+
+                if (result.status !== 'ready') {
+                  setPlatform(result.platform);
+                  setMessage(result.message);
+                  return;
+                }
+
+                await registerResolvedDevice(result.device);
               });
             }}
           >
-            <Text style={styles.buttonText}>Register device</Text>
+            <Text style={styles.buttonText}>Use this device</Text>
+          </Pressable>
+          <Pressable
+            style={styles.buttonSecondary}
+            disabled={busy || pushToken.trim().length === 0}
+            onPress={() => {
+              void withBusy(async () => {
+                await registerResolvedDevice({
+                  platform,
+                  pushToken: pushToken.trim(),
+                });
+              });
+            }}
+          >
+            <Text style={styles.buttonSecondaryText}>Register token</Text>
           </Pressable>
           <Pressable
             style={styles.buttonSecondary}

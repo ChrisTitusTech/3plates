@@ -32,6 +32,7 @@ Required `.env` values for the database and API validation path:
 - `POSTGRES_PORT`
 - `DATABASE_URL`
 - `API_PORT`
+- `API_HOST`
 - `AUTH_SECRET`
 - `AUTH_BASE_URL`
 - `AUTH_GOOGLE_CLIENT_ID`
@@ -103,14 +104,20 @@ ss -tulpn | grep 5432
 
 The expected bind address is `127.0.0.1:${POSTGRES_PORT}`, not `0.0.0.0:${POSTGRES_PORT}`.
 
-2. Confirm the API health route from the VPS:
+2. Confirm the API binds to loopback when it is running behind the VPS web proxy:
+
+```bash
+API_HOST=127.0.0.1
+```
+
+3. Confirm the API health route from the VPS:
 
 ```bash
 curl -fsS "http://127.0.0.1:${API_PORT}/health"
 ```
 
-3. Confirm the public firewall does not expose Postgres.
-4. Confirm SSH access still works before ending the maintenance session.
+4. Confirm the public firewall does not expose Postgres or the API port.
+5. Confirm SSH access still works before ending the maintenance session.
 
 ## Ready criteria
 

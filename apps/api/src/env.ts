@@ -15,6 +15,7 @@ config({
 
 const envSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(3000),
+  API_HOST: z.string().min(1).default('0.0.0.0'),
   DATABASE_URL: z.string().min(1).optional(),
   AUTH_SECRET: z.string().min(1).optional(),
   AUTH_BASE_URL: z.string().url().optional(),

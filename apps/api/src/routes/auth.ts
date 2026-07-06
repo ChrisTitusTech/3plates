@@ -185,6 +185,29 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     };
   });
 
+  app.post('/auth/sign-out', {
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request) => {
+    const token = request.authToken ?? getAuthorizationToken(request);
+    if (!token) {
+      throw invalidAuthError();
+    }
+
+    const signedOut = await authService.signOut(token);
+    if (!signedOut) {
+      throw invalidAuthError();
+    }
+
+    return {
+      signedOut: true,
+    };
+  });
+
   app.post('/auth/exchange', {
     config: {
       rateLimit: {

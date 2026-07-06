@@ -295,6 +295,52 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
   assert.deepEqual(refreshedUserResponse.json(), callbackBody.user);
 });
 
+test('auth sign-out revokes the active bearer session', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const { sessionToken } = await signIn(app, 'google');
+
+  const signOutResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/sign-out',
+    headers: {
+      authorization: `Bearer ${sessionToken}`,
+    },
+    payload: {},
+  });
+
+  assert.equal(signOutResponse.statusCode, 200);
+  assert.deepEqual(signOutResponse.json(), {
+    signedOut: true,
+  });
+
+  const revokedTokenResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me',
+    headers: {
+      authorization: `Bearer ${sessionToken}`,
+    },
+  });
+
+  assert.equal(revokedTokenResponse.statusCode, 401);
+
+  const missingTokenResponse = await app.inject({
+    method: 'POST',
+    url: '/auth/sign-out',
+    payload: {},
+  });
+
+  assert.equal(missingTokenResponse.statusCode, 401);
+  assertApiError(
+    missingTokenResponse.json(),
+    'invalid_auth',
+    'Authentication required.',
+  );
+});
+
 test('auth routes return typed errors for invalid payload and stale callbacks', async (t) => {
   const { app } = createAuthenticatedApp();
   t.after(async () => {

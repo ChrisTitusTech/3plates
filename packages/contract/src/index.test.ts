@@ -341,6 +341,7 @@ test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.authLinkStart.path, '/auth/link');
   assert.equal(appContract.authCallback.path, '/auth/callback');
   assert.equal(appContract.authRefresh.path, '/auth/refresh');
+  assert.equal(appContract.authSignOut.path, '/auth/sign-out');
   assert.equal(appContract.me.path, '/users/me');
   assert.equal(appContract.progress.path, '/users/me/progress');
   assert.equal(appContract.updateProgress.path, '/users/me/progress');

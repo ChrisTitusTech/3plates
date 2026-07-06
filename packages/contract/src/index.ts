@@ -199,6 +199,17 @@ export const appContract = c.router({
       }),
     },
   },
+  authSignOut: {
+    method: 'POST',
+    path: '/auth/sign-out',
+    body: z.object({}),
+    responses: {
+      401: apiErrorSchema,
+      200: z.object({
+        signedOut: z.literal(true),
+      }),
+    },
+  },
   authExchange: {
     method: 'POST',
     path: '/auth/exchange',

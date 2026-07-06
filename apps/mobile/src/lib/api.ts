@@ -32,6 +32,7 @@ type ContractClientLike = Pick<
   | 'authCallback'
   | 'authExchange'
   | 'authRefresh'
+  | 'authSignOut'
   | 'me'
   | 'progress'
   | 'updateProgress'
@@ -327,6 +328,9 @@ export async function setSessionToken(token: string | null) {
 export async function clearSession() {
   await writeSessionToken(null);
   await storage.removeItem(storageKeys.me);
+  await storage.removeItem(storageKeys.progress);
+  await storage.removeItem(storageKeys.preferences);
+  await storage.removeItem(storageKeys.pendingMutations);
 }
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
@@ -424,6 +428,48 @@ export async function redeemMobileAuthExchangeCode(code: string) {
   await writeCache(storageKeys.me, response.body.user);
 
   return response.body;
+}
+
+export async function signOutAndClearSession() {
+  const token = await getSessionToken();
+  if (!token) {
+    await clearSession();
+    return {
+      signedOut: false,
+    };
+  }
+
+  try {
+    const response = await contractClient.authSignOut({
+      extraHeaders: buildAuthHeaders(token),
+      body: {},
+    });
+
+    await clearSession();
+
+    if (response.status === 200) {
+      return {
+        signedOut: true,
+      };
+    }
+
+    if (response.status === 401) {
+      return {
+        signedOut: false,
+      };
+    }
+
+    throw toApiRequestError(response.status, response.body);
+  } catch (error) {
+    if (isNetworkFailure(error)) {
+      await clearSession();
+      return {
+        signedOut: false,
+      };
+    }
+
+    throw error;
+  }
 }
 
 export async function fetchMe(): Promise<CachedReadResult<User>> {

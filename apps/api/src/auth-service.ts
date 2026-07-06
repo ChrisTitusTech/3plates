@@ -94,6 +94,7 @@ export type AuthService = {
     isNewUser: boolean;
     effectiveLevel: number;
   } | null>;
+  signOut(token: string): Promise<boolean>;
   resolveRequestUser(token: string): Promise<UserRecord | null>;
 };
 
@@ -616,6 +617,17 @@ export function createAuthService(input: {
         isNewUser: false,
         effectiveLevel,
       };
+    },
+
+    async signOut(token) {
+      const session = await input.authRepository.getSessionByToken(token);
+      if (!session) {
+        return false;
+      }
+
+      await input.authRepository.revokeSessionByToken(token);
+
+      return session.expiresAt.getTime() > Date.now();
     },
 
     async resolveRequestUser(token) {

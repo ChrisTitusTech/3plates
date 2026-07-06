@@ -16,6 +16,7 @@ import {
   getSessionToken,
   registerDevice,
   setSessionToken,
+  signOutAndClearSession,
   updateProgress,
   updatePreferences,
 } from './api';
@@ -58,6 +59,7 @@ function createClientOverrides(overrides: Record<string, unknown>) {
     authCallback: async () => ({ status: 500, body: null }),
     authExchange: async () => ({ status: 500, body: null }),
     authRefresh: async () => ({ status: 500, body: null }),
+    authSignOut: async () => ({ status: 500, body: null }),
     me: async () => ({ status: 500, body: null }),
     progress: async () => ({ status: 500, body: null }),
     updateProgress: async () => ({ status: 500, body: null }),
@@ -309,6 +311,80 @@ test('queued notification device registration flushes when online again', async 
   assert.equal(registerCalls, 2);
 
   await clearSession();
+  assert.equal(await getSessionToken(), null);
+});
+
+test('sign out revokes backend session and clears local queued state', async (t) => {
+  const storage = createMemoryStorage();
+  let signOutHeaders: Record<string, string | undefined> | undefined;
+
+  const client = createClientOverrides({
+    registerDevice: async () => {
+      throw new Error('Network request failed');
+    },
+    authSignOut: async (input: { extraHeaders?: Record<string, string | undefined> }) => {
+      signOutHeaders = input.extraHeaders;
+      return {
+        status: 200,
+        body: {
+          signedOut: true,
+        },
+      };
+    },
+  });
+
+  __setApiTestAdapters({
+    storage,
+    client: client as never,
+  });
+
+  t.after(() => {
+    __resetApiTestAdapters();
+  });
+
+  await setSessionToken('token-sign-out');
+  await registerDevice({
+    platform: 'ios',
+    pushToken: 'ExponentPushToken[pending-before-sign-out]',
+  });
+  assert.equal(await getPendingMutationCount(), 1);
+
+  const result = await signOutAndClearSession();
+  assert.equal(result.signedOut, true);
+  assert.equal(signOutHeaders?.authorization, 'Bearer token-sign-out');
+  assert.equal(await getSessionToken(), null);
+  assert.equal(await getPendingMutationCount(), 0);
+});
+
+test('sign out clears local session when backend token is already invalid', async (t) => {
+  const storage = createMemoryStorage();
+
+  const client = createClientOverrides({
+    authSignOut: async () => ({
+      status: 401,
+      body: {
+        ok: false,
+        error: {
+          code: 'invalid_auth',
+          message: 'Authentication required.',
+        },
+      },
+    }),
+  });
+
+  __setApiTestAdapters({
+    storage,
+    client: client as never,
+  });
+
+  t.after(() => {
+    __resetApiTestAdapters();
+  });
+
+  await setSessionToken('stale-token-sign-out');
+
+  const result = await signOutAndClearSession();
+  assert.equal(result.signedOut, false);
   assert.equal(await getSessionToken(), null);
 });
 

@@ -14,13 +14,13 @@ import type { AuthProvider, User } from '@3plates/contract';
 
 import {
   ApiRequestError,
-  clearSession,
   fetchMe,
   getPendingMutationCount,
   getSessionToken,
   redeemMobileAuthExchangeCode,
   refreshSessionAndPersist,
   setSessionToken,
+  signOutAndClearSession,
   startAuth,
   startAuthLink,
 } from '../src/lib/api';
@@ -275,15 +275,19 @@ export default function SignInScreen() {
             disabled={busy}
             onPress={() => {
               void runBusyAction(async () => {
-                await clearSession();
+                const result = await signOutAndClearSession();
                 setTokenInput('');
                 setActiveToken(null);
                 setCurrentUser(null);
-                setMessage('Session removed from local storage.');
+                setMessage(
+                  result.signedOut
+                    ? 'Signed out and revoked the backend session.'
+                    : 'Signed out locally.',
+                );
               });
             }}
           >
-            <Text style={styles.buttonSecondaryText}>Sign out locally</Text>
+            <Text style={styles.buttonSecondaryText}>Sign out</Text>
           </Pressable>
         </View>
       </View>

@@ -10,7 +10,6 @@ const screenFiles = [
   'sign-in.tsx',
   'progress.tsx',
   'preferences.tsx',
-  'notifications.tsx',
   'workouts.tsx',
 ] as const;
 
@@ -118,4 +117,14 @@ test('app screens keep accessible interactive controls', () => {
       assert.ok(attributes.has('accessibilityLabel'), `${location} TextInput should set accessibilityLabel`);
     }
   }
+});
+
+test('signed-out and dashboard navigation stays minimal', () => {
+  const indexSource = readFileSync(path.join(process.cwd(), 'app', 'index.tsx'), 'utf8');
+  const signInSource = parseScreen('sign-in.tsx');
+
+  assert.doesNotMatch(indexSource, /Notifications/);
+  assert.doesNotMatch(indexSource, /\/notifications/);
+  assert.equal(collectJsxElements(signInSource, 'Pressable').length, 1);
+  assert.equal(collectJsxElements(signInSource, 'TextInput').length, 0);
 });

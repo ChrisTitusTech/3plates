@@ -7,7 +7,7 @@ export default function RootLayout() {
       <StatusBar style="auto" />
       <Stack
         screenOptions={{
-          headerTitleAlign: 'center',
+          headerShown: false,
         }}
       />
     </>

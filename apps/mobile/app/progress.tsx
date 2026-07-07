@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
   Pressable,
   ScrollView,
@@ -10,7 +11,9 @@ import {
 
 import type { Progress } from '@3plates/contract';
 
-import { ApiRequestError, fetchProgress, flushPendingMutations, getPendingMutationCount, updateProgress } from '../src/lib/api';
+import { SettingsCog } from '../src/components/SettingsCog';
+import { ApiRequestError, clearSession, fetchProgress, flushPendingMutations, getPendingMutationCount, updateProgress } from '../src/lib/api';
+import { useRequireSession } from '../src/lib/use-require-session';
 
 function toMessage(error: unknown) {
   if (error instanceof ApiRequestError) {
@@ -34,6 +37,8 @@ function sanitizeInteger(value: string) {
 }
 
 export default function ProgressScreen() {
+  const router = useRouter();
+  const sessionReady = useRequireSession();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [streakDays, setStreakDays] = useState('0');
   const [completedWorkouts, setCompletedWorkouts] = useState('0');
@@ -74,14 +79,22 @@ export default function ProgressScreen() {
         setMessage('Showing cached progress while offline.');
       }
     } catch (loadError) {
+      if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
+        await clearSession();
+        router.replace('/sign-in');
+        return;
+      }
+
       setError(toMessage(loadError));
       setStatus('error');
     }
   };
 
   useEffect(() => {
-    void loadProgress();
-  }, []);
+    if (sessionReady) {
+      void loadProgress();
+    }
+  }, [sessionReady]);
 
   const withBusy = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -91,18 +104,28 @@ export default function ProgressScreen() {
       await action();
       setPendingCount(await getPendingMutationCount());
     } catch (actionError) {
+      if (actionError instanceof ApiRequestError && actionError.code === 'invalid_auth') {
+        await clearSession();
+        router.replace('/sign-in');
+        return;
+      }
+
       setError(toMessage(actionError));
     } finally {
       setBusy(false);
     }
   };
 
+  if (!sessionReady) {
+    return <View style={styles.blank} />;
+  }
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <Text style={styles.title}>Progress</Text>
-      <Text style={styles.body}>
-        Read and update progress against the backend, with cached fallback and queued offline writes.
-      </Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Progress</Text>
+        <SettingsCog />
+      </View>
 
       {status === 'loading' ? <Text style={styles.meta}>Loading progress...</Text> : null}
 
@@ -193,8 +216,12 @@ export default function ProgressScreen() {
 }
 
 const styles = StyleSheet.create({
+  blank: {
+    flex: 1,
+    backgroundColor: '#f7f8fa',
+  },
   scroll: {
-    backgroundColor: '#f6f1e8',
+    backgroundColor: '#f7f8fa',
   },
   page: {
     width: '100%',
@@ -203,40 +230,42 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
-    backgroundColor: '#f6f1e8',
+    backgroundColor: '#f7f8fa',
+    gap: 12,
+  },
+  headerRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
   },
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#1f1a17',
-  },
-  body: {
-    color: '#4c423b',
-    fontSize: 16,
-    lineHeight: 24,
+    color: '#17202a',
   },
   card: {
-    backgroundColor: '#fff7ef',
-    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2d4c5',
+    borderColor: '#dce3ea',
     padding: 14,
     gap: 10,
   },
   label: {
-    color: '#2f251f',
+    color: '#2d3742',
     fontWeight: '700',
     fontSize: 14,
   },
   input: {
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cdb9a4',
+    borderColor: '#cfd6df',
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: '#ffffff',
-    color: '#2f251f',
+    color: '#17202a',
   },
   row: {
     flexDirection: 'row',
@@ -245,8 +274,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   button: {
-    backgroundColor: '#1f1a17',
-    borderRadius: 10,
+    backgroundColor: '#17202a',
+    borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -255,42 +284,42 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   buttonSecondary: {
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#1f1a17',
-    backgroundColor: '#fff7ef',
+    borderColor: '#17202a',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   buttonSecondaryText: {
-    color: '#1f1a17',
+    color: '#17202a',
     fontWeight: '700',
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   meta: {
-    color: '#5b4e45',
+    color: '#53606c',
     fontSize: 13,
   },
   success: {
-    color: '#0a6a3c',
+    color: '#067647',
     fontWeight: '600',
   },
   error: {
-    color: '#8a1f2d',
+    color: '#b42318',
     fontWeight: '600',
   },
   retry: {
     alignSelf: 'flex-start',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#8b5e34',
+    borderColor: '#17202a',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   retryText: {
-    color: '#8b5e34',
+    color: '#17202a',
     fontWeight: '700',
   },
 });

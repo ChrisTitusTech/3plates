@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
-import { ApiRequestError, fetchWorkoutsByMode } from '../src/lib/api';
+import { SettingsCog } from '../src/components/SettingsCog';
+import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
+import { useRequireSession } from '../src/lib/use-require-session';
 
 function toMessage(error: unknown) {
   if (error instanceof ApiRequestError) {
@@ -25,6 +28,8 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
 const pageSize = 10;
 
 export default function WorkoutsScreen() {
+  const router = useRouter();
+  const sessionReady = useRequireSession();
   const [mode, setMode] = useState<WorkoutMode>('active_recovery');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [source, setSource] = useState<'network' | 'cache' | null>(null);
@@ -51,24 +56,36 @@ export default function WorkoutsScreen() {
         setMessage('No workouts are published for this mode yet.');
       }
     } catch (loadError) {
+      if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
+        await clearSession();
+        router.replace('/sign-in');
+        return;
+      }
+
       setError(toMessage(loadError));
       setStatus('error');
     }
   };
 
   useEffect(() => {
-    void loadWorkouts(mode, 1);
-  }, [mode]);
+    if (sessionReady) {
+      void loadWorkouts(mode, 1);
+    }
+  }, [mode, sessionReady]);
 
   const workouts = workoutList?.workouts ?? [];
   const pagination = workoutList?.pagination ?? null;
 
+  if (!sessionReady) {
+    return <View style={styles.blank} />;
+  }
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <Text style={styles.title}>Workout options</Text>
-      <Text style={styles.body}>
-        Choose a workout mode and load the published workout list from the backend catalog.
-      </Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Workouts</Text>
+        <SettingsCog />
+      </View>
 
       <View style={styles.row}>
         {modes.map((candidate) => (
@@ -177,8 +194,12 @@ export default function WorkoutsScreen() {
 }
 
 const styles = StyleSheet.create({
+  blank: {
+    flex: 1,
+    backgroundColor: '#f7f8fa',
+  },
   scroll: {
-    backgroundColor: '#f6f1e8',
+    backgroundColor: '#f7f8fa',
   },
   page: {
     width: '100%',
@@ -187,18 +208,20 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
-    backgroundColor: '#f6f1e8',
+    backgroundColor: '#f7f8fa',
+    gap: 12,
+  },
+  headerRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
   },
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#1f1a17',
-  },
-  body: {
-    color: '#4c423b',
-    fontSize: 16,
-    lineHeight: 24,
+    color: '#17202a',
   },
   row: {
     flexDirection: 'row',
@@ -207,72 +230,72 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   choice: {
-    borderRadius: 999,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#8b5e34',
-    backgroundColor: '#fff7ef',
+    borderColor: '#17202a',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   choiceActive: {
-    backgroundColor: '#8b5e34',
+    backgroundColor: '#17202a',
   },
   choiceLabel: {
-    color: '#8b5e34',
+    color: '#17202a',
     fontWeight: '700',
   },
   choiceLabelActive: {
-    color: '#fff7ef',
+    color: '#ffffff',
   },
   meta: {
-    color: '#5b4e45',
+    color: '#53606c',
     fontSize: 13,
   },
   list: {
     gap: 10,
   },
   card: {
-    backgroundColor: '#fff7ef',
-    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2d4c5',
+    borderColor: '#dce3ea',
     padding: 14,
     gap: 6,
   },
   cardTitle: {
-    color: '#1f1a17',
+    color: '#17202a',
     fontSize: 18,
     fontWeight: '800',
   },
   cardMeta: {
-    color: '#8b5e34',
+    color: '#53606c',
     fontSize: 13,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   cardBody: {
-    color: '#4c423b',
+    color: '#2d3742',
     lineHeight: 20,
   },
   success: {
-    color: '#0a6a3c',
+    color: '#067647',
     fontWeight: '600',
   },
   error: {
-    color: '#8a1f2d',
+    color: '#b42318',
     fontWeight: '600',
   },
   retry: {
     alignSelf: 'flex-start',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#8b5e34',
+    borderColor: '#17202a',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   retryText: {
-    color: '#8b5e34',
+    color: '#17202a',
     fontWeight: '700',
   },
   paginationRow: {
@@ -282,19 +305,19 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pageButton: {
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#1f1a17',
-    backgroundColor: '#fff7ef',
+    borderColor: '#17202a',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   pageButtonText: {
-    color: '#1f1a17',
+    color: '#17202a',
     fontWeight: '700',
   },
   pageSummary: {
-    color: '#2f251f',
+    color: '#17202a',
     fontWeight: '700',
   },
   buttonDisabled: {

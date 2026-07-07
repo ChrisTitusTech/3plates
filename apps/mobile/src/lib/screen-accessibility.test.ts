@@ -124,6 +124,8 @@ test('signed-out and dashboard navigation stays minimal', () => {
   const signInSource = parseScreen('sign-in.tsx');
   const callbackSource = readFileSync(path.join(process.cwd(), 'app', 'auth', 'callback.tsx'), 'utf8');
   const progressSource = readFileSync(path.join(process.cwd(), 'app', 'progress.tsx'), 'utf8');
+  const workoutsSource = readFileSync(path.join(process.cwd(), 'app', 'workouts.tsx'), 'utf8');
+  const screenHeaderSource = readFileSync(path.join(process.cwd(), 'src', 'components', 'ScreenHeader.tsx'), 'utf8');
 
   assert.doesNotMatch(indexSource, /Notifications/);
   assert.doesNotMatch(indexSource, /\/notifications/);
@@ -132,4 +134,10 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.match(callbackSource, /router\.replace\('\/progress'\)/);
   assert.match(progressSource, /updateProgress\(nextProgress\)/);
   assert.match(progressSource, /checkedDay/);
+  assert.match(progressSource, /<ScreenHeader title="Progress" \/>/);
+  assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
+  assert.match(screenHeaderSource, /router\.back\(\)/);
+  assert.match(screenHeaderSource, /href="\/"/);
+  assert.match(screenHeaderSource, /Go back/);
+  assert.match(screenHeaderSource, /Go home/);
 });

@@ -11,7 +11,7 @@ import {
 
 import type { Progress } from '@3plates/contract';
 
-import { SettingsCog } from '../src/components/SettingsCog';
+import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchProgress, flushPendingMutations, getPendingMutationCount, updateProgress } from '../src/lib/api';
 import { useRequireSession } from '../src/lib/use-require-session';
 
@@ -189,10 +189,7 @@ export default function ProgressScreen() {
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Progress</Text>
-        <SettingsCog />
-      </View>
+      <ScreenHeader title="Progress" />
 
       {status === 'loading' ? <Text style={styles.meta}>Loading progress...</Text> : null}
 
@@ -335,18 +332,6 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     backgroundColor: '#f7f8fa',
     gap: 12,
-  },
-  headerRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: '#17202a',
   },
   card: {
     backgroundColor: '#ffffff',

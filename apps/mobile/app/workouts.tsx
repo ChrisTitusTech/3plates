@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
-import { SettingsCog } from '../src/components/SettingsCog';
+import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
 import { useRequireSession } from '../src/lib/use-require-session';
 
@@ -82,10 +82,7 @@ export default function WorkoutsScreen() {
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Workouts</Text>
-        <SettingsCog />
-      </View>
+      <ScreenHeader title="Workouts" />
 
       <View style={styles.row}>
         {modes.map((candidate) => (
@@ -210,18 +207,6 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     backgroundColor: '#f7f8fa',
     gap: 12,
-  },
-  headerRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: '#17202a',
   },
   row: {
     flexDirection: 'row',

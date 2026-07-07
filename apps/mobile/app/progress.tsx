@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +12,11 @@ import type { Progress } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchProgress, updateProgress } from '../src/lib/api';
+import {
+  formatManualWorkoutLine,
+  loadManualWorkoutEntries,
+} from '../src/lib/manual-workouts';
+import type { ManualWorkoutEntry } from '../src/lib/manual-workouts';
 import { useRequireSession } from '../src/lib/use-require-session';
 
 function toMessage(error: unknown) {
@@ -73,6 +79,8 @@ export default function ProgressScreen() {
   const sessionReady = useRequireSession();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [manualEntries, setManualEntries] = useState<ManualWorkoutEntry[]>([]);
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
   const todayKey = useMemo(() => toLocalDateKey(today), [today]);
@@ -83,6 +91,20 @@ export default function ProgressScreen() {
     [today],
   );
   const checkedInToday = checkedDateKey === todayKey;
+  const visibleManualEntries = useMemo(() => {
+    const entries = selectedDateKey
+      ? manualEntries.filter((entry) => entry.date === selectedDateKey)
+      : manualEntries;
+
+    return [...entries].sort((first, second) => {
+      const dateCompare = second.date.localeCompare(first.date);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+
+      return second.createdAt.localeCompare(first.createdAt);
+    });
+  }, [manualEntries, selectedDateKey]);
 
   const loadProgress = async () => {
     setStatus('loading');
@@ -116,9 +138,18 @@ export default function ProgressScreen() {
     }
   };
 
+  const loadWorkoutHistory = async () => {
+    try {
+      setManualEntries(await loadManualWorkoutEntries());
+    } catch {
+      setManualEntries([]);
+    }
+  };
+
   useEffect(() => {
     if (sessionReady) {
       void loadProgress();
+      void loadWorkoutHistory();
     }
   }, [sessionReady]);
 
@@ -164,22 +195,72 @@ export default function ProgressScreen() {
             const isChecked = dateKey === checkedDateKey;
 
             return (
-              <View
+              <Pressable
                 key={dateKey}
                 style={[
                   styles.calendarDay,
                   isToday ? styles.todayDay : null,
                   isChecked ? styles.checkedDay : null,
+                  selectedDateKey === dateKey ? styles.selectedDay : null,
                 ]}
+                accessibilityLabel={`Filter workout history to ${dateKey}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: selectedDateKey === dateKey }}
+                onPress={() => {
+                  setSelectedDateKey((currentDateKey) => (
+                    currentDateKey === dateKey ? null : dateKey
+                  ));
+                }}
               >
-                <Text style={[styles.dayNumber, isChecked ? styles.checkedDayText : null]}>
+                <Text
+                  style={[
+                    styles.dayNumber,
+                    isChecked ? styles.checkedDayText : null,
+                    selectedDateKey === dateKey ? styles.selectedDayText : null,
+                  ]}
+                >
                   {day}
                 </Text>
                 {isChecked ? <Text style={styles.checkMark}>✓</Text> : null}
-              </View>
+              </Pressable>
             );
           })}
         </View>
+      </View>
+
+      <View style={styles.historyCard}>
+        <View style={styles.historyHeader}>
+          <Text style={styles.sectionTitle}>Workout history</Text>
+          {selectedDateKey ? (
+            <Pressable
+              style={styles.clearFilterButton}
+              accessibilityLabel="Show all workout history"
+              accessibilityRole="button"
+              onPress={() => setSelectedDateKey(null)}
+            >
+              <Text style={styles.clearFilterText}>All days</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {selectedDateKey ? <Text style={styles.meta}>{selectedDateKey}</Text> : null}
+        {visibleManualEntries.length > 0 ? (
+          <View style={styles.historyList}>
+            {visibleManualEntries.map((entry) => (
+              <Text
+                key={entry.id}
+                style={styles.historyLine}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {formatManualWorkoutLine(entry)}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.meta}>
+            {selectedDateKey ? 'No workouts logged for this day.' : 'No workouts logged yet.'}
+          </Text>
+        )}
       </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -288,6 +369,10 @@ const styles = StyleSheet.create({
     borderColor: '#067647',
     backgroundColor: '#067647',
   },
+  selectedDay: {
+    borderColor: '#17202a',
+    borderWidth: 2,
+  },
   dayNumber: {
     color: '#17202a',
     fontSize: 13,
@@ -295,6 +380,9 @@ const styles = StyleSheet.create({
   },
   checkedDayText: {
     color: '#ffffff',
+  },
+  selectedDayText: {
+    fontWeight: '900',
   },
   checkMark: {
     color: '#ffffff',
@@ -305,6 +393,43 @@ const styles = StyleSheet.create({
   meta: {
     color: '#53606c',
     fontSize: 13,
+  },
+  historyCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dce3ea',
+    padding: 14,
+    gap: 10,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  historyList: {
+    gap: 6,
+  },
+  historyLine: {
+    color: '#17202a',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  clearFilterButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#17202a',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  clearFilterText: {
+    color: '#17202a',
+    fontSize: 13,
+    fontWeight: '800',
   },
   error: {
     color: '#b42318',

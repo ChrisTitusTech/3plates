@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
+import {
+  createManualWorkoutForm,
+  formatManualWorkoutDetails,
+  getManualWorkoutLabel,
+  isCardioManualWorkout,
+  loadManualWorkoutEntries,
+  manualWorkoutTypes,
+  saveManualWorkoutEntries,
+} from '../src/lib/manual-workouts';
+import type { ManualWorkoutEntry, ManualWorkoutForm, ManualWorkoutType } from '../src/lib/manual-workouts';
 import { useRequireSession } from '../src/lib/use-require-session';
 
 function toMessage(error: unknown) {
@@ -26,68 +35,7 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
   { value: 'strength_metcon', label: 'Strength metcon' },
 ];
 
-type ManualWorkoutType = 'running_walking' | 'crossfit' | 'biking';
-type ManualWorkoutScale = 'rx' | 'scaled';
-
-type ManualWorkoutForm = {
-  date: string;
-  distance: string;
-  duration: string;
-  wodName: string;
-  workoutDetails: string;
-  scale: ManualWorkoutScale;
-  score: string;
-};
-
-type ManualWorkoutEntry = ManualWorkoutForm & {
-  id: string;
-  type: ManualWorkoutType;
-  createdAt: string;
-};
-
-const manualWorkoutTypes: Array<{ value: ManualWorkoutType; label: string }> = [
-  { value: 'running_walking', label: 'Running/Walking' },
-  { value: 'crossfit', label: 'Crossfit' },
-  { value: 'biking', label: 'Biking' },
-];
-
-const manualWorkoutStorageKey = '@3plates/manual-workouts';
 const pageSize = 10;
-
-function toDateInputValue(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function createManualWorkoutForm(type: ManualWorkoutType): ManualWorkoutForm {
-  return {
-    date: toDateInputValue(new Date()),
-    distance: '',
-    duration: '',
-    wodName: '',
-    workoutDetails: '',
-    scale: type === 'crossfit' ? 'rx' : 'scaled',
-    score: '',
-  };
-}
-
-function isCardioManualWorkout(type: ManualWorkoutType) {
-  return type === 'running_walking' || type === 'biking';
-}
-
-function getManualWorkoutLabel(type: ManualWorkoutType) {
-  return manualWorkoutTypes.find((candidate) => candidate.value === type)?.label ?? type;
-}
-
-function formatManualWorkoutDetails(entry: ManualWorkoutEntry) {
-  if (isCardioManualWorkout(entry.type)) {
-    return `${entry.distance} · ${entry.duration}`;
-  }
-
-  return `${entry.wodName} · ${entry.scale === 'rx' ? 'Rx' : 'Scaled'} · ${entry.score}`;
-}
 
 export default function WorkoutsScreen() {
   const router = useRouter();
@@ -178,7 +126,7 @@ export default function WorkoutsScreen() {
     setManualMessage('Manual workout entry added.');
 
     try {
-      await AsyncStorage.setItem(manualWorkoutStorageKey, JSON.stringify(nextEntries));
+      await saveManualWorkoutEntries(nextEntries);
     } catch {
       setManualMessage('Manual workout entry added for this session.');
     }
@@ -193,16 +141,13 @@ export default function WorkoutsScreen() {
   useEffect(() => {
     let active = true;
 
-    AsyncStorage.getItem(manualWorkoutStorageKey)
-      .then((rawValue) => {
-        if (!active || !rawValue) {
+    loadManualWorkoutEntries()
+      .then((entries) => {
+        if (!active) {
           return;
         }
 
-        const parsed = JSON.parse(rawValue) as ManualWorkoutEntry[];
-        if (Array.isArray(parsed)) {
-          setManualEntries(parsed);
-        }
+        setManualEntries(entries);
       })
       .catch(() => undefined);
 

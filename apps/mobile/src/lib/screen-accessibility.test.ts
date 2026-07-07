@@ -129,6 +129,7 @@ test('signed-out and dashboard navigation stays minimal', () => {
   const callbackSource = readFileSync(path.join(process.cwd(), 'app', 'auth', 'callback.tsx'), 'utf8');
   const progressSource = readFileSync(path.join(process.cwd(), 'app', 'progress.tsx'), 'utf8');
   const workoutsSource = readFileSync(path.join(process.cwd(), 'app', 'workouts.tsx'), 'utf8');
+  const manualWorkoutSource = readFileSync(path.join(process.cwd(), 'src', 'lib', 'manual-workouts.ts'), 'utf8');
   const screenHeaderSource = readFileSync(path.join(process.cwd(), 'src', 'components', 'ScreenHeader.tsx'), 'utf8');
 
   assert.doesNotMatch(indexSource, /Notifications/);
@@ -146,11 +147,15 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.doesNotMatch(progressSource, /TextInput/);
   assert.doesNotMatch(progressSource, /flushPendingMutations/);
   assert.doesNotMatch(progressSource, /getPendingMutationCount/);
+  assert.match(progressSource, /selectedDateKey/);
+  assert.match(progressSource, /Workout history/);
+  assert.match(progressSource, /formatManualWorkoutLine/);
+  assert.match(progressSource, /numberOfLines=\{1\}/);
   assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
   assert.match(workoutsSource, /Manual entry/);
-  assert.match(workoutsSource, /Running\/Walking/);
-  assert.match(workoutsSource, /Crossfit/);
-  assert.match(workoutsSource, /Biking/);
+  assert.match(manualWorkoutSource, /Running\/Walking/);
+  assert.match(manualWorkoutSource, /Crossfit/);
+  assert.match(manualWorkoutSource, /Biking/);
   assert.match(workoutsSource, /Workout date/);
   assert.match(workoutsSource, /Workout distance/);
   assert.match(workoutsSource, /Workout duration/);

@@ -153,6 +153,7 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.match(progressSource, /numberOfLines=\{1\}/);
   assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
   assert.match(workoutsSource, /Manual entry/);
+  assert.match(workoutsSource, /keyboardShouldPersistTaps="handled"/);
   assert.match(manualWorkoutSource, /Running\/Walking/);
   assert.match(manualWorkoutSource, /Crossfit/);
   assert.match(manualWorkoutSource, /Biking/);

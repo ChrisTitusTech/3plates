@@ -164,7 +164,11 @@ export default function WorkoutsScreen() {
   }
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.page}
+      keyboardShouldPersistTaps="handled"
+    >
       <ScreenHeader title="Workouts" />
 
       <View style={styles.manualCard}>

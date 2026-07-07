@@ -27,7 +27,7 @@ export default function SignInScreen() {
     getSessionToken()
       .then((token) => {
         if (active && token) {
-          router.replace('/');
+          router.replace('/progress');
         }
       })
       .catch(() => undefined);
@@ -61,7 +61,7 @@ export default function SignInScreen() {
       try {
         await redeemMobileAuthExchangeCode(exchangeCode);
         if (active) {
-          router.replace('/');
+          router.replace('/progress');
         }
       } finally {
         if (active) {

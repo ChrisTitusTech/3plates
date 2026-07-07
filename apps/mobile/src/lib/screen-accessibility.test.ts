@@ -122,9 +122,14 @@ test('app screens keep accessible interactive controls', () => {
 test('signed-out and dashboard navigation stays minimal', () => {
   const indexSource = readFileSync(path.join(process.cwd(), 'app', 'index.tsx'), 'utf8');
   const signInSource = parseScreen('sign-in.tsx');
+  const callbackSource = readFileSync(path.join(process.cwd(), 'app', 'auth', 'callback.tsx'), 'utf8');
+  const progressSource = readFileSync(path.join(process.cwd(), 'app', 'progress.tsx'), 'utf8');
 
   assert.doesNotMatch(indexSource, /Notifications/);
   assert.doesNotMatch(indexSource, /\/notifications/);
   assert.equal(collectJsxElements(signInSource, 'Pressable').length, 1);
   assert.equal(collectJsxElements(signInSource, 'TextInput').length, 0);
+  assert.match(callbackSource, /router\.replace\('\/progress'\)/);
+  assert.match(progressSource, /updateProgress\(nextProgress\)/);
+  assert.match(progressSource, /checkedDay/);
 });

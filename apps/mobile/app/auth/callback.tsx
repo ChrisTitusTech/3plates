@@ -20,7 +20,7 @@ export default function AuthCallbackScreen() {
     redeemMobileAuthExchangeCode(exchangeCode)
       .then(() => {
         if (active) {
-          router.replace('/');
+          router.replace('/progress');
         }
       })
       .catch((err: unknown) => {

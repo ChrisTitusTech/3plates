@@ -36,6 +36,49 @@ function sanitizeInteger(value: string) {
   return parsed;
 }
 
+function toLocalDateKey(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return toLocalDateKey(parsed);
+}
+
+function buildCalendarDays(monthDate: Date) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingEmptyDays = firstDay.getDay();
+  const days: Array<number | null> = [];
+
+  for (let index = 0; index < leadingEmptyDays; index += 1) {
+    days.push(null);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    days.push(day);
+  }
+
+  while (days.length % 7 !== 0) {
+    days.push(null);
+  }
+
+  return days;
+}
+
 export default function ProgressScreen() {
   const router = useRouter();
   const sessionReady = useRequireSession();
@@ -48,6 +91,14 @@ export default function ProgressScreen() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const today = useMemo(() => new Date(), []);
+  const todayKey = useMemo(() => toLocalDateKey(today), [today]);
+  const calendarDays = useMemo(() => buildCalendarDays(today), [today]);
+  const checkedDateKey = useMemo(() => parseDateKey(lastWorkoutAt), [lastWorkoutAt]);
+  const monthLabel = useMemo(
+    () => today.toLocaleString(undefined, { month: 'long', year: 'numeric' }),
+    [today],
+  );
 
   const progressPayload = useMemo<Progress>(() => {
     const isoText = lastWorkoutAt.trim();
@@ -64,20 +115,36 @@ export default function ProgressScreen() {
     setMessage(null);
 
     try {
-      const [result, queueCount] = await Promise.all([
+      const [result, initialQueueCount] = await Promise.all([
         fetchProgress(),
         getPendingMutationCount(),
       ]);
+      const currentCheckInDate = parseDateKey(result.data.lastWorkoutAt);
+      let nextProgress = result.data;
+      let queueCount = initialQueueCount;
+      let nextMessage = result.source === 'cache' ? 'Showing cached progress while offline.' : null;
 
-      setStreakDays(String(result.data.streakDays));
-      setCompletedWorkouts(String(result.data.completedWorkouts));
-      setLastWorkoutAt(result.data.lastWorkoutAt ?? '');
+      if (currentCheckInDate !== todayKey) {
+        const checkedInAt = new Date().toISOString();
+        nextProgress = {
+          ...nextProgress,
+          lastWorkoutAt: checkedInAt,
+        };
+
+        const updateResult = await updateProgress(nextProgress);
+        queueCount = await getPendingMutationCount();
+        nextMessage = updateResult.queued
+          ? 'Today is checked off and will sync when you are back online.'
+          : 'Today is checked off.';
+      }
+
+      setStreakDays(String(nextProgress.streakDays));
+      setCompletedWorkouts(String(nextProgress.completedWorkouts));
+      setLastWorkoutAt(nextProgress.lastWorkoutAt ?? '');
       setSource(result.source);
       setPendingCount(queueCount);
       setStatus('ready');
-      if (result.source === 'cache') {
-        setMessage('Showing cached progress while offline.');
-      }
+      setMessage(nextMessage);
     } catch (loadError) {
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
         await clearSession();
@@ -128,6 +195,42 @@ export default function ProgressScreen() {
       </View>
 
       {status === 'loading' ? <Text style={styles.meta}>Loading progress...</Text> : null}
+
+      <View style={styles.calendarCard}>
+        <Text style={styles.sectionTitle}>{monthLabel}</Text>
+        <View style={styles.weekRow}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((dayLabel) => (
+            <Text key={dayLabel} style={styles.weekday}>{dayLabel}</Text>
+          ))}
+        </View>
+        <View style={styles.calendarGrid}>
+          {calendarDays.map((day, index) => {
+            if (day === null) {
+              return <View key={`empty-${index}`} style={styles.calendarDay} />;
+            }
+
+            const dateKey = toLocalDateKey(new Date(today.getFullYear(), today.getMonth(), day));
+            const isToday = dateKey === todayKey;
+            const isChecked = dateKey === checkedDateKey;
+
+            return (
+              <View
+                key={dateKey}
+                style={[
+                  styles.calendarDay,
+                  isToday ? styles.todayDay : null,
+                  isChecked ? styles.checkedDay : null,
+                ]}
+              >
+                <Text style={[styles.dayNumber, isChecked ? styles.checkedDayText : null]}>
+                  {day}
+                </Text>
+                {isChecked ? <Text style={styles.checkMark}>✓</Text> : null}
+              </View>
+            );
+          })}
+        </View>
+      </View>
 
       <View style={styles.card}>
         <Text style={styles.label}>Streak days</Text>
@@ -252,6 +355,66 @@ const styles = StyleSheet.create({
     borderColor: '#dce3ea',
     padding: 14,
     gap: 10,
+  },
+  calendarCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dce3ea',
+    padding: 14,
+    gap: 10,
+  },
+  sectionTitle: {
+    color: '#17202a',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  weekRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  weekday: {
+    flex: 1,
+    color: '#53606c',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  calendarDay: {
+    width: '13.75%',
+    aspectRatio: 1,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e8edf2',
+    backgroundColor: '#f7f8fa',
+  },
+  todayDay: {
+    borderColor: '#17202a',
+  },
+  checkedDay: {
+    borderColor: '#067647',
+    backgroundColor: '#067647',
+  },
+  dayNumber: {
+    color: '#17202a',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  checkedDayText: {
+    color: '#ffffff',
+  },
+  checkMark: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 18,
   },
   label: {
     color: '#2d3742',

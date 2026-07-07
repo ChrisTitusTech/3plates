@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
@@ -25,7 +26,68 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
   { value: 'strength_metcon', label: 'Strength metcon' },
 ];
 
+type ManualWorkoutType = 'running_walking' | 'crossfit' | 'biking';
+type ManualWorkoutScale = 'rx' | 'scaled';
+
+type ManualWorkoutForm = {
+  date: string;
+  distance: string;
+  duration: string;
+  wodName: string;
+  workoutDetails: string;
+  scale: ManualWorkoutScale;
+  score: string;
+};
+
+type ManualWorkoutEntry = ManualWorkoutForm & {
+  id: string;
+  type: ManualWorkoutType;
+  createdAt: string;
+};
+
+const manualWorkoutTypes: Array<{ value: ManualWorkoutType; label: string }> = [
+  { value: 'running_walking', label: 'Running/Walking' },
+  { value: 'crossfit', label: 'Crossfit' },
+  { value: 'biking', label: 'Biking' },
+];
+
+const manualWorkoutStorageKey = '@3plates/manual-workouts';
 const pageSize = 10;
+
+function toDateInputValue(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function createManualWorkoutForm(type: ManualWorkoutType): ManualWorkoutForm {
+  return {
+    date: toDateInputValue(new Date()),
+    distance: '',
+    duration: '',
+    wodName: '',
+    workoutDetails: '',
+    scale: type === 'crossfit' ? 'rx' : 'scaled',
+    score: '',
+  };
+}
+
+function isCardioManualWorkout(type: ManualWorkoutType) {
+  return type === 'running_walking' || type === 'biking';
+}
+
+function getManualWorkoutLabel(type: ManualWorkoutType) {
+  return manualWorkoutTypes.find((candidate) => candidate.value === type)?.label ?? type;
+}
+
+function formatManualWorkoutDetails(entry: ManualWorkoutEntry) {
+  if (isCardioManualWorkout(entry.type)) {
+    return `${entry.distance} · ${entry.duration}`;
+  }
+
+  return `${entry.wodName} · ${entry.scale === 'rx' ? 'Rx' : 'Scaled'} · ${entry.score}`;
+}
 
 export default function WorkoutsScreen() {
   const router = useRouter();
@@ -36,6 +98,23 @@ export default function WorkoutsScreen() {
   const [workoutList, setWorkoutList] = useState<WorkoutListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [manualType, setManualType] = useState<ManualWorkoutType>('running_walking');
+  const [manualForm, setManualForm] = useState<ManualWorkoutForm>(() => createManualWorkoutForm('running_walking'));
+  const [manualEntries, setManualEntries] = useState<ManualWorkoutEntry[]>([]);
+  const [manualMessage, setManualMessage] = useState<string | null>(null);
+  const manualEntryReady = useMemo(() => {
+    const hasDate = manualForm.date.trim().length > 0;
+    if (isCardioManualWorkout(manualType)) {
+      return hasDate && manualForm.distance.trim().length > 0 && manualForm.duration.trim().length > 0;
+    }
+
+    return (
+      hasDate
+      && manualForm.wodName.trim().length > 0
+      && manualForm.workoutDetails.trim().length > 0
+      && manualForm.score.trim().length > 0
+    );
+  }, [manualForm, manualType]);
 
   const loadWorkouts = async (nextMode: WorkoutMode, page = 1) => {
     setStatus('loading');
@@ -67,11 +146,70 @@ export default function WorkoutsScreen() {
     }
   };
 
+  const updateManualForm = (field: keyof ManualWorkoutForm, value: string) => {
+    setManualForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setManualMessage(null);
+  };
+
+  const selectManualType = (nextType: ManualWorkoutType) => {
+    setManualType(nextType);
+    setManualForm(createManualWorkoutForm(nextType));
+    setManualMessage(null);
+  };
+
+  const saveManualEntry = async () => {
+    if (!manualEntryReady) {
+      return;
+    }
+
+    const entry: ManualWorkoutEntry = {
+      ...manualForm,
+      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: manualType,
+      createdAt: new Date().toISOString(),
+    };
+    const nextEntries = [entry, ...manualEntries].slice(0, 20);
+
+    setManualEntries(nextEntries);
+    setManualForm(createManualWorkoutForm(manualType));
+    setManualMessage('Manual workout entry added.');
+
+    try {
+      await AsyncStorage.setItem(manualWorkoutStorageKey, JSON.stringify(nextEntries));
+    } catch {
+      setManualMessage('Manual workout entry added for this session.');
+    }
+  };
+
   useEffect(() => {
     if (sessionReady) {
       void loadWorkouts(mode, 1);
     }
   }, [mode, sessionReady]);
+
+  useEffect(() => {
+    let active = true;
+
+    AsyncStorage.getItem(manualWorkoutStorageKey)
+      .then((rawValue) => {
+        if (!active || !rawValue) {
+          return;
+        }
+
+        const parsed = JSON.parse(rawValue) as ManualWorkoutEntry[];
+        if (Array.isArray(parsed)) {
+          setManualEntries(parsed);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const workouts = workoutList?.workouts ?? [];
   const pagination = workoutList?.pagination ?? null;
@@ -83,6 +221,145 @@ export default function WorkoutsScreen() {
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <ScreenHeader title="Workouts" />
+
+      <View style={styles.manualCard}>
+        <Text style={styles.sectionTitle}>Manual entry</Text>
+        <View style={styles.row}>
+          {manualWorkoutTypes.map((candidate) => (
+            <Pressable
+              key={candidate.value}
+              style={[
+                styles.choice,
+                manualType === candidate.value ? styles.choiceActive : null,
+              ]}
+              onPress={() => selectManualType(candidate.value)}
+              accessibilityLabel={`Select ${candidate.label} workout type`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: manualType === candidate.value }}
+            >
+              <Text style={[styles.choiceLabel, manualType === candidate.value ? styles.choiceLabelActive : null]}>
+                {candidate.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.label}>Date</Text>
+        <TextInput
+          style={styles.input}
+          accessibilityLabel="Workout date"
+          placeholder="2026-07-07"
+          autoCapitalize="none"
+          returnKeyType="done"
+          value={manualForm.date}
+          onChangeText={(value) => updateManualForm('date', value)}
+        />
+
+        {isCardioManualWorkout(manualType) ? (
+          <>
+            <Text style={styles.label}>Distance</Text>
+            <TextInput
+              style={styles.input}
+              accessibilityLabel="Workout distance"
+              placeholder="3.1 miles"
+              returnKeyType="done"
+              value={manualForm.distance}
+              onChangeText={(value) => updateManualForm('distance', value)}
+            />
+
+            <Text style={styles.label}>Duration</Text>
+            <TextInput
+              style={styles.input}
+              accessibilityLabel="Workout duration"
+              placeholder="32:15"
+              returnKeyType="done"
+              value={manualForm.duration}
+              onChangeText={(value) => updateManualForm('duration', value)}
+            />
+          </>
+        ) : (
+          <>
+            <Text style={styles.label}>WOD name/type</Text>
+            <TextInput
+              style={styles.input}
+              accessibilityLabel="WOD name or type"
+              placeholder="Fran"
+              returnKeyType="done"
+              value={manualForm.wodName}
+              onChangeText={(value) => updateManualForm('wodName', value)}
+            />
+
+            <Text style={styles.label}>Workout details</Text>
+            <TextInput
+              style={[styles.input, styles.multilineInput]}
+              accessibilityLabel="Workout details"
+              placeholder="21-15-9 thrusters and pull-ups"
+              multiline
+              textAlignVertical="top"
+              value={manualForm.workoutDetails}
+              onChangeText={(value) => updateManualForm('workoutDetails', value)}
+            />
+
+            <Text style={styles.label}>Rx or scaled</Text>
+            <View style={styles.row}>
+              {(['rx', 'scaled'] as const).map((scale) => (
+                <Pressable
+                  key={scale}
+                  style={[
+                    styles.choice,
+                    manualForm.scale === scale ? styles.choiceActive : null,
+                  ]}
+                  onPress={() => updateManualForm('scale', scale)}
+                  accessibilityLabel={`Set workout as ${scale === 'rx' ? 'Rx' : 'scaled'}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: manualForm.scale === scale }}
+                >
+                  <Text style={[styles.choiceLabel, manualForm.scale === scale ? styles.choiceLabelActive : null]}>
+                    {scale === 'rx' ? 'Rx' : 'Scaled'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.label}>Score</Text>
+            <TextInput
+              style={styles.input}
+              accessibilityLabel="Workout score"
+              placeholder="7:42"
+              returnKeyType="done"
+              value={manualForm.score}
+              onChangeText={(value) => updateManualForm('score', value)}
+            />
+          </>
+        )}
+
+        <Pressable
+          style={[styles.button, !manualEntryReady ? styles.buttonDisabled : null]}
+          disabled={!manualEntryReady}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !manualEntryReady }}
+          onPress={() => {
+            void saveManualEntry();
+          }}
+        >
+          <Text style={styles.buttonText}>Add entry</Text>
+        </Pressable>
+        {manualMessage ? <Text style={styles.success}>{manualMessage}</Text> : null}
+      </View>
+
+      {manualEntries.length > 0 ? (
+        <View style={styles.list}>
+          <Text style={styles.sectionTitle}>Recent manual entries</Text>
+          {manualEntries.slice(0, 5).map((entry) => (
+            <View key={entry.id} style={styles.card}>
+              <Text style={styles.cardTitle}>{getManualWorkoutLabel(entry.type)}</Text>
+              <Text style={styles.cardMeta}>{entry.date}</Text>
+              <Text style={styles.cardBody}>{formatManualWorkoutDetails(entry)}</Text>
+              {entry.type === 'crossfit' ? <Text style={styles.cardBody}>{entry.workoutDetails}</Text> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <View style={styles.row}>
         {modes.map((candidate) => (
@@ -236,6 +513,36 @@ const styles = StyleSheet.create({
     color: '#53606c',
     fontSize: 13,
   },
+  manualCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dce3ea',
+    padding: 14,
+    gap: 10,
+  },
+  sectionTitle: {
+    color: '#17202a',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  label: {
+    color: '#2d3742',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  input: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cfd6df',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+    color: '#17202a',
+  },
+  multilineInput: {
+    minHeight: 92,
+  },
   list: {
     gap: 10,
   },
@@ -270,6 +577,17 @@ const styles = StyleSheet.create({
   error: {
     color: '#b42318',
     fontWeight: '600',
+  },
+  button: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#17202a',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
   retry: {
     alignSelf: 'flex-start',

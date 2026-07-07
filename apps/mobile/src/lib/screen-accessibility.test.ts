@@ -147,6 +147,17 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.doesNotMatch(progressSource, /flushPendingMutations/);
   assert.doesNotMatch(progressSource, /getPendingMutationCount/);
   assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
+  assert.match(workoutsSource, /Manual entry/);
+  assert.match(workoutsSource, /Running\/Walking/);
+  assert.match(workoutsSource, /Crossfit/);
+  assert.match(workoutsSource, /Biking/);
+  assert.match(workoutsSource, /Workout date/);
+  assert.match(workoutsSource, /Workout distance/);
+  assert.match(workoutsSource, /Workout duration/);
+  assert.match(workoutsSource, /WOD name\/type/);
+  assert.match(workoutsSource, /Workout details/);
+  assert.match(workoutsSource, /Rx or scaled/);
+  assert.match(workoutsSource, /Workout score/);
   assert.match(screenHeaderSource, /router\.back\(\)/);
   assert.match(screenHeaderSource, /href="\/"/);
   assert.match(screenHeaderSource, /Go back/);

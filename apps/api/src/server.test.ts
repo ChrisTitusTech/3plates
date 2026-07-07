@@ -151,7 +151,7 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
 
   const callbackResponse = await app.inject({
     method: 'GET',
-    url: `/auth/callback?provider=google&code=google-code&state=${encodeURIComponent(startBody.state)}`,
+    url: `/auth/callback?code=google-code&state=${encodeURIComponent(startBody.state)}`,
   });
 
   assert.equal(callbackResponse.statusCode, 200);

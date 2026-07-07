@@ -170,7 +170,7 @@ export const appContract = c.router({
     method: 'GET',
     path: '/auth/callback',
     query: z.object({
-      provider: authProviderSchema,
+      provider: authProviderSchema.optional(),
       code: z.string().min(1),
       state: z.string().min(1),
     }),

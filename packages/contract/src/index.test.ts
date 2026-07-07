@@ -238,6 +238,17 @@ test('schema validations accept valid data', () => {
   );
 
   assert.deepEqual(
+    appContract.authCallback.query.parse({
+      code: 'oauth-code',
+      state: 'oauth-state',
+    }),
+    {
+      code: 'oauth-code',
+      state: 'oauth-state',
+    },
+  );
+
+  assert.deepEqual(
     apiErrorSchema.parse({
       ok: false,
       error: {

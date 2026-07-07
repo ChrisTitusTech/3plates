@@ -61,11 +61,12 @@ export type AuthService = {
     callbackUrl: string;
   }): Promise<{ next: string; state: string; provider: AuthProviderName }>;
   completeAuthentication(input: {
-    provider: AuthProviderName;
+    provider?: AuthProviderName | null;
     code: string;
     state: string;
     callbackUrl: string;
   }): Promise<{
+    provider: AuthProviderName;
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
@@ -527,7 +528,7 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction is missing or expired.');
       }
 
-      if (transaction.provider !== provider) {
+      if (provider && transaction.provider !== provider) {
         throw conflictOrStaleUpdateError('OAuth transaction provider mismatch.');
       }
 
@@ -535,7 +536,7 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
-      const identity = await providers[provider].exchangeCode({
+      const identity = await providers[transaction.provider].exchangeCode({
         code,
         redirectUri: callbackUrl,
         codeVerifier: transaction.codeVerifier,
@@ -550,6 +551,7 @@ export function createAuthService(input: {
       const session = await issueSession(resolved.user.id);
 
       return {
+        provider: transaction.provider,
         sessionToken: session.sessionToken,
         expiresAt: session.expiresAt.toISOString(),
         user: resolved.user,

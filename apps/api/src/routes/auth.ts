@@ -110,16 +110,24 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     },
   }, async (request, reply) => {
     const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
-    const providerResult = authProviderSchema.safeParse(query.provider);
+    let provider = null as z.infer<typeof authProviderSchema> | null;
+    if (query.provider !== undefined) {
+      const providerResult = authProviderSchema.safeParse(query.provider);
+      if (!providerResult.success) {
+        throw invalidRequestPayloadError();
+      }
+      provider = providerResult.data;
+    }
+
     const code = typeof query.code === 'string' ? query.code : null;
     const state = typeof query.state === 'string' ? query.state : null;
 
-    if (!providerResult.success || !code || !state) {
+    if (!code || !state) {
       throw invalidRequestPayloadError();
     }
 
     const completedAuth = await authService.completeAuthentication({
-      provider: providerResult.data,
+      provider,
       code,
       state,
       callbackUrl: getCallbackUrl(request),
@@ -135,7 +143,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
         effectiveLevel: completedAuth.effectiveLevel,
       });
 
-      redirectUrl.searchParams.set('provider', providerResult.data);
+      redirectUrl.searchParams.set('provider', completedAuth.provider);
       redirectUrl.searchParams.set('exchangeCode', exchange.code);
       redirectUrl.searchParams.set('expiresAt', completedAuth.expiresAt);
 
@@ -147,7 +155,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
 
     return {
       ok: true,
-      provider: providerResult.data,
+      provider: completedAuth.provider,
       redirectTo: completedAuth.redirectTo,
       sessionToken: completedAuth.sessionToken,
       expiresAt: completedAuth.expiresAt,

@@ -8,6 +8,7 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
 import {
   createManualWorkoutForm,
+  deleteManualWorkoutEntry,
   formatManualWorkoutDetails,
   getManualWorkoutLabel,
   isCardioManualWorkout,
@@ -129,6 +130,21 @@ export default function WorkoutsScreen() {
       await saveManualWorkoutEntries(nextEntries);
     } catch {
       setManualMessage('Manual workout entry added for this session.');
+    }
+  };
+
+  const deleteManualEntry = async (entryId: string) => {
+    const existingEntries = manualEntries;
+    const nextEntries = manualEntries.filter((entry) => entry.id !== entryId);
+
+    setManualEntries(nextEntries);
+    setManualMessage('Manual workout entry deleted.');
+
+    try {
+      setManualEntries(await deleteManualWorkoutEntry(entryId));
+    } catch {
+      setManualEntries(existingEntries);
+      setManualMessage('Could not delete manual workout entry.');
     }
   };
 
@@ -301,7 +317,19 @@ export default function WorkoutsScreen() {
           <Text style={styles.sectionTitle}>Recent manual entries</Text>
           {manualEntries.slice(0, 5).map((entry) => (
             <View key={entry.id} style={styles.card}>
-              <Text style={styles.cardTitle}>{getManualWorkoutLabel(entry.type)}</Text>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{getManualWorkoutLabel(entry.type)}</Text>
+                <Pressable
+                  style={styles.deleteButton}
+                  accessibilityLabel={`Delete ${getManualWorkoutLabel(entry.type)} manual workout from ${entry.date}`}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    void deleteManualEntry(entry.id);
+                  }}
+                >
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
+              </View>
               <Text style={styles.cardMeta}>{entry.date}</Text>
               <Text style={styles.cardBody}>{formatManualWorkoutDetails(entry)}</Text>
               {entry.type === 'crossfit' ? <Text style={styles.cardBody}>{entry.workoutDetails}</Text> : null}
@@ -503,7 +531,15 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 6,
   },
+  cardHeader: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   cardTitle: {
+    flexShrink: 1,
     color: '#17202a',
     fontSize: 18,
     fontWeight: '800',
@@ -537,6 +573,19 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#ffffff',
     fontWeight: '700',
+  },
+  deleteButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#b42318',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  deleteButtonText: {
+    color: '#b42318',
+    fontSize: 13,
+    fontWeight: '800',
   },
   retry: {
     alignSelf: 'flex-start',

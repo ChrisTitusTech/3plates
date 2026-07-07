@@ -84,3 +84,10 @@ export async function loadManualWorkoutEntries() {
 export async function saveManualWorkoutEntries(entries: ManualWorkoutEntry[]) {
   await AsyncStorage.setItem(manualWorkoutStorageKey, JSON.stringify(entries));
 }
+
+export async function deleteManualWorkoutEntry(entryId: string) {
+  const entries = await loadManualWorkoutEntries();
+  const nextEntries = entries.filter((entry) => entry.id !== entryId);
+  await saveManualWorkoutEntries(nextEntries);
+  return nextEntries;
+}

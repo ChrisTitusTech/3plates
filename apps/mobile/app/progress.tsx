@@ -13,6 +13,7 @@ import type { Progress } from '@3plates/contract';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { ApiRequestError, clearSession, fetchProgress, updateProgress } from '../src/lib/api';
 import {
+  deleteManualWorkoutEntry,
   formatManualWorkoutLine,
   loadManualWorkoutEntries,
 } from '../src/lib/manual-workouts';
@@ -146,6 +147,20 @@ export default function ProgressScreen() {
     }
   }, []);
 
+  const deleteManualEntry = useCallback(async (entryId: string) => {
+    const existingEntries = manualEntries;
+
+    setError(null);
+    setManualEntries((entries) => entries.filter((entry) => entry.id !== entryId));
+
+    try {
+      setManualEntries(await deleteManualWorkoutEntry(entryId));
+    } catch {
+      setManualEntries(existingEntries);
+      setError('Could not delete manual workout entry.');
+    }
+  }, [manualEntries]);
+
   useEffect(() => {
     if (sessionReady) {
       void loadProgress();
@@ -253,14 +268,25 @@ export default function ProgressScreen() {
         {visibleManualEntries.length > 0 ? (
           <View style={styles.historyList}>
             {visibleManualEntries.map((entry) => (
-              <Text
-                key={entry.id}
-                style={styles.historyLine}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {formatManualWorkoutLine(entry)}
-              </Text>
+              <View key={entry.id} style={styles.historyRow}>
+                <Text
+                  style={styles.historyLine}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {formatManualWorkoutLine(entry)}
+                </Text>
+                <Pressable
+                  style={styles.deleteButton}
+                  accessibilityLabel={`Delete manual workout from ${entry.date}`}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    void deleteManualEntry(entry.id);
+                  }}
+                >
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
+              </View>
             ))}
           </View>
         ) : (
@@ -419,11 +445,31 @@ const styles = StyleSheet.create({
   historyList: {
     gap: 6,
   },
+  historyRow: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   historyLine: {
+    flex: 1,
     color: '#17202a',
     fontSize: 14,
     fontWeight: '700',
     lineHeight: 20,
+  },
+  deleteButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#b42318',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  deleteButtonText: {
+    color: '#b42318',
+    fontSize: 13,
+    fontWeight: '800',
   },
   clearFilterButton: {
     borderRadius: 8,

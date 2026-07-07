@@ -151,10 +151,13 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.match(progressSource, /useFocusEffect/);
   assert.match(progressSource, /Workout history/);
   assert.match(progressSource, /formatManualWorkoutLine/);
+  assert.match(progressSource, /Delete manual workout/);
   assert.match(progressSource, /numberOfLines=\{1\}/);
   assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
   assert.match(workoutsSource, /Manual entry/);
   assert.match(workoutsSource, /keyboardShouldPersistTaps="handled"/);
+  assert.match(workoutsSource, /deleteManualWorkoutEntry/);
+  assert.match(workoutsSource, /Manual workout entry deleted/);
   assert.match(manualWorkoutSource, /Running\/Walking/);
   assert.match(manualWorkoutSource, /Crossfit/);
   assert.match(manualWorkoutSource, /Biking/);

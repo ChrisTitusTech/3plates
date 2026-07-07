@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Pressable,
   ScrollView,
@@ -138,20 +138,27 @@ export default function ProgressScreen() {
     }
   };
 
-  const loadWorkoutHistory = async () => {
+  const loadWorkoutHistory = useCallback(async () => {
     try {
       setManualEntries(await loadManualWorkoutEntries());
     } catch {
       setManualEntries([]);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (sessionReady) {
       void loadProgress();
-      void loadWorkoutHistory();
     }
   }, [sessionReady]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (sessionReady) {
+        void loadWorkoutHistory();
+      }
+    }, [loadWorkoutHistory, sessionReady]),
+  );
 
   if (!sessionReady) {
     return <View style={styles.blank} />;

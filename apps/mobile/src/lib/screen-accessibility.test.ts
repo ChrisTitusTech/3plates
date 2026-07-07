@@ -148,6 +148,7 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.doesNotMatch(progressSource, /flushPendingMutations/);
   assert.doesNotMatch(progressSource, /getPendingMutationCount/);
   assert.match(progressSource, /selectedDateKey/);
+  assert.match(progressSource, /useFocusEffect/);
   assert.match(progressSource, /Workout history/);
   assert.match(progressSource, /formatManualWorkoutLine/);
   assert.match(progressSource, /numberOfLines=\{1\}/);

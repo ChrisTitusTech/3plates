@@ -684,6 +684,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             userId,
             streakDays: updated.streakDays,
             lastStreakDate: updated.lastStreakDate,
+            lastWorkoutAt: nowUtc,
             updatedAt: new Date(),
           })
           .onConflictDoUpdate({
@@ -691,6 +692,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             set: {
               streakDays: updated.streakDays,
               lastStreakDate: updated.lastStreakDate,
+              lastWorkoutAt: nowUtc,
               updatedAt: new Date(),
             },
           });
@@ -957,7 +959,11 @@ export function createMemoryUserStateStore(): UserStateStore & {
       const updated = computeStreakUpdate(current, today);
       streakByUserId.set(userId, updated);
       const existing = progressByUserId.get(userId) ?? defaultProgress;
-      progressByUserId.set(userId, progressSchema.parse({ ...existing, streakDays: updated.streakDays }));
+      progressByUserId.set(userId, progressSchema.parse({
+        ...existing,
+        streakDays: updated.streakDays,
+        lastWorkoutAt: nowUtc.toISOString(),
+      }));
     },
 
     async close() {

@@ -94,7 +94,11 @@ test('app screens keep accessible interactive controls', () => {
     const sourceFile = parseScreen(fileName);
     const pressables = collectJsxElements(sourceFile, 'Pressable');
 
-    assert.ok(pressables.length > 0, `${fileName} should expose at least one interactive control`);
+    if (fileName === 'progress.tsx') {
+      assert.match(sourceFile.getFullText(), /<ScreenHeader title="Progress" \/>/);
+    } else {
+      assert.ok(pressables.length > 0, `${fileName} should expose at least one interactive control`);
+    }
 
     for (const pressable of pressables) {
       const attributes = getJsxAttributeNames(pressable);
@@ -135,6 +139,13 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.match(progressSource, /updateProgress\(nextProgress\)/);
   assert.match(progressSource, /checkedDay/);
   assert.match(progressSource, /<ScreenHeader title="Progress" \/>/);
+  assert.doesNotMatch(progressSource, /Save progress/);
+  assert.doesNotMatch(progressSource, /Retry pending/);
+  assert.doesNotMatch(progressSource, /Pending offline updates/);
+  assert.doesNotMatch(progressSource, /Source:/);
+  assert.doesNotMatch(progressSource, /TextInput/);
+  assert.doesNotMatch(progressSource, /flushPendingMutations/);
+  assert.doesNotMatch(progressSource, /getPendingMutationCount/);
   assert.match(workoutsSource, /<ScreenHeader title="Workouts" \/>/);
   assert.match(screenHeaderSource, /router\.back\(\)/);
   assert.match(screenHeaderSource, /href="\/"/);

@@ -208,6 +208,64 @@ test('queued progress write is retried and flushed once network recovers', async
   assert.equal(updateCalls, 2);
 });
 
+test('successful progress write clears stale queued progress writes', async (t) => {
+  const storage = createMemoryStorage();
+  const firstPayload = createProgress();
+  const secondPayload: Progress = {
+    ...firstPayload,
+    lastWorkoutAt: '2026-05-11T18:30:00.000Z',
+  };
+  const savedPayload: Progress = {
+    ...firstPayload,
+    lastWorkoutAt: '2026-05-12T18:30:00.000Z',
+  };
+  let online = false;
+  const attemptedPayloads: Progress[] = [];
+
+  const client = createClientOverrides({
+    updateProgress: async (input: { body: Progress }) => {
+      attemptedPayloads.push(input.body);
+
+      if (!online) {
+        throw new Error('Network request failed');
+      }
+
+      return {
+        status: 200,
+        body: {
+          updated: true,
+        },
+      };
+    },
+  });
+
+  __setApiTestAdapters({
+    storage,
+    client: client as never,
+  });
+
+  t.after(() => {
+    __resetApiTestAdapters();
+  });
+
+  await setSessionToken('token-progress-clear-queue');
+
+  const firstQueuedResult = await updateProgress(firstPayload);
+  assert.equal(firstQueuedResult.queued, true);
+  assert.equal(await getPendingMutationCount(), 1);
+
+  const secondQueuedResult = await updateProgress(secondPayload);
+  assert.equal(secondQueuedResult.queued, true);
+  assert.equal(await getPendingMutationCount(), 1);
+
+  online = true;
+
+  const savedResult = await updateProgress(savedPayload);
+  assert.equal(savedResult.queued, false);
+  assert.equal(await getPendingMutationCount(), 0);
+  assert.deepEqual(attemptedPayloads, [firstPayload, secondPayload, savedPayload]);
+});
+
 test('queued preferences write is retried and flushed once network recovers', async (t) => {
   const storage = createMemoryStorage();
   const payload: Preferences = {

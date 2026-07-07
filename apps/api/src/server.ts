@@ -119,6 +119,7 @@ export function createServer(options: CreateServerOptions = {}) {
 
   app.register(cors, {
     origin: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   app.register(rateLimit, {

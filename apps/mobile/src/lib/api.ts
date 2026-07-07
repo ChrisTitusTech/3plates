@@ -280,11 +280,34 @@ async function writePendingMutations(mutations: PendingMutation[]) {
   await storage.setItem(storageKeys.pendingMutations, JSON.stringify(mutations));
 }
 
-async function queuePendingMutation(mutation: PendingMutation) {
-  const existing = await readPendingMutations();
-  existing.push(mutation);
+function coalescePendingMutations(mutations: PendingMutation[]) {
+  let latestProgressIndex = -1;
+  for (let index = mutations.length - 1; index >= 0; index -= 1) {
+    if (mutations[index]?.type === 'updateProgress') {
+      latestProgressIndex = index;
+      break;
+    }
+  }
 
-  await writePendingMutations(existing);
+  if (latestProgressIndex === -1) {
+    return mutations;
+  }
+
+  return mutations.filter((mutation, index) => mutation.type !== 'updateProgress' || index === latestProgressIndex);
+}
+
+async function queuePendingMutation(mutation: PendingMutation) {
+  const existing = coalescePendingMutations(await readPendingMutations());
+  const nextMutations = mutation.type === 'updateProgress'
+    ? existing.filter((candidate) => candidate.type !== 'updateProgress')
+    : existing;
+
+  await writePendingMutations([...nextMutations, mutation]);
+}
+
+async function removePendingMutationsByType(type: PendingMutation['type']) {
+  const existing = await readPendingMutations();
+  await writePendingMutations(existing.filter((mutation) => mutation.type !== type));
 }
 
 async function executePendingMutation(mutation: PendingMutation, token: string) {
@@ -558,6 +581,7 @@ export async function updateProgress(progress: Progress) {
       throw toApiRequestError(response.status, response.body);
     }
 
+    await removePendingMutationsByType('updateProgress');
     await writeCache(storageKeys.progress, progress);
 
     return {
@@ -746,7 +770,7 @@ export async function flushPendingMutations() {
     };
   }
 
-  const queue = await readPendingMutations();
+  const queue = coalescePendingMutations(await readPendingMutations());
   if (queue.length === 0) {
     return {
       flushed: 0,

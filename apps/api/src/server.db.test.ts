@@ -567,7 +567,9 @@ dbTest('DB-backed login streak is set to 1 on first sign-in and persists to Post
     });
 
     assert.equal(progressGet.statusCode, 200);
-    assert.equal(progressGet.json().streakDays, 1);
+    const progress = progressGet.json() as { streakDays: number; lastWorkoutAt: string | null };
+    assert.equal(progress.streakDays, 1);
+    assert.match(progress.lastWorkoutAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
   });
 });
 
@@ -587,7 +589,9 @@ dbTest('DB-backed login streak is idempotent when updateStreakOnLogin is called 
     });
 
     assert.equal(progressGet.statusCode, 200);
-    assert.equal(progressGet.json().streakDays, 1);
+    const progress = progressGet.json() as { streakDays: number; lastWorkoutAt: string | null };
+    assert.equal(progress.streakDays, 1);
+    assert.equal(progress.lastWorkoutAt, sameDay.toISOString());
   });
 });
 

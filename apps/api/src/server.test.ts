@@ -127,6 +127,28 @@ test('GET /health returns status and timestamp', async (t) => {
   assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test('CORS preflight allows authenticated progress writes from the web app', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'OPTIONS',
+    url: '/users/me/progress',
+    headers: {
+      origin: 'https://3spinningplates.com',
+      'access-control-request-method': 'PUT',
+      'access-control-request-headers': 'authorization,content-type',
+    },
+  });
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.headers['access-control-allow-origin'], 'https://3spinningplates.com');
+  assert.match(String(response.headers['access-control-allow-methods']), /\bPUT\b/);
+  assert.match(String(response.headers['access-control-allow-headers']), /\bauthorization\b/);
+});
+
 test('auth start, callback, and refresh issue real sessions', async (t) => {
   const { app } = createAuthenticatedApp();
   t.after(async () => {
@@ -567,11 +589,14 @@ test('stateful user endpoints persist per-user state using bearer sessions', asy
   });
 
   assert.equal(progressGet.statusCode, 200);
-  assert.deepEqual(progressGet.json(), {
-    streakDays: 1,
-    completedWorkouts: 0,
-    lastWorkoutAt: null,
-  });
+  const initialProgress = progressGet.json() as {
+    streakDays: number;
+    completedWorkouts: number;
+    lastWorkoutAt: string | null;
+  };
+  assert.equal(initialProgress.streakDays, 1);
+  assert.equal(initialProgress.completedWorkouts, 0);
+  assert.match(initialProgress.lastWorkoutAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
 
   const progressPut = await app.inject({
     method: 'PUT',
@@ -1106,7 +1131,9 @@ test('streak engine: first sign-in sets streak day count to 1', async (t) => {
   });
 
   assert.equal(progressGet.statusCode, 200);
-  assert.equal(progressGet.json().streakDays, 1);
+  const progress = progressGet.json() as { streakDays: number; lastWorkoutAt: string | null };
+  assert.equal(progress.streakDays, 1);
+  assert.match(progress.lastWorkoutAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('streak engine: computeStreakUpdate - first login initializes streak', () => {

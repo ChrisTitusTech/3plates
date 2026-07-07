@@ -21,6 +21,7 @@ Use this checklist to rebuild the current 3plates VPS database and API validatio
 - Treat the VPS as slow and capacity-constrained.
 - Run only one remote command or SSH session at a time against the VPS.
 - Allow at least 5 minutes for a remote task to finish before treating it as timed out.
+- For SSH or `rsync` connection timeouts, wait 30 seconds and retry the same operation. Make no more than 2 retry attempts after the original timeout.
 - Before killing a remote task, first verify with `ps aux` that the target process is not using CPU.
 - Do not start a replacement deployment, restart, or validation command while a prior remote task is still running.
 
@@ -157,6 +158,20 @@ Validate the expected listener layout on the VPS:
 ```bash
 ss -tulpn | grep -E ':(80|443|3000|8080|8443)\b'
 ```
+
+## Web deployment
+
+Deploy the static Expo web build with:
+
+```bash
+pnpm deploy:web
+```
+
+The deploy command builds a clean production web export with
+`EXPO_PUBLIC_API_URL=https://api.3spinningplates.com`, creates a timestamped
+backup of `/var/www/3plates`, syncs the export to the VPS, and validates the
+public Progress and Workouts routes. If an SSH or `rsync` connection times out,
+it waits 30 seconds and retries the same operation up to 2 times before failing.
 
 ## Ready criteria
 

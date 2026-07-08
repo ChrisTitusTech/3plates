@@ -5,7 +5,7 @@ title: Mobile Tasks
 
 # Mobile Tasks
 
-Status: Android production APK ready for physical-device install
+Status: Android production APK passes physical-device startup smoke
 Owner: Core product team
 Last updated: 2026-07-08
 
@@ -38,6 +38,16 @@ pnpm --filter @3plates/api test
 
 Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 
+## Android Device Test Command
+
+With a physical Android device attached, USB debugging approved, and a production APK built, run:
+
+```sh
+pnpm --filter @3plates/mobile test:android:device
+```
+
+The device smoke test installs `apps/mobile/dist/3plates-android-production.apk`, launches `com.christitustech.threeplates`, waits for startup, confirms the process stays alive, and saves full logcat output to `apps/mobile/dist/android-device-smoke.log`. The script locates `adb` from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, the default Windows Android SDK path, or `PATH`. Use `-- --fresh` to clear app data before launch, `-- --keep-open` to leave the app open after the check, or `-- --device <serial>` when multiple devices are attached.
+
 ## Current Android Build Decisions
 
 - App display name: `3Plates`.
@@ -53,7 +63,7 @@ Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 - Current production APK output: `apps/mobile/dist/3plates-android-production.apk`.
 - Debug APKs are Metro development builds and can show `localhost:8081` script errors unless Metro is running; do not use debug APKs for production Android validation.
 - Do not package server secrets or private API keys in native builds. APKs may include public config only, such as `EXPO_PUBLIC_API_URL` and a public Expo project id. OAuth, database, provider, and signing secrets must remain server-side.
-- Windows native builds need a short real checkout path because React Native CMake object paths can exceed the 260-character Windows process limit under `C:\Users\...`. The verified local build used `C:\3p-apk` with a pnpm virtual store at `C:\p\3p-apk`.
+- Windows native builds need a short real checkout path because React Native CMake object paths can exceed the 260-character Windows process limit under `C:\Users\...`. Verified local builds used short worktrees such as `C:\3p-apk`, `C:\3p-prod`, and `C:\m3` with short pnpm virtual stores such as `C:\v3`.
 
 ## Installed Android Toolchain
 
@@ -67,7 +77,7 @@ Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 - Android CMake: `3.22.1`.
 - User environment variables set: `JAVA_HOME`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`.
 - User `Path` includes `%JAVA_HOME%\bin`, `%ANDROID_HOME%\platform-tools`, and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
-- No physical Android device was attached during the inventory check; `adb devices` returned an empty device list.
+- Physical Android smoke device: Pixel 10, serial `57291FDCR007R3`.
 
 ## Phase 0 - Mobile Build Inventory
 
@@ -151,10 +161,21 @@ Production APK correction from 2026-07-08:
 - `adb devices` returned no attached devices after the production APK build, so install validation still needs the phone connected.
 - Use `pnpm --filter @3plates/mobile build:android:production` for physical Android production validation.
 
+Physical-device startup fix from 2026-07-08:
+
+- Physical Android launch of the first production APK crashed at startup with React version mismatch: `react 19.2.6` vs `react-native-renderer 19.2.3`.
+- Mobile `react` and `react-dom` were pinned to `19.2.3` to match React Native 0.85.3's bundled renderer.
+- Unused direct `react-native-reanimated` and `react-native-worklets` dependencies were removed from the mobile package. Expo still brings them transitively, but app code does not import them directly.
+- Production release APK build passed from short-path worktree `C:\m3` with pnpm virtual store `C:\v3`.
+- Fresh APK copied to `apps/mobile/dist/3plates-android-production.apk` with size `42,527,480` bytes.
+- Pixel 10 smoke command passed: `pnpm --filter @3plates/mobile test:android:device -- --fresh --timeout 15000`.
+- Direct prompt smoke command also passed without manually setting Android environment variables: `pnpm --filter @3plates/mobile test:android:device -- --fresh --timeout 10000`.
+- Device smoke installed the APK, cleared app data, launched `com.christitustech.threeplates`, confirmed process PID `27773`, and saved logcat to `apps/mobile/dist/android-device-smoke.log`.
+
 Manual Android gate:
 
-- [ ] APK installs on a physical Android device.
-- [ ] App launches without a white screen or native crash.
+- [x] APK installs on a physical Android device.
+- [x] App launches without a white screen or native crash.
 - [ ] App can reach the configured API from the physical device.
 - [ ] App shows the sign-in screen when no session exists.
 

@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -6,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 const productionApiUrl = 'https://api.3spinningplates.com';
 const mobileRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const androidRoot = join(mobileRoot, 'android');
+const require = createRequire(import.meta.url);
 
 const buildVariants = {
   debug: {
@@ -34,6 +36,18 @@ if (!buildVariant) {
 function requireEnvironment(name) {
   if (!process.env[name]) {
     throw new Error(`${name} is required for Android builds.`);
+  }
+}
+
+function clearNativeCxxBuild(packageName) {
+  try {
+    const packageJson = require.resolve(`${packageName}/package.json`, {
+      paths: [mobileRoot],
+    });
+    const cxxDir = join(dirname(packageJson), 'android', '.cxx');
+    rmSync(cxxDir, { recursive: true, force: true });
+  } catch {
+    // Optional native packages may not be present in every Expo dependency graph.
   }
 }
 
@@ -67,6 +81,16 @@ if (process.platform === 'win32' && mobileRoot.length > 40) {
 
 const expoCommand = process.platform === 'win32' ? 'expo.cmd' : 'expo';
 run(expoCommand, ['prebuild', '--platform', 'android', '--clean']);
+
+if (variantName === 'production') {
+  [
+    'expo-modules-core',
+    'react-native-gesture-handler',
+    'react-native-reanimated',
+    'react-native-screens',
+    'react-native-worklets',
+  ].forEach(clearNativeCxxBuild);
+}
 
 const gradleCommand = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
 run(gradleCommand, [buildVariant.gradleTask], {

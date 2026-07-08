@@ -2,15 +2,18 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PNG } from 'pngjs';
 
 const packageName = 'com.christitustech.threeplates';
 const mobileRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const defaultApk = join(mobileRoot, 'dist', '3plates-android-production.apk');
 const defaultLogPath = join(mobileRoot, 'dist', 'android-device-smoke.log');
+const defaultScreenshotPath = join(mobileRoot, 'dist', 'android-device-smoke.png');
 
 const options = parseArgs(process.argv.slice(2));
 const apkPath = resolve(options.apk ?? defaultApk);
 const logPath = resolve(options.log ?? defaultLogPath);
+const screenshotPath = resolve(options.screenshot ?? defaultScreenshotPath);
 const timeoutMs = Number(options.timeoutMs ?? 15000);
 
 function parseArgs(args) {
@@ -45,6 +48,7 @@ function parseArgs(args) {
     apk: parsed.apk,
     device: parsed.device,
     log: parsed.log,
+    screenshot: parsed.screenshot,
     timeoutMs: parsed.timeout,
     skipInstall: Boolean(parsed['skip-install']),
     keepOpen: Boolean(parsed['keep-open']),
@@ -95,6 +99,24 @@ function runAdb(args, { allowFailure = false } = {}) {
     if (allowFailure) {
       return output;
     }
+
+    throw new Error(output || `${adb} ${commandArgs.join(' ')} failed`);
+  }
+}
+
+function runAdbBuffer(args) {
+  const commandArgs = options.device ? ['-s', options.device, ...args] : args;
+
+  try {
+    return execFileSync(adb, commandArgs, {
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    const output = [
+      error.stdout?.toString(),
+      error.stderr?.toString(),
+    ].filter(Boolean).join('\n').trim();
 
     throw new Error(output || `${adb} ${commandArgs.join(' ')} failed`);
   }
@@ -200,6 +222,45 @@ function filterImportantLogs(logcat) {
     .join('\n');
 }
 
+function captureScreenshot() {
+  const screenshot = runAdbBuffer(['exec-out', 'screencap', '-p']);
+  mkdirSync(dirname(screenshotPath), { recursive: true });
+  writeFileSync(screenshotPath, screenshot);
+  return screenshot;
+}
+
+function analyzeScreenshot(screenshot) {
+  const png = PNG.sync.read(screenshot);
+  let count = 0;
+  let lumaSum = 0;
+  let lumaSquaredSum = 0;
+
+  for (let y = 0; y < png.height; y += 6) {
+    for (let x = 0; x < png.width; x += 6) {
+      const index = (png.width * y + x) << 2;
+      const alpha = png.data[index + 3] / 255;
+      const red = png.data[index] * alpha + 255 * (1 - alpha);
+      const green = png.data[index + 1] * alpha + 255 * (1 - alpha);
+      const blue = png.data[index + 2] * alpha + 255 * (1 - alpha);
+      const luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+
+      count += 1;
+      lumaSum += luma;
+      lumaSquaredSum += luma * luma;
+    }
+  }
+
+  const averageLuma = lumaSum / count;
+  const variance = Math.max(0, lumaSquaredSum / count - averageLuma * averageLuma);
+  const lumaStandardDeviation = Math.sqrt(variance);
+
+  return {
+    averageLuma,
+    lumaStandardDeviation,
+    isBlankWhite: averageLuma > 238 && lumaStandardDeviation < 18,
+  };
+}
+
 async function main() {
   const device = selectDevice();
   console.log(`Testing ${packageName} on ${device.serial}`);
@@ -229,6 +290,8 @@ async function main() {
   mkdirSync(dirname(logPath), { recursive: true });
   writeFileSync(logPath, logcat);
 
+  const screenshot = captureScreenshot();
+  const screenshotAnalysis = analyzeScreenshot(screenshot);
   const importantLogs = filterImportantLogs(logcat);
   const hasFatalCrash = /FATAL EXCEPTION|Fatal signal|Process: com\.christitustech\.threeplates/i.test(importantLogs);
 
@@ -236,8 +299,13 @@ async function main() {
     runAdb(['shell', 'am', 'force-stop', packageName], { allowFailure: true });
   }
 
-  if (!pid || hasFatalCrash) {
+  if (!pid || hasFatalCrash || screenshotAnalysis.isBlankWhite) {
     console.error(`Android device smoke test failed. Full log: ${logPath}`);
+    console.error(`Screenshot: ${screenshotPath}`);
+    console.error(
+      `Screenshot luma average ${screenshotAnalysis.averageLuma.toFixed(1)}, `
+        + `standard deviation ${screenshotAnalysis.lumaStandardDeviation.toFixed(1)}.`,
+    );
     if (importantLogs) {
       console.error('\nRelevant logcat lines:\n');
       console.error(importantLogs);
@@ -246,7 +314,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Android device smoke test passed. PID ${pid}. Full log: ${logPath}`);
+  console.log(
+    `Android device smoke test passed. PID ${pid}. Full log: ${logPath}. Screenshot: ${screenshotPath}`,
+  );
 }
 
 main().catch((error) => {

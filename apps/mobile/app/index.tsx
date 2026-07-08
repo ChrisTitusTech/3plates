@@ -1,20 +1,28 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AuthLanding } from '../src/components/AuthLanding';
 import { SettingsCog } from '../src/components/SettingsCog';
 import { clearSession, fetchMe, getSessionToken } from '../src/lib/api';
 
 export default function HomeScreen() {
+  const router = useRouter();
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
     let active = true;
+    const fallback = setTimeout(() => {
+      if (active) {
+        setSignedIn(false);
+      }
+    }, 2500);
 
     async function loadSession() {
       const token = await getSessionToken();
       if (!token) {
         if (active) {
+          clearTimeout(fallback);
           setSignedIn(false);
         }
         return;
@@ -23,11 +31,13 @@ export default function HomeScreen() {
       try {
         await fetchMe();
         if (active) {
+          clearTimeout(fallback);
           setSignedIn(true);
         }
       } catch {
         await clearSession();
         if (active) {
+          clearTimeout(fallback);
           setSignedIn(false);
         }
       }
@@ -37,22 +47,26 @@ export default function HomeScreen() {
 
     return () => {
       active = false;
+      clearTimeout(fallback);
     };
   }, []);
 
   if (signedIn === null) {
-    return <View style={styles.blank} />;
+    return (
+      <AuthLanding
+        busy
+        buttonLabel="Checking session"
+        onPress={() => router.push('/sign-in')}
+      />
+    );
   }
 
   if (!signedIn) {
     return (
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.signInPage}>
-        <Link href="/sign-in" asChild>
-          <Pressable style={styles.primaryButton} accessibilityRole="link">
-            <Text style={styles.primaryButtonText}>Sign in</Text>
-          </Pressable>
-        </Link>
-      </ScrollView>
+      <AuthLanding
+        buttonLabel="Sign in"
+        onPress={() => router.push('/sign-in')}
+      />
     );
   }
 
@@ -81,11 +95,8 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  blank: {
-    flex: 1,
-    backgroundColor: '#f7f8fa',
-  },
   scroll: {
+    flex: 1,
     backgroundColor: '#f7f8fa',
   },
   page: {
@@ -96,16 +107,6 @@ const styles = StyleSheet.create({
     padding: 24,
     backgroundColor: '#f7f8fa',
     gap: 24,
-  },
-  signInPage: {
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center',
-    flexGrow: 1,
-    padding: 24,
-    backgroundColor: '#f7f8fa',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   topBar: {
     minHeight: 44,

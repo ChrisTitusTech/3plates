@@ -3,12 +3,9 @@ import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import {
   Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
 } from 'react-native';
 
+import { AuthLanding } from '../src/components/AuthLanding';
 import {
   getSessionToken,
   redeemMobileAuthExchangeCode,
@@ -87,62 +84,22 @@ export default function SignInScreen() {
   }, [router]);
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <Pressable
-        style={[styles.button, busy ? styles.buttonDisabled : null]}
-        disabled={busy}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: busy }}
-        onPress={() => {
-          void (async () => {
-            setBusy(true);
-            try {
-              const started = await startAuth('google', mobileRedirectUrl);
-              await Linking.openURL(started.next);
-            } catch {
-              return;
-            } finally {
-              setBusy(false);
-            }
-          })();
-        }}
-      >
-        <Text style={styles.buttonText}>{busy ? 'Signing in' : 'Sign in'}</Text>
-      </Pressable>
-    </ScrollView>
+    <AuthLanding
+      busy={busy}
+      buttonLabel={busy ? 'Signing in' : 'Continue with Google'}
+      onPress={() => {
+        void (async () => {
+          setBusy(true);
+          try {
+            const started = await startAuth('google', mobileRedirectUrl);
+            await Linking.openURL(started.next);
+          } catch {
+            return;
+          } finally {
+            setBusy(false);
+          }
+        })();
+      }}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  scroll: {
-    backgroundColor: '#f7f8fa',
-  },
-  page: {
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center',
-    flexGrow: 1,
-    padding: 24,
-    backgroundColor: '#f7f8fa',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  button: {
-    minHeight: 52,
-    minWidth: 180,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#17202a',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-});

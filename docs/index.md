@@ -25,3 +25,4 @@ This documentation set captures the product requirements, implementation rules, 
 
 - [VPS And Website Tasks](vps-website-tasks.md)
 - [Mobile Tasks](mobile-tasks.md)
+- [Android Handoff](mobile-android-handoff.md)

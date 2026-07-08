@@ -46,7 +46,7 @@ With a physical Android device attached, USB debugging approved, and a productio
 pnpm --filter @3plates/mobile test:android:device
 ```
 
-The device smoke test installs `apps/mobile/dist/3plates-android-production.apk`, launches `com.christitustech.threeplates`, waits for startup, confirms the process stays alive, and saves full logcat output to `apps/mobile/dist/android-device-smoke.log`. The script locates `adb` from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, the default Windows Android SDK path, or `PATH`. Use `-- --fresh` to clear app data before launch, `-- --keep-open` to leave the app open after the check, or `-- --device <serial>` when multiple devices are attached.
+The device smoke test installs `apps/mobile/dist/3plates-android-production.apk`, launches `com.christitustech.threeplates`, waits for startup, confirms the process stays alive, saves full logcat output to `apps/mobile/dist/android-device-smoke.log`, and captures `apps/mobile/dist/android-device-smoke.png` so a mostly white blank first screen fails the check. The script locates `adb` from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, the default Windows Android SDK path, or `PATH`. Use `-- --fresh` to clear app data before launch, `-- --keep-open` to leave the app open after the check, `-- --screenshot <path>` for a custom screenshot path, or `-- --device <serial>` when multiple devices are attached.
 
 ## Current Android Build Decisions
 

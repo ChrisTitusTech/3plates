@@ -22,6 +22,13 @@ function parseScreen(fileName: string) {
   return ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 }
 
+function parseComponent(fileName: string) {
+  const absolutePath = path.join(process.cwd(), 'src', 'components', fileName);
+  const sourceText = readFileSync(absolutePath, 'utf8');
+
+  return ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+}
+
 function getJsxTagName(node: JsxElementNode) {
   if (ts.isIdentifier(node.tagName)) {
     return node.tagName.text;
@@ -70,15 +77,24 @@ function formatLocation(sourceFile: ts.SourceFile, node: ts.Node) {
 }
 
 test('app screens keep web-compatible scroll containers', () => {
+  const authLandingSource = parseComponent('AuthLanding.tsx');
+
   for (const fileName of screenFiles) {
     const sourceFile = parseScreen(fileName);
+    const sourceText = sourceFile.getFullText();
     const scrollViews = collectJsxElements(sourceFile, 'ScrollView');
+    const effectiveScrollViews = scrollViews.length > 0 || !sourceText.includes('<AuthLanding')
+      ? scrollViews
+      : collectJsxElements(authLandingSource, 'ScrollView');
 
-    assert.ok(scrollViews.length > 0, `${fileName} should render inside a ScrollView`);
+    assert.ok(effectiveScrollViews.length > 0, `${fileName} should render inside a ScrollView`);
 
-    for (const scrollView of scrollViews) {
+    for (const scrollView of effectiveScrollViews) {
       const attributes = getJsxAttributeNames(scrollView);
-      const location = formatLocation(sourceFile, scrollView);
+      const location = formatLocation(
+        scrollViews.includes(scrollView) ? sourceFile : authLandingSource,
+        scrollView,
+      );
 
       assert.ok(attributes.has('style'), `${location} ScrollView should set a full-screen style`);
       assert.ok(
@@ -90,19 +106,28 @@ test('app screens keep web-compatible scroll containers', () => {
 });
 
 test('app screens keep accessible interactive controls', () => {
+  const authLandingSource = parseComponent('AuthLanding.tsx');
+
   for (const fileName of screenFiles) {
     const sourceFile = parseScreen(fileName);
+    const sourceText = sourceFile.getFullText();
     const pressables = collectJsxElements(sourceFile, 'Pressable');
+    const effectivePressables = pressables.length > 0 || !sourceText.includes('<AuthLanding')
+      ? pressables
+      : collectJsxElements(authLandingSource, 'Pressable');
 
     if (fileName === 'progress.tsx') {
       assert.match(sourceFile.getFullText(), /<ScreenHeader title="Progress" \/>/);
     } else {
-      assert.ok(pressables.length > 0, `${fileName} should expose at least one interactive control`);
+      assert.ok(effectivePressables.length > 0, `${fileName} should expose at least one interactive control`);
     }
 
-    for (const pressable of pressables) {
+    for (const pressable of effectivePressables) {
       const attributes = getJsxAttributeNames(pressable);
-      const location = formatLocation(sourceFile, pressable);
+      const location = formatLocation(
+        pressables.includes(pressable) ? sourceFile : authLandingSource,
+        pressable,
+      );
 
       assert.ok(attributes.has('accessibilityRole'), `${location} Pressable should set accessibilityRole`);
 
@@ -126,6 +151,7 @@ test('app screens keep accessible interactive controls', () => {
 test('signed-out and dashboard navigation stays minimal', () => {
   const indexSource = readFileSync(path.join(process.cwd(), 'app', 'index.tsx'), 'utf8');
   const signInSource = parseScreen('sign-in.tsx');
+  const authLandingSource = parseComponent('AuthLanding.tsx');
   const callbackSource = readFileSync(path.join(process.cwd(), 'app', 'auth', 'callback.tsx'), 'utf8');
   const progressSource = readFileSync(path.join(process.cwd(), 'app', 'progress.tsx'), 'utf8');
   const workoutsSource = readFileSync(path.join(process.cwd(), 'app', 'workouts.tsx'), 'utf8');
@@ -134,7 +160,11 @@ test('signed-out and dashboard navigation stays minimal', () => {
 
   assert.doesNotMatch(indexSource, /Notifications/);
   assert.doesNotMatch(indexSource, /\/notifications/);
-  assert.equal(collectJsxElements(signInSource, 'Pressable').length, 1);
+  assert.doesNotMatch(indexSource, /styles\.blank/);
+  assert.doesNotMatch(indexSource, /<View style=\{styles\.blank\}/);
+  assert.match(indexSource, /<AuthLanding/);
+  assert.match(signInSource.getFullText(), /<AuthLanding/);
+  assert.equal(collectJsxElements(authLandingSource, 'Pressable').length, 1);
   assert.equal(collectJsxElements(signInSource, 'TextInput').length, 0);
   assert.match(callbackSource, /router\.replace\('\/progress'\)/);
   assert.match(progressSource, /updateProgress\(nextProgress\)/);

@@ -134,6 +134,9 @@ importers:
       babel-preset-expo:
         specifier: 56.0.16
         version: 56.0.16(@babel/core@7.29.7)(@babel/runtime@7.29.2)(expo@56.0.14)(react-refresh@0.14.2)
+      pngjs:
+        specifier: 3.4.0
+        version: 3.4.0
       tsx:
         specifier: ^4.22.3
         version: 4.23.0

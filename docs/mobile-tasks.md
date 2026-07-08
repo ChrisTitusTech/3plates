@@ -5,7 +5,7 @@ title: Mobile Tasks
 
 # Mobile Tasks
 
-Status: Android rollout in progress
+Status: Android APK ready for physical-device install
 Owner: Core product team
 Last updated: 2026-07-08
 
@@ -50,6 +50,8 @@ Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 - Android emulator local API URL: `http://10.0.2.2:3000`.
 - Physical Android local API URL: use the development computer LAN IP with port `3000`, or use the production API for release-candidate APKs.
 - APK build strategy: generate the Android project with Expo prebuild and build a debug APK locally with the Gradle wrapper. EAS profiles are still documented for the later cloud/internal distribution path.
+- Current debug APK output: `apps/mobile/dist/3plates-android-debug.apk`.
+- Windows native builds need a short real checkout path because React Native CMake object paths can exceed the 260-character Windows process limit under `C:\Users\...`. The verified local build used `C:\3p-apk` with a pnpm virtual store at `C:\p\3p-apk`.
 
 ## Installed Android Toolchain
 
@@ -59,6 +61,8 @@ Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 - Android platform-tools: `37.0.0`, including `adb`.
 - Android platforms: `android-36`, `android-36.1`.
 - Android build-tools: `35.0.0`, `35.0.1`, `36.0.0`.
+- Android NDK: `27.1.12297006`.
+- Android CMake: `3.22.1`.
 - User environment variables set: `JAVA_HOME`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`.
 - User `Path` includes `%JAVA_HOME%\bin`, `%ANDROID_HOME%\platform-tools`, and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
 - No physical Android device was attached during the inventory check; `adb devices` returned an empty device list.
@@ -108,22 +112,30 @@ physical device.
 
 Tasks:
 
-- [ ] Add committed Expo app configuration if still missing (`app.json` or `app.config.ts`).
-- [ ] Configure Android package id, app name, icons, splash assets, permissions, deep-link scheme, and notification metadata.
-- [ ] Add `eas.json` profiles for at least:
+- [x] Add committed Expo app configuration if still missing (`app.json` or `app.config.ts`).
+- [x] Configure Android package id, app name, icons, splash assets, permissions, deep-link scheme, and notification metadata.
+- [x] Add `eas.json` profiles for at least:
   - Android internal APK testing.
   - Android production or preview build.
   - iOS placeholder profile for the later iOS phase.
-- [ ] Decide whether the first Android APK is built with local EAS, cloud EAS, or a generated native Android project.
-- [ ] Document any required local Android tooling: JDK, Android SDK, `adb`, environment variables, and signing credentials.
-- [ ] Ensure `EXPO_PUBLIC_API_URL` is injected for Android builds instead of relying on `localhost`.
-- [ ] Verify the notification registration path can read an EAS project id at runtime.
+- [x] Decide whether the first Android APK is built with local EAS, cloud EAS, or a generated native Android project.
+- [x] Document any required local Android tooling: JDK, Android SDK, `adb`, environment variables, and signing credentials.
+- [x] Ensure `EXPO_PUBLIC_API_URL` is injected for Android builds instead of relying on `localhost`.
+- [x] Verify the notification registration path can read an EAS project id at runtime.
 
 Automated gate:
 
-- [ ] `pnpm --filter @3plates/mobile typecheck`
-- [ ] `pnpm --filter @3plates/mobile test`
-- [ ] Android APK build completes from a clean checkout using the documented profile.
+- [x] `pnpm --filter @3plates/mobile typecheck`
+- [x] `pnpm --filter @3plates/mobile test`
+- [x] Android APK build completes from a phase-scoped short-path worktree using the documented profile.
+
+Evidence from 2026-07-08:
+
+- Typecheck and 18/18 mobile tests passed from short-path worktree `C:\3p-apk`.
+- Android debug APK build passed with `pnpm --filter @3plates/mobile build:android:debug`.
+- APK copied to `apps/mobile/dist/3plates-android-debug.apk`.
+- APK metadata verified with `aapt dump badging`: package `com.christitustech.threeplates`, label `3Plates`, min SDK `24`, target SDK `36`, version `0.1.0`.
+- `adb devices` returned no attached devices, so physical install and launch validation is still pending.
 
 Manual Android gate:
 
@@ -134,7 +146,7 @@ Manual Android gate:
 
 Commit gate:
 
-- [ ] Commit Android build configuration and docs after the APK installs and launches.
+- [x] Commit Android build configuration and docs after the APK build is verified. Physical install and launch validation remains pending until a device is attached.
 
 ## Phase 2 - Android Auth, Session, and Deep Links
 
@@ -366,17 +378,17 @@ Use this after the Android APK build gate passes.
    ```
 
 6. If the device shows as `unauthorized`, unlock the phone, approve the prompt, then run `adb devices` again.
-7. Install the APK:
+7. From the repository root, install the APK:
 
    ```sh
-   adb install -r path/to/3plates.apk
+   adb install -r apps/mobile/dist/3plates-android-debug.apk
    ```
 
 8. If Android blocks the install because of an older incompatible signature, uninstall the previous test build and reinstall:
 
    ```sh
-   adb uninstall your.android.application.id
-   adb install path/to/3plates.apk
+   adb uninstall com.christitustech.threeplates
+   adb install apps/mobile/dist/3plates-android-debug.apk
    ```
 
 9. Launch 3Plates from the app drawer.

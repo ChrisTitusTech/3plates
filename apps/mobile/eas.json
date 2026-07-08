@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "android-apk": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.3spinningplates.com"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "android-preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.3spinningplates.com"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "ios-preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.3spinningplates.com"
+      },
+      "ios": {
+        "simulator": true
+      }
+    }
+  }
+}

@@ -17,7 +17,9 @@ import {
   flushPendingMutations,
   getPendingMutationCount,
   getSessionToken,
+  productionApiUrl,
   registerDevice,
+  resolveApiBaseUrl,
   setSessionToken,
   signOutAndClearSession,
   updateProgress,
@@ -76,6 +78,13 @@ function createClientOverrides(overrides: Record<string, unknown>) {
     ...overrides,
   };
 }
+
+test('API base URL defaults to production for bundled native builds', () => {
+  assert.equal(resolveApiBaseUrl(undefined), productionApiUrl);
+  assert.equal(resolveApiBaseUrl(''), productionApiUrl);
+  assert.equal(resolveApiBaseUrl('  '), productionApiUrl);
+  assert.equal(resolveApiBaseUrl('https://api.example.test'), 'https://api.example.test');
+});
 
 test('auth callback persists token and subsequent me request sends bearer token', async (t) => {
   const storage = createMemoryStorage();

@@ -8,7 +8,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "prebuild:android": "expo prebuild --platform android",
-    "build:android:debug": "node scripts/build-android-debug.mjs",
+    "build:android:debug": "node scripts/build-android-apk.mjs debug",
+    "build:android:production": "node scripts/build-android-apk.mjs production",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -39,6 +40,7 @@
     "@react-native/metro-config": "0.85.3",
     "@types/node": "^24.13.2",
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "56.0.16",
     "tsx": "^4.22.3",
     "typescript": "~6.0.3"
   }

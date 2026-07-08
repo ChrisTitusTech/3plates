@@ -16,7 +16,15 @@ import type {
   User,
 } from '@3plates/contract';
 
-const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
+export const productionApiUrl = 'https://api.3spinningplates.com';
+
+export function resolveApiBaseUrl(apiUrl = process.env.EXPO_PUBLIC_API_URL) {
+  const normalizedApiUrl = apiUrl?.trim();
+
+  return normalizedApiUrl || productionApiUrl;
+}
+
+export const apiBaseUrl = resolveApiBaseUrl();
 
 export const apiClient = initClient(appContract, {
   baseUrl: apiBaseUrl,

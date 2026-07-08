@@ -5,7 +5,7 @@ title: Mobile Tasks
 
 # Mobile Tasks
 
-Status: Android APK ready for physical-device install
+Status: Android production APK ready for physical-device install
 Owner: Core product team
 Last updated: 2026-07-08
 
@@ -49,8 +49,10 @@ Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 - Production API URL: `https://api.3spinningplates.com`.
 - Android emulator local API URL: `http://10.0.2.2:3000`.
 - Physical Android local API URL: use the development computer LAN IP with port `3000`, or use the production API for release-candidate APKs.
-- APK build strategy: generate the Android project with Expo prebuild and build a debug APK locally with the Gradle wrapper. EAS profiles are still documented for the later cloud/internal distribution path.
-- Current debug APK output: `apps/mobile/dist/3plates-android-debug.apk`.
+- APK build strategy: generate the Android project with Expo prebuild and build a bundled production APK locally with the Gradle wrapper. EAS profiles are still documented for the later cloud/internal distribution path.
+- Current production APK output: `apps/mobile/dist/3plates-android-production.apk`.
+- Debug APKs are Metro development builds and can show `localhost:8081` script errors unless Metro is running; do not use debug APKs for production Android validation.
+- Do not package server secrets or private API keys in native builds. APKs may include public config only, such as `EXPO_PUBLIC_API_URL` and a public Expo project id. OAuth, database, provider, and signing secrets must remain server-side.
 - Windows native builds need a short real checkout path because React Native CMake object paths can exceed the 260-character Windows process limit under `C:\Users\...`. The verified local build used `C:\3p-apk` with a pnpm virtual store at `C:\p\3p-apk`.
 
 ## Installed Android Toolchain
@@ -136,6 +138,18 @@ Evidence from 2026-07-08:
 - APK copied to `apps/mobile/dist/3plates-android-debug.apk`.
 - APK metadata verified with `aapt dump badging`: package `com.christitustech.threeplates`, label `3Plates`, min SDK `24`, target SDK `36`, version `0.1.0`.
 - `adb devices` returned no attached devices, so physical install and launch validation is still pending.
+
+Production APK correction from 2026-07-08:
+
+- Physical Android launch of the debug APK showed a `localhost:8081` Metro script error.
+- Production native API fallback was changed to `https://api.3spinningplates.com`.
+- `babel-preset-expo` was added as an explicit mobile dev dependency so Metro release bundling can resolve the configured Babel preset.
+- Production release APK build passed from short-path worktree `C:\3p-prod` using the committed `build:android:production` command with the script's default `arm64-v8a` native target and embedded `assets/index.android.bundle`.
+- Production APK copied to `apps/mobile/dist/3plates-android-production.apk`.
+- Production APK metadata verified with `aapt dump badging`: package `com.christitustech.threeplates`, label `3Plates`, min SDK `24`, target SDK `36`, version `0.1.0`, native code `arm64-v8a`.
+- Production APK SHA-256: `3F1032DD727419B0265F4A8E1D95EAD845A04897F5104BA79A2DC796F732B8F2`.
+- `adb devices` returned no attached devices after the production APK build, so install validation still needs the phone connected.
+- Use `pnpm --filter @3plates/mobile build:android:production` for physical Android production validation.
 
 Manual Android gate:
 
@@ -381,14 +395,14 @@ Use this after the Android APK build gate passes.
 7. From the repository root, install the APK:
 
    ```sh
-   adb install -r apps/mobile/dist/3plates-android-debug.apk
+   adb install -r apps/mobile/dist/3plates-android-production.apk
    ```
 
 8. If Android blocks the install because of an older incompatible signature, uninstall the previous test build and reinstall:
 
    ```sh
    adb uninstall com.christitustech.threeplates
-   adb install apps/mobile/dist/3plates-android-debug.apk
+   adb install apps/mobile/dist/3plates-android-production.apk
    ```
 
 9. Launch 3Plates from the app drawer.

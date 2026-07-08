@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { createDatabaseClient, notificationDevices, users, workouts } from '@3plates/db';
-import { eq, sql } from 'drizzle-orm';
+import { createDatabaseClient, notificationDevices, progressEvents, users, workouts } from '@3plates/db';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
@@ -349,6 +349,94 @@ dbTest('DB-backed progress, preferences, and devices persist through Postgres', 
     });
 
     assert.equal(unauthorizedResponse.statusCode, 401);
+  });
+});
+
+dbTest('DB-backed manual workout history persists to Postgres and updates completed count', async () => {
+  await withDbApp(async ({ app }) => {
+    const signedIn = await signIn(app, 'google', 'http://localhost:3000/welcome');
+    const headers = {
+      authorization: `Bearer ${signedIn.sessionToken}`,
+    };
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/users/me/manual-workouts',
+      headers,
+      payload: {
+        type: 'biking',
+        date: '2026-07-08',
+        distance: '12 miles',
+        duration: '48:00',
+      },
+    });
+
+    assert.equal(createResponse.statusCode, 200);
+    const created = createResponse.json() as { id: string };
+
+    const { db, close } = createDatabaseClient(requireDatabaseUrl());
+    try {
+      const storedEvents = await db
+        .select({
+          id: progressEvents.id,
+          userId: progressEvents.userId,
+          kind: progressEvents.kind,
+          value: progressEvents.value,
+        })
+        .from(progressEvents)
+        .where(
+          and(
+            eq(progressEvents.userId, signedIn.user.id),
+            eq(progressEvents.kind, 'manual_workout'),
+          ),
+        );
+
+      assert.deepEqual(storedEvents, [
+        {
+          id: created.id,
+          userId: signedIn.user.id,
+          kind: 'manual_workout',
+          value: {
+            type: 'biking',
+            date: '2026-07-08',
+            distance: '12 miles',
+            duration: '48:00',
+            wodName: '',
+            workoutDetails: '',
+            scale: 'scaled',
+            score: '',
+          },
+        },
+      ]);
+    } finally {
+      await close();
+    }
+
+    const progressResponse = await app.inject({
+      method: 'GET',
+      url: '/users/me/progress',
+      headers,
+    });
+
+    assert.equal(progressResponse.statusCode, 200);
+    assert.equal(progressResponse.json().completedWorkouts, 1);
+
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/users/me/manual-workouts/${created.id}`,
+      headers,
+    });
+
+    assert.equal(deleteResponse.statusCode, 200);
+
+    const progressAfterDeleteResponse = await app.inject({
+      method: 'GET',
+      url: '/users/me/progress',
+      headers,
+    });
+
+    assert.equal(progressAfterDeleteResponse.statusCode, 200);
+    assert.equal(progressAfterDeleteResponse.json().completedWorkouts, 0);
   });
 });
 

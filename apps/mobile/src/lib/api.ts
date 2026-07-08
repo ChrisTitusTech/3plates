@@ -4,6 +4,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { appContract } from '@3plates/contract';
 import type {
   AuthProvider,
+  ManualWorkout,
+  ManualWorkoutCreate,
+  ManualWorkoutListResponse,
   NotificationDevice,
   Preferences,
   Progress,
@@ -36,6 +39,9 @@ type ContractClientLike = Pick<
   | 'me'
   | 'progress'
   | 'updateProgress'
+  | 'manualWorkouts'
+  | 'createManualWorkout'
+  | 'deleteManualWorkout'
   | 'preferences'
   | 'updatePreferences'
   | 'registerDevice'
@@ -51,6 +57,7 @@ const storageKeys = {
   sessionToken: '@3plates/session-token',
   me: '@3plates/cache/me',
   progress: '@3plates/cache/progress',
+  manualWorkouts: '@3plates/cache/manual-workouts',
   preferences: '@3plates/cache/preferences',
   workoutsPrefix: '@3plates/cache/workouts/',
   pendingMutations: '@3plates/pending-mutations',
@@ -361,6 +368,7 @@ export async function clearSession() {
   await writeSessionToken(null);
   await storage.removeItem(storageKeys.me);
   await storage.removeItem(storageKeys.progress);
+  await storage.removeItem(storageKeys.manualWorkouts);
   await storage.removeItem(storageKeys.preferences);
   await storage.removeItem(storageKeys.pendingMutations);
 }
@@ -604,6 +612,92 @@ export async function updateProgress(progress: Progress) {
       queued: true,
     };
   }
+}
+
+async function updateCachedManualWorkouts(
+  update: (current: ManualWorkoutListResponse) => ManualWorkoutListResponse,
+) {
+  const current = await readCache<ManualWorkoutListResponse>(storageKeys.manualWorkouts);
+  if (!current) {
+    return;
+  }
+
+  await writeCache(storageKeys.manualWorkouts, update(current));
+}
+
+export async function fetchManualWorkouts(): Promise<CachedReadResult<ManualWorkoutListResponse>> {
+  const token = await requireSessionToken();
+
+  try {
+    const response = await contractClient.manualWorkouts({
+      extraHeaders: buildAuthHeaders(token),
+    });
+
+    if (response.status !== 200) {
+      throw toApiRequestError(response.status, response.body);
+    }
+
+    await writeCache(storageKeys.manualWorkouts, response.body);
+
+    return {
+      data: response.body,
+      source: 'network',
+    };
+  } catch (error) {
+    if (!isNetworkFailure(error)) {
+      throw error;
+    }
+
+    const cached = await readCache<ManualWorkoutListResponse>(storageKeys.manualWorkouts);
+    if (!cached) {
+      throw error;
+    }
+
+    return {
+      data: cached,
+      source: 'cache',
+    };
+  }
+}
+
+export async function createManualWorkout(workout: ManualWorkoutCreate): Promise<ManualWorkout> {
+  const token = await requireSessionToken();
+
+  const response = await contractClient.createManualWorkout({
+    extraHeaders: buildAuthHeaders(token),
+    body: workout,
+  });
+
+  if (response.status !== 200) {
+    throw toApiRequestError(response.status, response.body);
+  }
+
+  await updateCachedManualWorkouts((current) => ({
+    workouts: [response.body, ...current.workouts.filter((entry) => entry.id !== response.body.id)],
+  }));
+
+  return response.body;
+}
+
+export async function deleteManualWorkout(workoutId: string) {
+  const token = await requireSessionToken();
+
+  const response = await contractClient.deleteManualWorkout({
+    extraHeaders: buildAuthHeaders(token),
+    params: {
+      workoutId,
+    },
+  });
+
+  if (response.status !== 200) {
+    throw toApiRequestError(response.status, response.body);
+  }
+
+  await updateCachedManualWorkouts((current) => ({
+    workouts: current.workouts.filter((entry) => entry.id !== workoutId),
+  }));
+
+  return response.body;
 }
 
 export async function fetchPreferences(): Promise<CachedReadResult<Preferences>> {

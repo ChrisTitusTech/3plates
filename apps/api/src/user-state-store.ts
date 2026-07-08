@@ -3,6 +3,8 @@ import {
   adminWorkoutPublishSchema,
   adminWorkoutSchema,
   adminWorkoutUpdateSchema,
+  manualWorkoutCreateSchema,
+  manualWorkoutSchema,
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
@@ -13,6 +15,7 @@ import {
 import { createDatabaseClient } from '@3plates/db';
 import {
   notificationDevices,
+  progressEvents,
   userIdentities,
   userPreferences,
   userProgress,
@@ -33,6 +36,8 @@ const userIdentitySchema = z.object({
 export type UserIdentityInput = z.infer<typeof userIdentitySchema>;
 export type UserRecord = z.infer<typeof userSchema>;
 export type ProgressRecord = z.infer<typeof progressSchema>;
+export type ManualWorkoutCreateRecord = z.infer<typeof manualWorkoutCreateSchema>;
+export type ManualWorkoutRecord = z.infer<typeof manualWorkoutSchema>;
 export type PreferencesRecord = z.infer<typeof preferencesSchema>;
 export type NotificationDeviceRecord = z.infer<typeof notificationDeviceSchema>;
 export type WorkoutMode = z.infer<typeof workoutModeSchema>;
@@ -51,6 +56,9 @@ export interface UserStateStore {
   getUserEffectiveLevel(userId: string): Promise<number>;
   getProgress(userId: string): Promise<ProgressRecord>;
   updateProgress(userId: string, progress: ProgressRecord): Promise<void>;
+  listManualWorkouts(userId: string): Promise<ManualWorkoutRecord[]>;
+  createManualWorkout(userId: string, workout: ManualWorkoutCreateRecord): Promise<ManualWorkoutRecord>;
+  deleteManualWorkout(userId: string, workoutId: string): Promise<void>;
   getPreferences(userId: string): Promise<PreferencesRecord>;
   updatePreferences(userId: string, preferences: PreferencesRecord): Promise<void>;
   registerDevice(userId: string, device: NotificationDeviceRecord): Promise<void>;
@@ -77,6 +85,8 @@ const defaultPreferences = Object.freeze<PreferencesRecord>({
   units: 'metric',
   reminderTime: '07:00',
 });
+
+const manualWorkoutEventKind = 'manual_workout';
 
 function toLocalDateString(nowUtc: Date, timezone: string | null | undefined): string {
   const tz = timezone || 'UTC';
@@ -125,6 +135,20 @@ function mapProgress(row: {
     streakDays: row.streakDays,
     completedWorkouts: row.completedWorkouts,
     lastWorkoutAt: row.lastWorkoutAt?.toISOString() ?? null,
+  });
+}
+
+function mapManualWorkout(row: {
+  id: string;
+  value: unknown;
+  recordedAt: Date;
+}): ManualWorkoutRecord {
+  const value = manualWorkoutCreateSchema.parse(row.value);
+
+  return manualWorkoutSchema.parse({
+    ...value,
+    id: row.id,
+    createdAt: row.recordedAt.toISOString(),
   });
 }
 
@@ -188,6 +212,36 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
   const { db, close } = createDatabaseClient(connectionString);
 
   type DbExecutor = Pick<typeof db, 'select' | 'insert'>;
+
+  const countManualWorkouts = async (executor: DbExecutor, userId: string): Promise<number> => {
+    const [result] = await executor
+      .select({
+        count: sql<number>`count(*)::int`,
+      })
+      .from(progressEvents)
+      .where(and(eq(progressEvents.userId, userId), eq(progressEvents.kind, manualWorkoutEventKind)));
+
+    return Number(result?.count ?? 0);
+  };
+
+  const syncManualWorkoutCount = async (executor: DbExecutor, userId: string): Promise<void> => {
+    const completedWorkouts = await countManualWorkouts(executor, userId);
+
+    await executor
+      .insert(userProgress)
+      .values({
+        userId,
+        completedWorkouts,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: userProgress.userId,
+        set: {
+          completedWorkouts,
+          updatedAt: new Date(),
+        },
+      });
+  };
 
   const getOrCreateUserLevel = async (executor: DbExecutor, userId: string): Promise<number> => {
     const [existingProgress] = await executor
@@ -453,6 +507,60 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         });
     },
 
+    async listManualWorkouts(userId) {
+      const rows = await db
+        .select({
+          id: progressEvents.id,
+          value: progressEvents.value,
+          recordedAt: progressEvents.recordedAt,
+        })
+        .from(progressEvents)
+        .where(and(eq(progressEvents.userId, userId), eq(progressEvents.kind, manualWorkoutEventKind)))
+        .orderBy(desc(progressEvents.recordedAt), asc(progressEvents.id));
+
+      return rows.map(mapManualWorkout);
+    },
+
+    async createManualWorkout(userId, workout) {
+      const payload = manualWorkoutCreateSchema.parse(workout);
+
+      return db.transaction(async (transaction) => {
+        const [created] = await transaction
+          .insert(progressEvents)
+          .values({
+            userId,
+            kind: manualWorkoutEventKind,
+            value: payload,
+            recordedAt: new Date(),
+          })
+          .returning({
+            id: progressEvents.id,
+            value: progressEvents.value,
+            recordedAt: progressEvents.recordedAt,
+          });
+
+        await syncManualWorkoutCount(transaction, userId);
+
+        return mapManualWorkout(created);
+      });
+    },
+
+    async deleteManualWorkout(userId, workoutId) {
+      await db.transaction(async (transaction) => {
+        await transaction
+          .delete(progressEvents)
+          .where(
+            and(
+              eq(progressEvents.userId, userId),
+              eq(progressEvents.kind, manualWorkoutEventKind),
+              eq(progressEvents.id, workoutId),
+            ),
+          );
+
+        await syncManualWorkoutCount(transaction, userId);
+      });
+    },
+
     async getPreferences(userId) {
       const [preferences] = await db
         .select({
@@ -713,6 +821,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const usersById = new Map<string, MemoryUser>();
   const identitiesByKey = new Map<string, string>();
   const progressByUserId = new Map<string, ProgressRecord>();
+  const manualWorkoutsByUserId = new Map<string, ManualWorkoutRecord[]>();
   const preferencesByUserId = new Map<string, PreferencesRecord>();
   const devicesByToken = new Map<string, NotificationDeviceRecord & { userId: string }>();
   const workoutsById = new Map<string, AdminWorkoutRecord>();
@@ -721,6 +830,15 @@ export function createMemoryUserStateStore(): UserStateStore & {
 
   function identityKey(provider: string, providerSubjectId: string) {
     return `${provider}:${providerSubjectId}`;
+  }
+
+  function syncMemoryManualWorkoutCount(userId: string) {
+    const completedWorkouts = manualWorkoutsByUserId.get(userId)?.length ?? 0;
+    const existing = progressByUserId.get(userId) ?? defaultProgress;
+    progressByUserId.set(userId, progressSchema.parse({
+      ...existing,
+      completedWorkouts,
+    }));
   }
 
   return {
@@ -835,6 +953,40 @@ export function createMemoryUserStateStore(): UserStateStore & {
 
     async updateProgress(userId, progress) {
       progressByUserId.set(userId, progressSchema.parse(progress));
+    },
+
+    async listManualWorkouts(userId) {
+      return [...(manualWorkoutsByUserId.get(userId) ?? [])].sort((first, second) => {
+        const dateCompare = second.date.localeCompare(first.date);
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+
+        return second.createdAt.localeCompare(first.createdAt);
+      });
+    },
+
+    async createManualWorkout(userId, workout) {
+      const payload = manualWorkoutCreateSchema.parse(workout);
+      const created = manualWorkoutSchema.parse({
+        ...payload,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      });
+      const nextWorkouts = [created, ...(manualWorkoutsByUserId.get(userId) ?? [])];
+
+      manualWorkoutsByUserId.set(userId, nextWorkouts);
+      syncMemoryManualWorkoutCount(userId);
+
+      return created;
+    },
+
+    async deleteManualWorkout(userId, workoutId) {
+      const nextWorkouts = (manualWorkoutsByUserId.get(userId) ?? [])
+        .filter((workout) => workout.id !== workoutId);
+
+      manualWorkoutsByUserId.set(userId, nextWorkouts);
+      syncMemoryManualWorkoutCount(userId);
     },
 
     async getPreferences(userId) {

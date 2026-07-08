@@ -14,6 +14,7 @@ import { env } from './env.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminWorkoutRoutes } from './routes/admin-workouts.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerManualWorkoutRoutes } from './routes/manual-workouts.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerPreferencesRoutes } from './routes/preferences.js';
 import { registerProgressRoutes } from './routes/progress.js';
@@ -136,6 +137,7 @@ export function createServer(options: CreateServerOptions = {}) {
     await registerAdminWorkoutRoutes(statefulApp, store);
     await registerUserRoutes(statefulApp);
     await registerProgressRoutes(statefulApp, store);
+    await registerManualWorkoutRoutes(statefulApp, store);
     await registerPreferencesRoutes(statefulApp, store);
     await registerNotificationRoutes(statefulApp, store);
     await registerWorkoutRoutes(statefulApp, store);

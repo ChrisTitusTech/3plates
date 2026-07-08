@@ -10,6 +10,9 @@ import {
   apiErrorSchema,
   authProviderSchema,
   authSessionSchema,
+  manualWorkoutCreateSchema,
+  manualWorkoutListResponseSchema,
+  manualWorkoutSchema,
   notificationDeviceSchema,
   preferencesSchema,
   progressSchema,
@@ -74,6 +77,66 @@ test('schema validations accept valid data', () => {
   );
 
   assert.equal(workoutModeSchema.parse('active_recovery'), 'active_recovery');
+
+  assert.deepEqual(
+    manualWorkoutCreateSchema.parse({
+      type: 'running_walking',
+      date: '2026-07-08',
+      distance: '3.1 miles',
+      duration: '29:42',
+    }),
+    {
+      type: 'running_walking',
+      date: '2026-07-08',
+      distance: '3.1 miles',
+      duration: '29:42',
+      wodName: '',
+      workoutDetails: '',
+      scale: 'scaled',
+      score: '',
+    },
+  );
+
+  assert.deepEqual(
+    manualWorkoutSchema.parse({
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      type: 'crossfit',
+      date: '2026-07-07',
+      wodName: 'Fran',
+      workoutDetails: '21-15-9 thrusters and pull-ups',
+      scale: 'rx',
+      score: '7:42',
+      createdAt: '2026-07-08T12:00:00.000Z',
+    }),
+    {
+      id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+      type: 'crossfit',
+      date: '2026-07-07',
+      distance: '',
+      duration: '',
+      wodName: 'Fran',
+      workoutDetails: '21-15-9 thrusters and pull-ups',
+      scale: 'rx',
+      score: '7:42',
+      createdAt: '2026-07-08T12:00:00.000Z',
+    },
+  );
+
+  assert.deepEqual(
+    manualWorkoutListResponseSchema.parse({
+      workouts: [
+        {
+          id: 'df7f8c89-8d36-4f0f-a8b9-10e4f6989db2',
+          type: 'biking',
+          date: '2026-07-06',
+          distance: '12 miles',
+          duration: '48:00',
+          createdAt: '2026-07-08T12:00:00.000Z',
+        },
+      ],
+    }).workouts[0]?.type,
+    'biking',
+  );
 
   assert.deepEqual(
     workoutSchema.parse({
@@ -273,6 +336,8 @@ test('schema validations reject invalid data', () => {
   assert.throws(() => preferencesSchema.parse({ theme: 'light', units: 'metric', reminderTime: '8:30' }));
   assert.throws(() => notificationDeviceSchema.parse({ platform: 'desktop', pushToken: 'token-123' }));
   assert.throws(() => workoutModeSchema.parse('hyrox'));
+  assert.throws(() => manualWorkoutCreateSchema.parse({ type: 'biking', date: '2026-07-08', distance: '8 miles' }));
+  assert.throws(() => manualWorkoutCreateSchema.parse({ type: 'crossfit', date: '2026-07-08', wodName: 'Fran' }));
   assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', page: 0 }));
   assert.throws(() => workoutListQuerySchema.parse({ mode: 'active_recovery', pageSize: 100 }));
   assert.throws(() => adminWorkoutUpdateSchema.parse({ expectedVersion: 1 }));
@@ -356,6 +421,9 @@ test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.me.path, '/users/me');
   assert.equal(appContract.progress.path, '/users/me/progress');
   assert.equal(appContract.updateProgress.path, '/users/me/progress');
+  assert.equal(appContract.manualWorkouts.path, '/users/me/manual-workouts');
+  assert.equal(appContract.createManualWorkout.path, '/users/me/manual-workouts');
+  assert.equal(appContract.deleteManualWorkout.path, '/users/me/manual-workouts/:workoutId');
   assert.equal(appContract.preferences.path, '/users/me/preferences');
   assert.equal(appContract.updatePreferences.path, '/users/me/preferences');
   assert.equal(appContract.registerDevice.path, '/notifications/devices');

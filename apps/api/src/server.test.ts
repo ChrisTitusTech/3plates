@@ -38,6 +38,13 @@ function createMissingUserStateApp() {
     getUserEffectiveLevel: async () => 1,
     getProgress: async () => ({ streakDays: 0, completedWorkouts: 0, lastWorkoutAt: null }),
     updateProgress: async () => undefined,
+    listManualWorkouts: async () => [],
+    createManualWorkout: async (_userId, workout) => ({
+      ...workout,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    }),
+    deleteManualWorkout: async () => undefined,
     getPreferences: async () => ({ theme: 'system', units: 'metric', reminderTime: '07:00' }),
     updatePreferences: async () => undefined,
     registerDevice: async () => undefined,
@@ -656,6 +663,86 @@ test('stateful user endpoints persist per-user state using bearer sessions', asy
   });
 
   assert.equal(notificationResponse.statusCode, 200);
+});
+
+test('manual workout history persists entries and updates completed workout count', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(async () => {
+    await app.close();
+  });
+
+  const session = await signIn(app, 'google');
+  const headers = {
+    authorization: `Bearer ${session.sessionToken}`,
+  };
+
+  const runningResponse = await app.inject({
+    method: 'POST',
+    url: '/users/me/manual-workouts',
+    headers,
+    payload: {
+      type: 'running_walking',
+      date: '2026-07-06',
+      distance: '3.1 miles',
+      duration: '29:42',
+    },
+  });
+
+  assert.equal(runningResponse.statusCode, 200);
+
+  const crossfitResponse = await app.inject({
+    method: 'POST',
+    url: '/users/me/manual-workouts',
+    headers,
+    payload: {
+      type: 'crossfit',
+      date: '2026-07-07',
+      wodName: 'Fran',
+      workoutDetails: '21-15-9 thrusters and pull-ups',
+      scale: 'rx',
+      score: '7:42',
+    },
+  });
+
+  assert.equal(crossfitResponse.statusCode, 200);
+  const crossfit = crossfitResponse.json() as { id: string; workoutDetails: string };
+  assert.equal(crossfit.workoutDetails, '21-15-9 thrusters and pull-ups');
+
+  const historyResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me/manual-workouts',
+    headers,
+  });
+
+  assert.equal(historyResponse.statusCode, 200);
+  assert.equal(historyResponse.json().workouts.length, 2);
+
+  const progressResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers,
+  });
+
+  assert.equal(progressResponse.statusCode, 200);
+  assert.equal(progressResponse.json().completedWorkouts, 2);
+
+  const deleteResponse = await app.inject({
+    method: 'DELETE',
+    url: `/users/me/manual-workouts/${crossfit.id}`,
+    headers,
+  });
+
+  assert.equal(deleteResponse.statusCode, 200);
+  assert.deepEqual(deleteResponse.json(), { deleted: true });
+
+  const progressAfterDeleteResponse = await app.inject({
+    method: 'GET',
+    url: '/users/me/progress',
+    headers,
+  });
+
+  assert.equal(progressAfterDeleteResponse.statusCode, 200);
+  assert.equal(progressAfterDeleteResponse.json().completedWorkouts, 1);
 });
 
 test('workouts endpoint returns published workouts filtered by selected mode', async (t) => {

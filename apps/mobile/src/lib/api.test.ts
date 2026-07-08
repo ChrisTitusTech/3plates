@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NotificationDevice, Preferences, Progress, User } from '@3plates/contract';
+import type { ManualWorkoutCreate, NotificationDevice, Preferences, Progress, User } from '@3plates/contract';
 
 import {
   __resetApiTestAdapters,
   __setApiTestAdapters,
   clearSession,
   completeAuthCallback,
+  createManualWorkout,
+  deleteManualWorkout,
   fetchMe,
+  fetchManualWorkouts,
   fetchProgress,
   fetchWorkoutsByMode,
   flushPendingMutations,
@@ -63,6 +66,9 @@ function createClientOverrides(overrides: Record<string, unknown>) {
     me: async () => ({ status: 500, body: null }),
     progress: async () => ({ status: 500, body: null }),
     updateProgress: async () => ({ status: 500, body: null }),
+    manualWorkouts: async () => ({ status: 500, body: null }),
+    createManualWorkout: async () => ({ status: 500, body: null }),
+    deleteManualWorkout: async () => ({ status: 500, body: null }),
     preferences: async () => ({ status: 500, body: null }),
     updatePreferences: async () => ({ status: 500, body: null }),
     registerDevice: async () => ({ status: 500, body: null }),
@@ -158,6 +164,114 @@ test('progress read falls back to cached value on network failure', async (t) =>
   const second = await fetchProgress();
   assert.equal(second.source, 'cache');
   assert.deepEqual(second.data, networkProgress);
+});
+
+test('manual workout history uses authenticated API reads and writes', async (t) => {
+  const storage = createMemoryStorage();
+  let listCallCount = 0;
+  let listHeaders: Record<string, string | undefined> | undefined;
+  let createHeaders: Record<string, string | undefined> | undefined;
+  let createBody: ManualWorkoutCreate | undefined;
+  let deleteHeaders: Record<string, string | undefined> | undefined;
+  let deleteParams: { workoutId: string } | undefined;
+  const workout = {
+    id: '1f7c40d2-4f31-4fd3-91c5-f8ef9ed6e8af',
+    type: 'running_walking' as const,
+    date: '2026-07-08',
+    distance: '3.1 miles',
+    duration: '29:42',
+    wodName: '',
+    workoutDetails: '',
+    scale: 'scaled' as const,
+    score: '',
+    createdAt: '2026-07-08T12:00:00.000Z',
+  };
+
+  const client = createClientOverrides({
+    manualWorkouts: async (input: { extraHeaders?: Record<string, string | undefined> }) => {
+      listCallCount += 1;
+      listHeaders = input.extraHeaders;
+      if (listCallCount === 1) {
+        return {
+          status: 200,
+          body: {
+            workouts: [workout],
+          },
+        };
+      }
+
+      throw new Error('Network request failed');
+    },
+    createManualWorkout: async (input: {
+      extraHeaders?: Record<string, string | undefined>;
+      body: ManualWorkoutCreate;
+    }) => {
+      createHeaders = input.extraHeaders;
+      createBody = input.body;
+      return {
+        status: 200,
+        body: {
+          ...input.body,
+          id: '2f7c40d2-4f31-4fd3-91c5-f8ef9ed6e8af',
+          createdAt: '2026-07-08T13:00:00.000Z',
+        },
+      };
+    },
+    deleteManualWorkout: async (input: {
+      extraHeaders?: Record<string, string | undefined>;
+      params: { workoutId: string };
+    }) => {
+      deleteHeaders = input.extraHeaders;
+      deleteParams = input.params;
+      return {
+        status: 200,
+        body: {
+          deleted: true,
+        },
+      };
+    },
+  });
+
+  __setApiTestAdapters({
+    storage,
+    client: client as never,
+  });
+
+  t.after(() => {
+    __resetApiTestAdapters();
+  });
+
+  await setSessionToken('token-manual-workouts');
+
+  const first = await fetchManualWorkouts();
+  assert.equal(first.source, 'network');
+  assert.deepEqual(first.data.workouts, [workout]);
+  assert.equal(listHeaders?.authorization, 'Bearer token-manual-workouts');
+
+  const second = await fetchManualWorkouts();
+  assert.equal(second.source, 'cache');
+  assert.deepEqual(second.data.workouts, [workout]);
+
+  const payload: ManualWorkoutCreate = {
+    type: 'biking',
+    date: '2026-07-09',
+    distance: '12 miles',
+    duration: '48:00',
+    wodName: '',
+    workoutDetails: '',
+    scale: 'scaled',
+    score: '',
+  };
+  const created = await createManualWorkout(payload);
+  assert.equal(created.id, '2f7c40d2-4f31-4fd3-91c5-f8ef9ed6e8af');
+  assert.equal(createHeaders?.authorization, 'Bearer token-manual-workouts');
+  assert.deepEqual(createBody, payload);
+
+  await deleteManualWorkout(created.id);
+  assert.equal(deleteHeaders?.authorization, 'Bearer token-manual-workouts');
+  assert.deepEqual(deleteParams, {
+    workoutId: created.id,
+  });
 });
 
 test('queued progress write is retried and flushed once network recovers', async (t) => {

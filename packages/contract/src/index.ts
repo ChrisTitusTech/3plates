@@ -17,6 +17,80 @@ export const progressSchema = z.object({
   lastWorkoutAt: z.string().datetime().nullable(),
 });
 
+export const manualWorkoutTypeSchema = z.enum(['running_walking', 'crossfit', 'biking']);
+export const manualWorkoutScaleSchema = z.enum(['rx', 'scaled']);
+
+const manualWorkoutPayloadBaseSchema = z.object({
+  type: manualWorkoutTypeSchema,
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  distance: z.string().default(''),
+  duration: z.string().default(''),
+  wodName: z.string().default(''),
+  workoutDetails: z.string().default(''),
+  scale: manualWorkoutScaleSchema.default('scaled'),
+  score: z.string().default(''),
+});
+
+function validateManualWorkoutPayload(
+  value: z.infer<typeof manualWorkoutPayloadBaseSchema>,
+  context: z.RefinementCtx,
+) {
+  if (value.type === 'running_walking' || value.type === 'biking') {
+    if (value.distance.trim().length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Distance is required for cardio workouts.',
+        path: ['distance'],
+      });
+    }
+
+    if (value.duration.trim().length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Duration is required for cardio workouts.',
+        path: ['duration'],
+      });
+    }
+
+    return;
+  }
+
+  if (value.wodName.trim().length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'WOD name is required for Crossfit workouts.',
+      path: ['wodName'],
+    });
+  }
+
+  if (value.workoutDetails.trim().length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Workout details are required for Crossfit workouts.',
+      path: ['workoutDetails'],
+    });
+  }
+
+  if (value.score.trim().length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Score is required for Crossfit workouts.',
+      path: ['score'],
+    });
+  }
+}
+
+export const manualWorkoutCreateSchema = manualWorkoutPayloadBaseSchema.superRefine(validateManualWorkoutPayload);
+
+export const manualWorkoutSchema = manualWorkoutPayloadBaseSchema.extend({
+  id: z.string().uuid(),
+  createdAt: z.string().datetime(),
+}).superRefine(validateManualWorkoutPayload);
+
+export const manualWorkoutListResponseSchema = z.object({
+  workouts: z.array(manualWorkoutSchema),
+});
+
 export const preferencesSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']),
   units: z.enum(['metric', 'imperial']),
@@ -257,6 +331,37 @@ export const appContract = c.router({
       }),
     },
   },
+  manualWorkouts: {
+    method: 'GET',
+    path: '/users/me/manual-workouts',
+    responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      200: manualWorkoutListResponseSchema,
+    },
+  },
+  createManualWorkout: {
+    method: 'POST',
+    path: '/users/me/manual-workouts',
+    body: manualWorkoutCreateSchema,
+    responses: {
+      400: apiErrorSchema,
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      200: manualWorkoutSchema,
+    },
+  },
+  deleteManualWorkout: {
+    method: 'DELETE',
+    path: '/users/me/manual-workouts/:workoutId',
+    responses: {
+      401: apiErrorSchema,
+      404: apiErrorSchema,
+      200: z.object({
+        deleted: z.literal(true),
+      }),
+    },
+  },
   preferences: {
     method: 'GET',
     path: '/users/me/preferences',
@@ -353,6 +458,11 @@ export type AppContract = typeof appContract;
 export type AuthProvider = z.infer<typeof authProviderSchema>;
 export type User = z.infer<typeof userSchema>;
 export type Progress = z.infer<typeof progressSchema>;
+export type ManualWorkoutType = z.infer<typeof manualWorkoutTypeSchema>;
+export type ManualWorkoutScale = z.infer<typeof manualWorkoutScaleSchema>;
+export type ManualWorkoutCreate = z.infer<typeof manualWorkoutCreateSchema>;
+export type ManualWorkout = z.infer<typeof manualWorkoutSchema>;
+export type ManualWorkoutListResponse = z.infer<typeof manualWorkoutListResponseSchema>;
 export type Preferences = z.infer<typeof preferencesSchema>;
 export type NotificationDevice = z.infer<typeof notificationDeviceSchema>;
 export type WorkoutMode = z.infer<typeof workoutModeSchema>;

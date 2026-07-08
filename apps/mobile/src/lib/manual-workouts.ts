@@ -1,7 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ManualWorkoutCreate, ManualWorkoutScale, ManualWorkoutType } from '@3plates/contract';
 
-export type ManualWorkoutType = 'running_walking' | 'crossfit' | 'biking';
-export type ManualWorkoutScale = 'rx' | 'scaled';
+import {
+  createManualWorkout as createRemoteManualWorkout,
+  deleteManualWorkout as deleteRemoteManualWorkout,
+  fetchManualWorkouts,
+} from './api';
+
+export type { ManualWorkoutScale, ManualWorkoutType };
 
 export type ManualWorkoutForm = {
   date: string;
@@ -26,6 +32,7 @@ export const manualWorkoutTypes: Array<{ value: ManualWorkoutType; label: string
 ];
 
 const manualWorkoutStorageKey = '@3plates/manual-workouts';
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function toDateInputValue(value: Date) {
   const year = value.getFullYear();
@@ -71,23 +78,139 @@ export function formatManualWorkoutLine(entry: ManualWorkoutEntry) {
   return `${entry.date} · ${getManualWorkoutLabel(entry.type)} · ${formatManualWorkoutDetails(entry)}`;
 }
 
-export async function loadManualWorkoutEntries() {
+function sortManualWorkoutEntries(entries: ManualWorkoutEntry[]) {
+  return [...entries].sort((first, second) => {
+    const dateCompare = second.date.localeCompare(first.date);
+    if (dateCompare !== 0) {
+      return dateCompare;
+    }
+
+    return second.createdAt.localeCompare(first.createdAt);
+  });
+}
+
+function toManualWorkoutCreate(entry: ManualWorkoutEntry): ManualWorkoutCreate {
+  return {
+    type: entry.type,
+    date: entry.date,
+    distance: entry.distance,
+    duration: entry.duration,
+    wodName: entry.wodName,
+    workoutDetails: entry.workoutDetails,
+    scale: entry.scale,
+    score: entry.score,
+  };
+}
+
+function manualWorkoutContentKey(entry: ManualWorkoutEntry) {
+  return JSON.stringify(toManualWorkoutCreate(entry));
+}
+
+function isManualWorkoutEntry(value: unknown): value is ManualWorkoutEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const entry = value as Partial<ManualWorkoutEntry>;
+  return (
+    typeof entry.id === 'string'
+    && (entry.type === 'running_walking' || entry.type === 'crossfit' || entry.type === 'biking')
+    && typeof entry.date === 'string'
+    && typeof entry.distance === 'string'
+    && typeof entry.duration === 'string'
+    && typeof entry.wodName === 'string'
+    && typeof entry.workoutDetails === 'string'
+    && (entry.scale === 'rx' || entry.scale === 'scaled')
+    && typeof entry.score === 'string'
+    && typeof entry.createdAt === 'string'
+  );
+}
+
+async function loadLocalManualWorkoutEntries() {
   const rawValue = await AsyncStorage.getItem(manualWorkoutStorageKey);
   if (!rawValue) {
     return [];
   }
 
-  const parsed = JSON.parse(rawValue) as ManualWorkoutEntry[];
-  return Array.isArray(parsed) ? parsed : [];
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isManualWorkoutEntry) : [];
+  } catch {
+    return [];
+  }
 }
 
-export async function saveManualWorkoutEntries(entries: ManualWorkoutEntry[]) {
-  await AsyncStorage.setItem(manualWorkoutStorageKey, JSON.stringify(entries));
+async function cacheManualWorkoutEntries(entries: ManualWorkoutEntry[]) {
+  try {
+    await AsyncStorage.setItem(manualWorkoutStorageKey, JSON.stringify(entries));
+  } catch {
+    // The server is authoritative; cache failures should not block saved workouts.
+  }
+}
+
+async function migrateLocalManualWorkoutEntries(
+  remoteEntries: ManualWorkoutEntry[],
+  localEntries: ManualWorkoutEntry[],
+) {
+  const remoteContentKeys = new Set(remoteEntries.map(manualWorkoutContentKey));
+  const migratedEntries: ManualWorkoutEntry[] = [];
+
+  for (const localEntry of localEntries) {
+    if (uuidPattern.test(localEntry.id) || remoteContentKeys.has(manualWorkoutContentKey(localEntry))) {
+      continue;
+    }
+
+    const migratedEntry = await createRemoteManualWorkout(toManualWorkoutCreate(localEntry));
+    migratedEntries.push(migratedEntry);
+    remoteContentKeys.add(manualWorkoutContentKey(migratedEntry));
+  }
+
+  return migratedEntries;
+}
+
+export async function loadManualWorkoutEntries() {
+  const localEntries = await loadLocalManualWorkoutEntries();
+
+  try {
+    const result = await fetchManualWorkouts();
+    let remoteEntries = result.data.workouts;
+
+    if (result.source === 'network' && localEntries.length > 0) {
+      const migratedEntries = await migrateLocalManualWorkoutEntries(remoteEntries, localEntries);
+      remoteEntries = [...migratedEntries, ...remoteEntries];
+    }
+
+    const sortedEntries = sortManualWorkoutEntries(remoteEntries);
+    await cacheManualWorkoutEntries(sortedEntries);
+    return sortedEntries;
+  } catch (error) {
+    if (localEntries.length > 0) {
+      return sortManualWorkoutEntries(localEntries);
+    }
+
+    throw error;
+  }
+}
+
+export async function saveManualWorkoutEntry(entry: ManualWorkoutEntry) {
+  const savedEntry = await createRemoteManualWorkout(toManualWorkoutCreate(entry));
+  const localEntries = await loadLocalManualWorkoutEntries();
+  const nextEntries = sortManualWorkoutEntries([
+    savedEntry,
+    ...localEntries.filter((localEntry) => localEntry.id !== entry.id && localEntry.id !== savedEntry.id),
+  ]);
+
+  await cacheManualWorkoutEntries(nextEntries);
+  return savedEntry;
 }
 
 export async function deleteManualWorkoutEntry(entryId: string) {
-  const entries = await loadManualWorkoutEntries();
+  if (uuidPattern.test(entryId)) {
+    await deleteRemoteManualWorkout(entryId);
+  }
+
+  const entries = await loadLocalManualWorkoutEntries();
   const nextEntries = entries.filter((entry) => entry.id !== entryId);
-  await saveManualWorkoutEntries(nextEntries);
+  await cacheManualWorkoutEntries(nextEntries);
   return nextEntries;
 }

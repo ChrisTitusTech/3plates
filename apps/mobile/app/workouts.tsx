@@ -14,7 +14,7 @@ import {
   isCardioManualWorkout,
   loadManualWorkoutEntries,
   manualWorkoutTypes,
-  saveManualWorkoutEntries,
+  saveManualWorkoutEntry,
 } from '../src/lib/manual-workouts';
 import type { ManualWorkoutEntry, ManualWorkoutForm, ManualWorkoutType } from '../src/lib/manual-workouts';
 import { useRequireSession } from '../src/lib/use-require-session';
@@ -120,16 +120,22 @@ export default function WorkoutsScreen() {
       type: manualType,
       createdAt: new Date().toISOString(),
     };
-    const nextEntries = [entry, ...manualEntries].slice(0, 20);
+    const nextEntries = [entry, ...manualEntries];
 
     setManualEntries(nextEntries);
     setManualForm(createManualWorkoutForm(manualType));
-    setManualMessage('Manual workout entry added.');
+    setManualMessage('Saving manual workout entry...');
 
     try {
-      await saveManualWorkoutEntries(nextEntries);
+      const savedEntry = await saveManualWorkoutEntry(entry);
+      setManualEntries((entries) => [
+        savedEntry,
+        ...entries.filter((candidate) => candidate.id !== entry.id),
+      ]);
+      setManualMessage('Manual workout entry added.');
     } catch {
-      setManualMessage('Manual workout entry added for this session.');
+      setManualEntries(manualEntries);
+      setManualMessage('Could not save manual workout entry.');
     }
   };
 

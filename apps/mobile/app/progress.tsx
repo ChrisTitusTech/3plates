@@ -52,6 +52,35 @@ function parseDateKey(value: string | null) {
   return toLocalDateKey(parsed);
 }
 
+function parseDateKeyToLocalNoon(value: string) {
+  const [yearValue, monthValue, dayValue] = value.split('-').map(Number);
+  if (!yearValue || !monthValue || !dayValue) {
+    return null;
+  }
+
+  return new Date(yearValue, monthValue - 1, dayValue, 12);
+}
+
+function buildStreakDateKeys(lastDateKey: string | null, streakDays: number) {
+  const dateKeys = new Set<string>();
+  if (!lastDateKey || streakDays <= 0) {
+    return dateKeys;
+  }
+
+  const lastDate = parseDateKeyToLocalNoon(lastDateKey);
+  if (!lastDate) {
+    return dateKeys;
+  }
+
+  for (let index = 0; index < streakDays; index += 1) {
+    const streakDate = new Date(lastDate);
+    streakDate.setDate(lastDate.getDate() - index);
+    dateKeys.add(toLocalDateKey(streakDate));
+  }
+
+  return dateKeys;
+}
+
 function buildCalendarDays(monthDate: Date) {
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
@@ -81,17 +110,29 @@ export default function ProgressScreen() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [progress, setProgress] = useState<Progress | null>(null);
   const [manualEntries, setManualEntries] = useState<ManualWorkoutEntry[]>([]);
+  const [manualHistoryLoaded, setManualHistoryLoaded] = useState(false);
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
   const todayKey = useMemo(() => toLocalDateKey(today), [today]);
   const calendarDays = useMemo(() => buildCalendarDays(today), [today]);
   const checkedDateKey = useMemo(() => parseDateKey(progress?.lastWorkoutAt ?? null), [progress?.lastWorkoutAt]);
+  const streakDateKeys = useMemo(
+    () => buildStreakDateKeys(checkedDateKey, progress?.streakDays ?? 0),
+    [checkedDateKey, progress?.streakDays],
+  );
+  const workoutDateKeys = useMemo(
+    () => new Set(manualEntries.map((entry) => entry.date)),
+    [manualEntries],
+  );
+  const completedWorkoutCount = manualHistoryLoaded
+    ? manualEntries.length
+    : progress?.completedWorkouts ?? 0;
   const monthLabel = useMemo(
     () => today.toLocaleString(undefined, { month: 'long', year: 'numeric' }),
     [today],
   );
-  const checkedInToday = checkedDateKey === todayKey;
+  const checkedInToday = streakDateKeys.has(todayKey);
   const visibleManualEntries = useMemo(() => {
     const entries = selectedDateKey
       ? manualEntries.filter((entry) => entry.date === selectedDateKey)
@@ -142,8 +183,10 @@ export default function ProgressScreen() {
   const loadWorkoutHistory = useCallback(async () => {
     try {
       setManualEntries(await loadManualWorkoutEntries());
+      setManualHistoryLoaded(true);
     } catch {
       setManualEntries([]);
+      setManualHistoryLoaded(false);
     }
   }, []);
 
@@ -191,7 +234,7 @@ export default function ProgressScreen() {
           <Text style={styles.statLabel}>Day streak</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>{progress?.completedWorkouts ?? 0}</Text>
+          <Text style={styles.statValue}>{completedWorkoutCount}</Text>
           <Text style={styles.statLabel}>Completed workouts</Text>
         </View>
       </View>
@@ -214,7 +257,7 @@ export default function ProgressScreen() {
 
             const dateKey = toLocalDateKey(new Date(today.getFullYear(), today.getMonth(), day));
             const isToday = dateKey === todayKey;
-            const isChecked = dateKey === checkedDateKey;
+            const isChecked = streakDateKeys.has(dateKey) || workoutDateKeys.has(dateKey);
 
             return (
               <Pressable

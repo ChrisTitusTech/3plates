@@ -5,7 +5,7 @@ title: Mobile Tasks
 
 # Mobile Tasks
 
-Status: Active phased plan
+Status: Android rollout in progress
 Owner: Core product team
 Last updated: 2026-07-08
 
@@ -38,37 +38,68 @@ pnpm --filter @3plates/api test
 
 Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
 
+## Current Android Build Decisions
+
+- App display name: `3Plates`.
+- Android application id: `com.christitustech.threeplates`.
+- iOS bundle identifier seed: `com.christitustech.threeplates`.
+- Custom native URL scheme: `threeplates`.
+- Native auth callback path: `auth/callback`.
+- Native auth redirect URL: `threeplates://auth/callback`.
+- Production API URL: `https://api.3spinningplates.com`.
+- Android emulator local API URL: `http://10.0.2.2:3000`.
+- Physical Android local API URL: use the development computer LAN IP with port `3000`, or use the production API for release-candidate APKs.
+- APK build strategy: generate the Android project with Expo prebuild and build a debug APK locally with the Gradle wrapper. EAS profiles are still documented for the later cloud/internal distribution path.
+
+## Installed Android Toolchain
+
+- JDK: Temurin 17 at `C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot`.
+- Android SDK: `C:\Users\chris\AppData\Local\Android\Sdk`.
+- Android command-line tools: `cmdline-tools;latest`, sdkmanager `21.0`.
+- Android platform-tools: `37.0.0`, including `adb`.
+- Android platforms: `android-36`, `android-36.1`.
+- Android build-tools: `35.0.0`, `35.0.1`, `36.0.0`.
+- User environment variables set: `JAVA_HOME`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`.
+- User `Path` includes `%JAVA_HOME%\bin`, `%ANDROID_HOME%\platform-tools`, and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
+- No physical Android device was attached during the inventory check; `adb devices` returned an empty device list.
+
 ## Phase 0 - Mobile Build Inventory
 
 Purpose: make the native build path explicit before Android implementation starts.
 
 Tasks:
 
-- [ ] Confirm final mobile identifiers:
-  - Android application id.
-  - iOS bundle identifier.
-  - App display name.
-  - Custom URL scheme for OAuth and deep links.
-- [ ] Confirm native API targets:
-  - Local development API URL for emulator and physical Android devices.
-  - Production API URL.
-  - Any staging API URL, if one exists.
-- [ ] Confirm OAuth redirect URLs needed by Google and Apple for native auth exchange.
-- [ ] Confirm Expo account, EAS project, and project id requirements for native push tokens.
-- [ ] Record available test devices:
-  - Physical Android phone model, Android version, and CPU architecture.
-  - Android emulator image, API level, and Play Services availability.
-  - Physical iPhone model and iOS version, if available.
-  - iOS simulator version, if available.
+- [x] Confirm final mobile identifiers:
+  - Android application id: `com.christitustech.threeplates`.
+  - iOS bundle identifier seed: `com.christitustech.threeplates`.
+  - App display name: `3Plates`.
+  - Custom URL scheme for OAuth and deep links: `threeplates`.
+- [x] Confirm native API targets:
+  - Android emulator local API URL: `http://10.0.2.2:3000`.
+  - Physical Android local API URL: development computer LAN IP with port `3000`.
+  - Production API URL: `https://api.3spinningplates.com`.
+  - Staging API URL: none currently configured.
+- [x] Confirm OAuth redirect URLs needed by Google and Apple for native auth exchange.
+  - Native app callback: `threeplates://auth/callback`.
+  - Backend OAuth callback: `${AUTH_BASE_URL}/auth/callback`.
+  - Google and Apple provider callback configuration must include the backend callback URL.
+- [x] Confirm Expo account, EAS project, and project id requirements for native push tokens.
+  - Native notification token creation reads `extra.eas.projectId` from Expo config.
+  - Use `EXPO_PUBLIC_EAS_PROJECT_ID` locally until an EAS project id is committed or linked.
+- [x] Record available test devices:
+  - Physical Android: none attached during inventory.
+  - Android emulator: no emulator image installed during inventory.
+  - Physical iPhone: not checked for Android-first rollout.
+  - iOS simulator: not checked for Android-first rollout.
 
 Automated gate:
 
-- [ ] `pnpm --filter @3plates/mobile typecheck`
-- [ ] `pnpm --filter @3plates/mobile test`
+- [x] `pnpm --filter @3plates/mobile typecheck`
+- [x] `pnpm --filter @3plates/mobile test`
 
 Commit gate:
 
-- [ ] Commit documentation and configuration decisions after the automated gate passes.
+- [x] Commit documentation and configuration decisions after the automated gate passes.
 
 ## Phase 1 - Android Build Foundation
 

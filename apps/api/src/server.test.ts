@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import test from 'node:test';
+import { jwtVerify } from 'jose';
 
 import { createServer } from './server.js';
-import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
+import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository } from './auth-service.js';
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
@@ -209,6 +210,76 @@ test('auth start, callback, and refresh issue real sessions', async (t) => {
 
   assert.equal(refreshedUserResponse.statusCode, 200);
   assert.deepEqual(refreshedUserResponse.json(), callbackBody.user);
+});
+
+test('Apple OAuth provider generates client secrets from signing key config', async (t) => {
+  const originalAppleConfig = {
+    AUTH_APPLE_CLIENT_ID: env.AUTH_APPLE_CLIENT_ID,
+    AUTH_APPLE_TEAM_ID: env.AUTH_APPLE_TEAM_ID,
+    AUTH_APPLE_KEY_ID: env.AUTH_APPLE_KEY_ID,
+    AUTH_APPLE_PRIVATE_KEY: env.AUTH_APPLE_PRIVATE_KEY,
+    AUTH_APPLE_PRIVATE_KEY_PATH: env.AUTH_APPLE_PRIVATE_KEY_PATH,
+  };
+  const originalFetch = globalThis.fetch;
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+  });
+  const privateKeyPem = privateKey.export({
+    type: 'pkcs8',
+    format: 'pem',
+  }).toString();
+  const capturedBodies: URLSearchParams[] = [];
+
+  Object.assign(env, {
+    AUTH_APPLE_CLIENT_ID: 'com.example.3plates.web',
+    AUTH_APPLE_TEAM_ID: 'TEAM123456',
+    AUTH_APPLE_KEY_ID: 'KEY1234567',
+    AUTH_APPLE_PRIVATE_KEY: privateKeyPem,
+    AUTH_APPLE_PRIVATE_KEY_PATH: undefined,
+  });
+
+  globalThis.fetch = async (_input, init) => {
+    if (init?.body instanceof URLSearchParams) {
+      capturedBodies.push(init.body);
+    }
+
+    return new Response(null, { status: 400 });
+  };
+
+  t.after(() => {
+    Object.assign(env, originalAppleConfig);
+    globalThis.fetch = originalFetch;
+  });
+
+  const provider = createAppleOAuthProvider();
+  await assert.rejects(
+    provider.exchangeCode({
+      code: 'apple-code',
+      redirectUri: 'https://api.example.com/auth/callback',
+      codeVerifier: 'verifier',
+    }),
+    /Apple token exchange failed/,
+  );
+
+  const capturedBody = capturedBodies[0];
+  assert.ok(capturedBody);
+  assert.equal(capturedBody.get('client_id'), 'com.example.3plates.web');
+  assert.equal(capturedBody.get('grant_type'), 'authorization_code');
+
+  const clientSecret = capturedBody.get('client_secret');
+  assert.ok(clientSecret);
+
+  const { protectedHeader, payload } = await jwtVerify(clientSecret, publicKey, {
+    issuer: 'TEAM123456',
+    subject: 'com.example.3plates.web',
+    audience: 'https://appleid.apple.com',
+  });
+
+  assert.equal(protectedHeader.alg, 'ES256');
+  assert.equal(protectedHeader.kid, 'KEY1234567');
+  assert.equal(payload.iss, 'TEAM123456');
+  assert.equal(payload.sub, 'com.example.3plates.web');
+  assert.equal(payload.aud, 'https://appleid.apple.com');
 });
 
 test('auth sign-out revokes the active bearer session', async (t) => {

@@ -5,7 +5,8 @@ import {
   randomBytes,
   randomUUID,
 } from 'node:crypto';
-import { jwtVerify, createRemoteJWKSet } from 'jose';
+import { readFile } from 'node:fs/promises';
+import { jwtVerify, createRemoteJWKSet, importPKCS8, SignJWT } from 'jose';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
 import { env } from './env.js';
@@ -415,17 +416,68 @@ export function createGoogleOAuthProvider(): OAuthProviderAdapter {
 
 export function createAppleOAuthProvider(): OAuthProviderAdapter {
   const clientId = env.AUTH_APPLE_CLIENT_ID;
-  const clientSecret = env.AUTH_APPLE_CLIENT_SECRET;
+  let generatedClientSecret: { value: Promise<string>; refreshAfterMilliseconds: number } | null = null;
 
-  if (!clientId || !clientSecret) {
-    throw new Error('AUTH_APPLE_CLIENT_ID and AUTH_APPLE_CLIENT_SECRET are required for Apple OAuth.');
+  if (!clientId) {
+    throw new Error('AUTH_APPLE_CLIENT_ID is required for Apple OAuth.');
+  }
+
+  const appleClientId = clientId;
+
+  async function loadApplePrivateKey() {
+    if (env.AUTH_APPLE_PRIVATE_KEY) {
+      return env.AUTH_APPLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+    }
+
+    if (env.AUTH_APPLE_PRIVATE_KEY_PATH) {
+      return readFile(env.AUTH_APPLE_PRIVATE_KEY_PATH, 'utf8');
+    }
+
+    return null;
+  }
+
+  async function getClientSecret() {
+    const privateKey = await loadApplePrivateKey();
+
+    if (!env.AUTH_APPLE_TEAM_ID || !env.AUTH_APPLE_KEY_ID || !privateKey) {
+      throw new Error(
+        'AUTH_APPLE_TEAM_ID, AUTH_APPLE_KEY_ID, and AUTH_APPLE_PRIVATE_KEY or AUTH_APPLE_PRIVATE_KEY_PATH are required for Apple OAuth.',
+      );
+    }
+
+    if (generatedClientSecret && generatedClientSecret.refreshAfterMilliseconds > Date.now()) {
+      return generatedClientSecret.value;
+    }
+
+    const teamId = env.AUTH_APPLE_TEAM_ID;
+    const keyId = env.AUTH_APPLE_KEY_ID;
+    const issuedAtSeconds = Math.floor(Date.now() / 1000);
+    const expiresAtSeconds = issuedAtSeconds + 24 * 60 * 60;
+
+    generatedClientSecret = {
+      refreshAfterMilliseconds: (expiresAtSeconds - 5 * 60) * 1000,
+      value: (async () => {
+        const key = await importPKCS8(privateKey, 'ES256');
+
+        return new SignJWT({})
+          .setProtectedHeader({ alg: 'ES256', kid: keyId })
+          .setIssuer(teamId)
+          .setSubject(appleClientId)
+          .setAudience('https://appleid.apple.com')
+          .setIssuedAt(issuedAtSeconds)
+          .setExpirationTime(expiresAtSeconds)
+          .sign(key);
+      })(),
+    };
+
+    return generatedClientSecret.value;
   }
 
   return {
     provider: 'apple',
     buildAuthorizationUrl({ redirectUri, state, codeChallenge }) {
       const url = new URL('https://appleid.apple.com/auth/authorize');
-      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('client_id', appleClientId);
       url.searchParams.set('redirect_uri', redirectUri);
       url.searchParams.set('response_type', 'code');
       url.searchParams.set('response_mode', 'query');
@@ -436,13 +488,14 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
       return url.toString();
     },
     async exchangeCode({ code, redirectUri, codeVerifier }) {
+      const clientSecret = await getClientSecret();
       const response = await fetch('https://appleid.apple.com/auth/token', {
         method: 'POST',
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
-          client_id: clientId,
+          client_id: appleClientId,
           client_secret: clientSecret,
           code,
           code_verifier: codeVerifier,

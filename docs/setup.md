@@ -25,7 +25,9 @@ Copy `.env.example` to `.env` and fill in the values for:
 - `AUTH_GOOGLE_CLIENT_ID`
 - `AUTH_GOOGLE_CLIENT_SECRET`
 - `AUTH_APPLE_CLIENT_ID`
-- `AUTH_APPLE_CLIENT_SECRET`
+- `AUTH_APPLE_TEAM_ID`
+- `AUTH_APPLE_KEY_ID`
+- `AUTH_APPLE_PRIVATE_KEY` or `AUTH_APPLE_PRIVATE_KEY_PATH` to generate Apple client secrets automatically.
 - `AUTH_SESSION_TTL_DAYS`
 
 ## Local development

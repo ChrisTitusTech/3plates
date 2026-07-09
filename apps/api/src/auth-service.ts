@@ -15,6 +15,8 @@ import type { UserRecord, UserStateStore } from './user-state-store.js';
 
 const oauthTransactionTtlMilliseconds = 10 * 60 * 1000;
 const mobileExchangeTtlMilliseconds = 2 * 60 * 1000;
+const appleClientSecretTtlSeconds = 24 * 60 * 60;
+const appleClientSecretRefreshSkewSeconds = 5 * 60;
 
 export type OAuthTransaction = {
   state: string;
@@ -416,7 +418,7 @@ export function createGoogleOAuthProvider(): OAuthProviderAdapter {
 
 export function createAppleOAuthProvider(): OAuthProviderAdapter {
   const clientId = env.AUTH_APPLE_CLIENT_ID;
-  let generatedClientSecret: { value: Promise<string>; refreshAfterMilliseconds: number } | null = null;
+  let generatedClientSecret: { value: Promise<string>; refreshAfterEpochMilliseconds: number } | null = null;
 
   if (!clientId) {
     throw new Error('AUTH_APPLE_CLIENT_ID is required for Apple OAuth.');
@@ -437,6 +439,10 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
   }
 
   async function getClientSecret() {
+    if (generatedClientSecret && generatedClientSecret.refreshAfterEpochMilliseconds > Date.now()) {
+      return generatedClientSecret.value;
+    }
+
     const privateKey = await loadApplePrivateKey();
 
     if (!env.AUTH_APPLE_TEAM_ID || !env.AUTH_APPLE_KEY_ID || !privateKey) {
@@ -445,29 +451,29 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
       );
     }
 
-    if (generatedClientSecret && generatedClientSecret.refreshAfterMilliseconds > Date.now()) {
-      return generatedClientSecret.value;
-    }
-
     const teamId = env.AUTH_APPLE_TEAM_ID;
     const keyId = env.AUTH_APPLE_KEY_ID;
     const issuedAtSeconds = Math.floor(Date.now() / 1000);
-    const expiresAtSeconds = issuedAtSeconds + 24 * 60 * 60;
+    const expiresAtSeconds = issuedAtSeconds + appleClientSecretTtlSeconds;
+    const clientSecret = (async () => {
+      const key = await importPKCS8(privateKey, 'ES256');
+
+      return new SignJWT({})
+        .setProtectedHeader({ alg: 'ES256', kid: keyId })
+        .setIssuer(teamId)
+        .setSubject(appleClientId)
+        .setAudience('https://appleid.apple.com')
+        .setIssuedAt(issuedAtSeconds)
+        .setExpirationTime(expiresAtSeconds)
+        .sign(key);
+    })();
 
     generatedClientSecret = {
-      refreshAfterMilliseconds: (expiresAtSeconds - 5 * 60) * 1000,
-      value: (async () => {
-        const key = await importPKCS8(privateKey, 'ES256');
-
-        return new SignJWT({})
-          .setProtectedHeader({ alg: 'ES256', kid: keyId })
-          .setIssuer(teamId)
-          .setSubject(appleClientId)
-          .setAudience('https://appleid.apple.com')
-          .setIssuedAt(issuedAtSeconds)
-          .setExpirationTime(expiresAtSeconds)
-          .sign(key);
-      })(),
+      refreshAfterEpochMilliseconds: (expiresAtSeconds - appleClientSecretRefreshSkewSeconds) * 1000,
+      value: clientSecret.catch((error: unknown) => {
+        generatedClientSecret = null;
+        throw error;
+      }),
     };
 
     return generatedClientSecret.value;

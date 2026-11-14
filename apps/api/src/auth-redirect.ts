@@ -21,6 +21,8 @@ export function isAllowedAuthRedirect(value: string): boolean {
   try {
     const target = new URL(value);
     if (target.username || target.password || target.search || target.hash) return false;
+    const loopbackHosts = ['localhost', '127.0.0.1', '[::1]'];
+    if (target.protocol === 'http:' && !loopbackHosts.includes(target.hostname)) return false;
     return allowed.some((candidate) => {
       try { return target.href === new URL(candidate).href; } catch { return false; }
     });

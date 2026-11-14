@@ -1,5 +1,5 @@
 import cors from '@fastify/cors';
-import { serializeRequest } from './request-log.js';
+import { serializeRequest, handleNotFound } from './request-log.js';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { ZodError } from 'zod';
@@ -70,6 +70,7 @@ function createDefaultAuthService(store: UserStateStore) {
 
 export function createServer(options: CreateServerOptions = {}) {
   const app = Fastify({ bodyLimit: 64 * 1024, logger: { serializers: { req: serializeRequest } } });
+  app.setNotFoundHandler(handleNotFound);
   const store = options.store ?? createDefaultStore();
   const authService = options.authService ?? createDefaultAuthService(store);
 

@@ -166,7 +166,7 @@ test('signed-out and dashboard navigation stays minimal', () => {
   assert.match(signInSource.getFullText(), /<AuthLanding/);
   assert.equal(collectJsxElements(authLandingSource, 'Pressable').length, 1);
   assert.equal(collectJsxElements(signInSource, 'TextInput').length, 0);
-  assert.match(callbackSource, /router\.replace\('\/progress'\)/);
+  assert.match(callbackSource, /router\.replace\('\/today'\)/);
   assert.match(progressSource, /updateProgress\(nextProgress\)/);
   assert.match(progressSource, /checkedDay/);
   assert.match(progressSource, /<ScreenHeader title="Progress" \/>/);

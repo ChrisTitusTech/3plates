@@ -637,3 +637,30 @@ test('workout mode read sends pagination query and falls back to cached value', 
   assert.equal(second.source, 'cache');
   assert.deepEqual(second.data, responseBody);
 });
+
+test('account caches stay separate and a late response cannot overwrite the active account', async (t) => {
+  const storage = createMemoryStorage();
+  let activeUser = createBaseUser();
+  let offline = false;
+  let completeRead: ((value: unknown) => void) | undefined;
+  const client = createClientOverrides({
+    me: async () => ({ status: 200, body: activeUser }),
+    progress: async () => {
+      if (offline) throw new Error('Network request failed');
+      return { status: 200, body: createProgress() };
+    },
+  });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice-token'); await fetchMe(); await fetchProgress();
+  activeUser = { ...activeUser, id: 'bob', email: 'bob@example.test' };
+  await setSessionToken('bob-token'); await fetchMe(); offline = true;
+  await assert.rejects(fetchProgress(), /Network request failed/);
+  client.me = () => new Promise((resolve) => { completeRead = resolve; }) as never;
+  const late = fetchMe();
+  // Allow the mocked request to start before switching sessions.
+  while (!completeRead) await new Promise((resolve) => setImmediate(resolve));
+  await setSessionToken('charlie-token');
+  completeRead({ status: 200, body: { ...activeUser, id: 'stale-bob' } });
+  await assert.rejects(late, /active account changed/);
+  assert.equal(JSON.parse((await storage.getItem('@3plates/cache/me'))!).value.id, 'bob');
+});

@@ -31,11 +31,11 @@ export async function registerFitnessRoutes(app: FastifyInstance, store: UserSta
     const userId = owner(request);
     const mutation = healthMutationSchema.parse(request.body);
     return health.mutate(userId, mutation, async () => {
-    if (mutation.entry?.kind === 'workout' && mutation.entry.details.linkedWhoopWorkoutId) {
-      if (!await integration().ownsWorkout(await subject(userId), mutation.entry.details.linkedWhoopWorkoutId)) {
-        throw conflictOrStaleUpdateError('That WHOOP workout is not available in your account.');
+      if (mutation.entry?.kind === 'workout' && mutation.entry.details.linkedWhoopWorkoutId) {
+        if (!await integration().ownsWorkout(await subject(userId), mutation.entry.details.linkedWhoopWorkoutId)) {
+          throw conflictOrStaleUpdateError('That WHOOP workout is not available in your account.');
+        }
       }
-    }
     });
   });
   app.get('/users/me/whoop/workouts', async (request) => ({ workouts: await integration().workouts(await subject(owner(request))) }));

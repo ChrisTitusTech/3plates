@@ -4,30 +4,34 @@ import { AuthBackground } from './AuthBackground';
 
 type AuthLandingProps = {
   busy?: boolean;
+  actions?: Array<{ label: string; onPress(): void }>;
+  error?: string | null;
   buttonLabel: string;
   onPress: () => void;
 };
 
-export function AuthLanding({ busy = false, buttonLabel, onPress }: AuthLandingProps) {
+export function AuthLanding({ busy = false, buttonLabel, onPress, actions, error }: AuthLandingProps) {
   return (
     <AuthBackground>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
         <View style={styles.brandBlock}>
           <Text style={styles.logo}>3Plates</Text>
-          <Text style={styles.title}>Training Log</Text>
+          <Text style={styles.title}>Training, recovery, and daily health</Text>
         </View>
 
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Welcome back</Text>
-          <Pressable
+          {error && <Text accessibilityRole="alert" style={{ color: '#a52c36' }}>{error}</Text>}
+          {(actions ?? [{ label: buttonLabel, onPress }]).map((action) => <Pressable
+            key={action.label}
             style={[styles.button, busy ? styles.buttonDisabled : null]}
             disabled={busy}
             accessibilityRole="button"
             accessibilityState={{ disabled: busy }}
-            onPress={onPress}
+            onPress={action.onPress}
           >
-            <Text style={styles.buttonText}>{buttonLabel}</Text>
-          </Pressable>
+            <Text style={styles.buttonText}>{action.label}</Text>
+          </Pressable>)}
         </View>
       </ScrollView>
     </AuthBackground>

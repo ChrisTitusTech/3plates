@@ -210,17 +210,30 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
   );
 }
 
-async function writeCache<T>(key: string, value: T) {
+async function assertCurrentSession(token: string) {
+  if (await getSessionToken() !== token) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
+}
+
+async function writeCache<T>(key: string, value: T, token?: string) {
+  if (token) await assertCurrentSession(token);
+  const destination = await accountStorageKey(key);
+  if (token) await assertCurrentSession(token);
   const envelope: CacheEnvelope<T> = {
     value,
     updatedAt: new Date().toISOString(),
   };
 
-  await storage.setItem(key, JSON.stringify(envelope));
+  await storage.setItem(destination, JSON.stringify(envelope));
+}
+
+async function accountStorageKey(key: string) {
+  if (key === storageKeys.me || key.startsWith(storageKeys.workoutsPrefix)) return key;
+  const user = await readCache<User>(storageKeys.me);
+  return user ? `${key}/user/${user.id}` : key;
 }
 
 async function readCache<T>(key: string): Promise<T | null> {
-  const rawValue = await storage.getItem(key);
+  const rawValue = await storage.getItem(await accountStorageKey(key));
   if (!rawValue) {
     return null;
   }
@@ -278,7 +291,7 @@ function makeMutationId() {
 }
 
 async function readPendingMutations(): Promise<PendingMutation[]> {
-  const rawValue = await storage.getItem(storageKeys.pendingMutations);
+  const rawValue = await storage.getItem(await accountStorageKey(storageKeys.pendingMutations));
   if (!rawValue) {
     return [];
   }
@@ -292,7 +305,7 @@ async function readPendingMutations(): Promise<PendingMutation[]> {
 }
 
 async function writePendingMutations(mutations: PendingMutation[]) {
-  await storage.setItem(storageKeys.pendingMutations, JSON.stringify(mutations));
+  await storage.setItem(await accountStorageKey(storageKeys.pendingMutations), JSON.stringify(mutations));
 }
 
 function coalescePendingMutations(mutations: PendingMutation[]) {
@@ -311,12 +324,14 @@ function coalescePendingMutations(mutations: PendingMutation[]) {
   return mutations.filter((mutation, index) => mutation.type !== 'updateProgress' || index === latestProgressIndex);
 }
 
-async function queuePendingMutation(mutation: PendingMutation) {
+async function queuePendingMutation(mutation: PendingMutation, token: string) {
+  await assertCurrentSession(token);
   const existing = coalescePendingMutations(await readPendingMutations());
   const nextMutations = mutation.type === 'updateProgress'
     ? existing.filter((candidate) => candidate.type !== 'updateProgress')
     : existing;
 
+  await assertCurrentSession(token);
   await writePendingMutations([...nextMutations, mutation]);
 }
 
@@ -374,6 +389,9 @@ export async function setSessionToken(token: string | null) {
 
 export async function clearSession() {
   await writeSessionToken(null);
+  for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
+    await storage.removeItem(await accountStorageKey(key));
+  }
   await storage.removeItem(storageKeys.me);
   await storage.removeItem(storageKeys.progress);
   await storage.removeItem(storageKeys.manualWorkouts);
@@ -432,7 +450,7 @@ export async function completeAuthCallback(input: {
   }
 
   await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
@@ -449,8 +467,9 @@ export async function refreshSessionAndPersist() {
     throw toApiRequestError(response.status, response.body);
   }
 
+  await assertCurrentSession(token);
   await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
@@ -467,12 +486,17 @@ export async function redeemMobileAuthExchangeCode(code: string) {
   }
 
   await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
 
+let beforeSignOut: (() => Promise<void>) | undefined;
+export function registerSignOutCleanup(handler: () => Promise<void>) { beforeSignOut = handler; }
+export async function getCachedUser() { return readCache<User>(storageKeys.me); }
+
 export async function signOutAndClearSession() {
+  if (beforeSignOut) await beforeSignOut();
   const token = await getSessionToken();
   if (!token) {
     await clearSession();
@@ -526,7 +550,7 @@ export async function fetchMe(): Promise<CachedReadResult<User>> {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.me, response.body);
+    await writeCache(storageKeys.me, response.body, token);
 
     return {
       data: response.body,
@@ -561,7 +585,7 @@ export async function fetchProgress(): Promise<CachedReadResult<Progress>> {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.progress, response.body);
+    await writeCache(storageKeys.progress, response.body, token);
 
     return {
       data: response.body,
@@ -598,7 +622,7 @@ export async function updateProgress(progress: Progress) {
     }
 
     await removePendingMutationsByType('updateProgress');
-    await writeCache(storageKeys.progress, progress);
+    await writeCache(storageKeys.progress, progress, token);
 
     return {
       queued: false,
@@ -613,8 +637,8 @@ export async function updateProgress(progress: Progress) {
       createdAt: new Date().toISOString(),
       type: 'updateProgress',
       payload: progress,
-    });
-    await writeCache(storageKeys.progress, progress);
+    }, token);
+    await writeCache(storageKeys.progress, progress, token);
 
     return {
       queued: true,
@@ -624,13 +648,14 @@ export async function updateProgress(progress: Progress) {
 
 async function updateCachedManualWorkouts(
   update: (current: ManualWorkoutListResponse) => ManualWorkoutListResponse,
+  token: string,
 ) {
   const current = await readCache<ManualWorkoutListResponse>(storageKeys.manualWorkouts);
   if (!current) {
     return;
   }
 
-  await writeCache(storageKeys.manualWorkouts, update(current));
+  await writeCache(storageKeys.manualWorkouts, update(current), token);
 }
 
 export async function fetchManualWorkouts(): Promise<CachedReadResult<ManualWorkoutListResponse>> {
@@ -645,7 +670,7 @@ export async function fetchManualWorkouts(): Promise<CachedReadResult<ManualWork
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.manualWorkouts, response.body);
+    await writeCache(storageKeys.manualWorkouts, response.body, token);
 
     return {
       data: response.body,
@@ -682,7 +707,7 @@ export async function createManualWorkout(workout: ManualWorkoutCreate): Promise
 
   await updateCachedManualWorkouts((current) => ({
     workouts: [response.body, ...current.workouts.filter((entry) => entry.id !== response.body.id)],
-  }));
+  }), token);
 
   return response.body;
 }
@@ -703,7 +728,7 @@ export async function deleteManualWorkout(workoutId: string) {
 
   await updateCachedManualWorkouts((current) => ({
     workouts: current.workouts.filter((entry) => entry.id !== workoutId),
-  }));
+  }), token);
 
   return response.body;
 }
@@ -720,7 +745,7 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.preferences, response.body);
+    await writeCache(storageKeys.preferences, response.body, token);
 
     return {
       data: response.body,
@@ -769,7 +794,7 @@ export async function fetchWorkoutsByMode(
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(cacheKey, response.body);
+    await writeCache(cacheKey, response.body, token);
 
     return {
       data: response.body,
@@ -805,7 +830,7 @@ export async function updatePreferences(preferences: Preferences) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.preferences, preferences);
+    await writeCache(storageKeys.preferences, preferences, token);
 
     return {
       queued: false,
@@ -820,8 +845,8 @@ export async function updatePreferences(preferences: Preferences) {
       createdAt: new Date().toISOString(),
       type: 'updatePreferences',
       payload: preferences,
-    });
-    await writeCache(storageKeys.preferences, preferences);
+    }, token);
+    await writeCache(storageKeys.preferences, preferences, token);
 
     return {
       queued: true,
@@ -855,7 +880,7 @@ export async function registerDevice(device: NotificationDevice) {
       createdAt: new Date().toISOString(),
       type: 'registerDevice',
       payload: device,
-    });
+    }, token);
 
     return {
       queued: true,

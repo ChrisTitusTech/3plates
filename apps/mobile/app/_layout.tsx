@@ -1,3 +1,4 @@
+import '../src/lib/fitness-client';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 

@@ -5,11 +5,15 @@ Fitness app for web, Android, and iOS, sharing an Expo client and a central API.
 ## Documentation
 
 The GitHub Pages docs live in [docs/](docs/).
+See the [unified fitness implementation](docs/unified-fitness-plan.md) and
+[configuration, verification, and rollout guide](docs/unified-fitness-operations.md)
+for WHOOP integration and offline manual logging.
 
 ## Layout
 
 - `apps/mobile` - Expo app for iOS, Android, and web.
 - `apps/api` - Fastify API for auth, user state, and sync.
+- `apps/whoop` - Gallant compatibility dashboard, WHOOP ingestion, and shared analytics.
 - `packages/contract` - ts-rest contracts for shared request and response types.
 - `packages/db` - Drizzle schema and database helpers.
 
@@ -17,7 +21,8 @@ The GitHub Pages docs live in [docs/](docs/).
 
 - Contract-first API with ts-rest.
 - Postgres + Drizzle for persistence.
-- Google and Apple OAuth with server-managed sessions and secure native token storage.
+- Google, Apple, and optional WHOOP OAuth with explicit account linking, server-managed sessions, and secure native token storage.
+- Offline manual workouts, nutrition, hydration, sleep, recovery journals, body weight, and goals.
 - Expo Notifications for the first push path.
 
 ## Local development
@@ -51,7 +56,7 @@ an unsigned iOS simulator release. These builds do not exercise real devices or
 produce store-signed releases.
 
 Before shipping, build and test the native apps on their target platforms. Verify
-Google and Apple sign-in, sign-out, session expiry, workout persistence, offline
+Google, Apple, and WHOOP sign-in/linking, sign-out, session expiry, workout persistence, offline
 recovery, notifications, and accessibility on web, Android, and iOS. iOS native
 builds require macOS/Xcode or an authenticated EAS build environment; store builds
 also require signing credentials. Existing EAS preview profiles are for internal

@@ -151,25 +151,15 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
     },
 
     async consumeOAuthTransaction(state) {
+      // DELETE RETURNING makes the one-time state claim atomic across requests.
       const [transaction] = await db
-        .select({
-          state: oauthTransactions.state,
-          provider: oauthTransactions.provider,
-          purpose: oauthTransactions.purpose,
-          userId: oauthTransactions.userId,
-          redirectTo: oauthTransactions.redirectTo,
-          codeVerifier: oauthTransactions.codeVerifier,
-          expiresAt: oauthTransactions.expiresAt,
-        })
-        .from(oauthTransactions)
+        .delete(oauthTransactions)
         .where(eq(oauthTransactions.state, state))
-        .limit(1);
+        .returning();
 
       if (!transaction) {
         return null;
       }
-
-      await db.delete(oauthTransactions).where(eq(oauthTransactions.state, state));
 
       return {
         ...transaction,

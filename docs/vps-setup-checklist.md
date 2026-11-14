@@ -12,7 +12,7 @@ Use this checklist to rebuild the current 3plates VPS database and API validatio
 - A Linux VPS with SSH access.
 - Git.
 - Node.js 24.
-- pnpm 9.15.4.
+- pnpm 12.18.0.
 - Docker with the Compose plugin, or `docker-compose`.
 - `curl`.
 

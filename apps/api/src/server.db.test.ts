@@ -779,3 +779,29 @@ dbTest('DB-backed admin workout write path enforces admin auth and publish contr
     }
   });
 });
+
+
+dbTest('OAuth state can be consumed only once by concurrent callbacks', async () => {
+  await setupDatabase();
+  const repository = createDbAuthRepository(requireDatabaseUrl());
+  const state = randomUUID();
+  try {
+    await repository.createOAuthTransaction({
+      state,
+      provider: 'google',
+      purpose: 'sign-in',
+      userId: null,
+      redirectTo: null,
+      codeVerifier: 'concurrent-callback-test',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => repository.consumeOAuthTransaction(state)),
+    );
+    assert.equal(results.filter(Boolean).length, 1);
+    assert.equal(results.find(Boolean)?.state, state);
+    assert.equal(await repository.consumeOAuthTransaction(state), null);
+  } finally {
+    await repository.close?.();
+  }
+});

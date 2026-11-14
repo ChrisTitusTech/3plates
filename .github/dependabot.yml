@@ -16,3 +16,23 @@ updates:
       - dependency-name: "zod"
         update-types:
           - "version-update:semver-major"
+
+    groups:
+      expo:
+        patterns:
+          - "expo"
+          - "expo-*"
+          - "@expo/*"
+          - "react"
+          - "react-dom"
+          - "react-native*"
+          - "@react-native/*"
+          - "@types/react"
+          - "babel-preset-expo"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]

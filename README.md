@@ -1,6 +1,6 @@
 # 3plates
 
-Monorepo scaffold for a multi-platform fitness app.
+Fitness app for web, Android, and iOS, sharing an Expo client and a central API.
 
 ## Documentation
 
@@ -13,11 +13,11 @@ The GitHub Pages docs live in [docs/](docs/).
 - `packages/contract` - ts-rest contracts for shared request and response types.
 - `packages/db` - Drizzle schema and database helpers.
 
-## Stack direction
+## Stack
 
 - Contract-first API with ts-rest.
 - Postgres + Drizzle for persistence.
-- Better Auth or Clerk for authentication.
+- Google and Apple OAuth with server-managed sessions and secure native token storage.
 - Expo Notifications for the first push path.
 
 ## Local development
@@ -37,3 +37,30 @@ The GitHub Pages docs live in [docs/](docs/).
 - Use `pnpm db:reset` when you need a clean database volume and a fresh migration replay.
 - Use `pnpm db:logs` to inspect startup and healthcheck output.
 - Use `pnpm db:test` to verify Docker, Postgres schema, and an API-backed persisted write/read round-trip.
+
+## Validation and releases
+
+Use the Node version in `.node-version` and the pnpm version in `package.json`.
+Run `pnpm install --frozen-lockfile`, `pnpm typecheck`, and `pnpm test` before publishing changes.
+The API tests require Docker Compose and start the local test database.
+
+CI checks types, tests, migration drift (including new migration files), shell scripts,
+Expo dependency compatibility, and production JavaScript exports for web, Android,
+and iOS. Separate CI jobs compile an Android release with local debug signing and
+an unsigned iOS simulator release. These builds do not exercise real devices or
+produce store-signed releases.
+
+Before shipping, build and test the native apps on their target platforms. Verify
+Google and Apple sign-in, sign-out, session expiry, workout persistence, offline
+recovery, notifications, and accessibility on web, Android, and iOS. iOS native
+builds require macOS/Xcode or an authenticated EAS build environment; store builds
+also require signing credentials. Existing EAS preview profiles are for internal
+validation, not store submission.
+
+`pnpm deploy:web` exports and deploys the website to the configured SSH host.
+Deployment is a separate release action; passing CI does not deploy the app.
+Exports use a new temporary directory; an explicit `WEB_EXPORT_DIR` must be an
+absolute path that does not already exist. The script preserves exports for inspection
+and reuses a verified SSH connection for backup and synchronization.
+Keep SDK dependency changes coordinated with Expo's supported React and React
+Native versions rather than independently upgrading every package to its latest major.

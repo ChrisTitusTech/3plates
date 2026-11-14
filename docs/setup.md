@@ -8,7 +8,7 @@ title: Setup
 ## Prerequisites
 
 - Node.js 24.
-- pnpm 9 or newer.
+- pnpm 12.18.0 (the version pinned in `package.json`).
 - A local Postgres database.
 - Expo tooling for mobile development.
 
@@ -22,6 +22,7 @@ Copy `.env.example` to `.env` and fill in the values for:
 - `EXPO_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY` for browser push subscriptions, when web push is enabled.
 - `AUTH_SECRET`
 - `AUTH_BASE_URL`
+- `AUTH_REDIRECT_URLS` for additional exact client callback URLs (see below).
 - `AUTH_GOOGLE_CLIENT_ID`
 - `AUTH_GOOGLE_CLIENT_SECRET`
 - `AUTH_APPLE_CLIENT_ID`
@@ -29,6 +30,24 @@ Copy `.env.example` to `.env` and fill in the values for:
 - `AUTH_APPLE_KEY_ID`
 - `AUTH_APPLE_PRIVATE_KEY` or `AUTH_APPLE_PRIVATE_KEY_PATH` to generate Apple client secrets automatically.
 - `AUTH_SESSION_TTL_DAYS`
+
+## OAuth callback allowlist
+
+`AUTH_REDIRECT_URLS` adds comma-separated exact client callback URLs to the server's
+built-in allowlist. The production defaults are
+`https://3spinningplates.com/auth/callback`,
+`https://www.3spinningplates.com/auth/callback`, `threeplates://auth/callback`, and
+legacy `threeplates://auth-finished`. Queries, fragments, and embedded credentials
+are rejected. This setting controls the client return location; `AUTH_BASE_URL`
+controls the API callback URL registered with Google and Apple and does not
+implicitly authorize a client redirect.
+
+For another web hostname, add its exact `/auth/callback` URL. For Expo Go, add the
+exact callback for the trusted development host, for example
+`AUTH_REDIRECT_URLS=exp://192.168.1.10:8081/--/auth/callback`.
+Local web callbacks at `http://localhost:8081/auth/callback` and
+`http://localhost:3000/auth/callback` are built in only outside production.
+Restart the API after changing this environment variable. Do not use wildcards.
 
 ## Local development
 

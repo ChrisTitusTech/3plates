@@ -28,6 +28,7 @@ const envSchema = z.object({
   DATABASE_URL: optionalNonEmptyString,
   AUTH_SECRET: optionalNonEmptyString,
   AUTH_BASE_URL: optionalUrl,
+  AUTH_REDIRECT_URLS: optionalNonEmptyString,
   AUTH_GOOGLE_CLIENT_ID: optionalNonEmptyString,
   AUTH_GOOGLE_CLIENT_SECRET: optionalNonEmptyString,
   AUTH_APPLE_CLIENT_ID: optionalNonEmptyString,

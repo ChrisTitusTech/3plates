@@ -7,10 +7,12 @@ cd "$repo_root"
 
 if [[ -f .env ]]; then
   set -a
+  # shellcheck disable=SC1091
   source .env
   set +a
 elif [[ -f .env.example ]]; then
   set -a
+  # shellcheck disable=SC1091
   source .env.example
   set +a
 else
@@ -21,6 +23,11 @@ fi
 POSTGRES_DB="${POSTGRES_DB:-3plates}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 DB_WAIT_TIMEOUT_SECONDS="${DB_WAIT_TIMEOUT_SECONDS:-90}"
+
+if [[ ! "$DB_WAIT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'DB_WAIT_TIMEOUT_SECONDS must be a positive integer.\n' >&2
+  exit 1
+fi
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD=(docker compose)

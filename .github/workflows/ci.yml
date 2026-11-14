@@ -16,6 +16,7 @@ permissions:
 jobs:
   contract-and-typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -41,6 +42,7 @@ jobs:
 
   migration-drift-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -62,9 +64,11 @@ jobs:
         run: |
           pnpm --filter @3plates/db generate
           git diff --exit-code -- packages/db/drizzle
+          test -z "$(git ls-files --others --exclude-standard -- packages/db/drizzle)"
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs:
       - contract-and-typecheck
       - migration-drift-check
@@ -85,21 +89,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build production API
+        run: pnpm --filter @3plates/api build
+
       - name: Run workspace tests
         run: pnpm test
 
       - name: Run database smoke test
         shell: bash
         run: |
-          pnpm dev:api > /tmp/3plates-api.log 2>&1 &
+          NODE_ENV=production node apps/api/dist/main.js > /tmp/3plates-api.log 2>&1 &
           api_pid=$!
 
+          # shellcheck disable=SC2329 # Invoked by the EXIT trap.
           cleanup() {
             kill "$api_pid" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
-          for attempt in {1..60}; do
+          for _attempt in {1..60}; do
             if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then
               pnpm db:test
               exit 0
@@ -115,3 +123,85 @@ jobs:
 
           cat /tmp/3plates-api.log
           exit 1
+
+  client-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [web, android, ios]
+    env:
+      EXPO_PUBLIC_API_URL: https://api.3spinningplates.com
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check Expo dependency compatibility
+        run: pnpm --filter @3plates/mobile exec expo install --check
+      - name: Export production client bundle
+        run: pnpm --filter @3plates/mobile exec expo export --platform ${{ matrix.platform }} --output-dir dist-${{ matrix.platform }}
+
+  shell-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check shell scripts
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          shellcheck scripts/*.sh
+          python3 scripts/deploy-web.test.py
+
+  android-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      EXPO_PUBLIC_API_URL: https://api.3spinningplates.com
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Android project
+        run: pnpm --filter @3plates/mobile exec expo prebuild --platform android --no-install
+      - name: Compile Android release with local debug signing
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+
+  ios-native:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      EXPO_PUBLIC_API_URL: https://api.3spinningplates.com
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate iOS project and install pods
+        run: pnpm --filter @3plates/mobile exec expo prebuild --platform ios
+      - name: Compile iOS simulator release without signing
+        working-directory: apps/mobile/ios
+        run: |
+          workspace=( *.xcworkspace )
+          test "${#workspace[@]}" -eq 1
+          scheme="${workspace[0]%.xcworkspace}"
+          xcodebuild -workspace "${workspace[0]}" -scheme "$scheme" \
+            -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/3plates-ios" CODE_SIGNING_ALLOWED=NO build

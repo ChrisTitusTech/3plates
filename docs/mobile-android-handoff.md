@@ -43,10 +43,10 @@ On Windows, if native builds fail because of long paths, copy or clone the repo 
 From the repo root:
 
 ```powershell
-npx --yes pnpm@9.15.4 install --frozen-lockfile
-npx --yes pnpm@9.15.4 --filter @3plates/mobile typecheck
-npx --yes pnpm@9.15.4 --filter @3plates/mobile test
-npx --yes pnpm@9.15.4 --filter @3plates/mobile build:android:production
+npx --yes pnpm@12.18.0 install --frozen-lockfile
+npx --yes pnpm@12.18.0 --filter @3plates/mobile typecheck
+npx --yes pnpm@12.18.0 --filter @3plates/mobile test
+npx --yes pnpm@12.18.0 --filter @3plates/mobile build:android:production
 ```
 
 The production APK is copied to:
@@ -58,7 +58,7 @@ apps/mobile/dist/3plates-android-production.apk
 With the phone connected and USB debugging approved:
 
 ```powershell
-npx --yes pnpm@9.15.4 --filter @3plates/mobile test:android:device -- --fresh --keep-open --timeout 15000
+npx --yes pnpm@12.18.0 --filter @3plates/mobile test:android:device -- --fresh --keep-open --timeout 15000
 ```
 
 Expected artifacts:

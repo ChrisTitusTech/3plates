@@ -1,4 +1,7 @@
 process.env.NODE_ENV = "test";
+// Never inherit the deployed integration database or credentials in tests.
+for (const key of ["WHOOP_DATABASE_URL", "WHOOP_CLIENT_ID", "WHOOP_CLIENT_SECRET", "WHOOP_TOKEN_KEY", "WHOOP_PUBLIC_URL"])
+  delete process.env[key];
 process.env.ClientID = "test-client";
 process.env.ClientSecret = "test-secret";
 process.env.TOKEN_KEY = "a".repeat(64);

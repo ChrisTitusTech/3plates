@@ -1,9 +1,11 @@
+export * from './health.js';
+import { healthMutationSchema, healthLogSchema, healthLogQuerySchema, healthLogPageSchema } from './health.js';
 import { initContract } from '@ts-rest/core';
 import { z } from 'zod';
 
 const c = initContract();
 
-export const authProviderSchema = z.enum(['google', 'apple']);
+export const authProviderSchema = z.enum(['google', 'apple', 'whoop']);
 
 export const userSchema = z.object({
   id: z.string(),
@@ -195,6 +197,14 @@ export const authSessionSchema = z.object({
 });
 
 export const appContract = c.router({
+  healthLogs: {
+    method: 'GET', path: '/users/me/logs', query: healthLogQuerySchema,
+    responses: { 200: healthLogPageSchema, 401: apiErrorSchema, 400: apiErrorSchema },
+  },
+  mutateHealthLog: {
+    method: 'POST', path: '/users/me/logs', body: healthMutationSchema,
+    responses: { 200: healthLogSchema, 401: apiErrorSchema, 400: apiErrorSchema, 409: apiErrorSchema },
+  },
   health: {
     method: 'GET',
     path: '/health',

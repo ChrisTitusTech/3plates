@@ -12,7 +12,14 @@ export const config = z
       .enum(["development", "test", "production"])
       .default("development"),
   })
-  .parse(process.env);
+  .parse({
+    ...process.env,
+    ClientID: process.env.WHOOP_CLIENT_ID ?? process.env.ClientID,
+    ClientSecret: process.env.WHOOP_CLIENT_SECRET ?? process.env.ClientSecret,
+    DATABASE_URL: process.env.WHOOP_DATABASE_URL ?? process.env.DATABASE_URL,
+    TOKEN_KEY: process.env.WHOOP_TOKEN_KEY ?? process.env.TOKEN_KEY,
+    PUBLIC_URL: process.env.WHOOP_PUBLIC_URL ?? process.env.PUBLIC_URL,
+  });
 export const origin = new URL(config.PUBLIC_URL).origin;
 export const scopes =
   "offline read:profile read:cycles read:sleep read:recovery read:workout read:body_measurement";

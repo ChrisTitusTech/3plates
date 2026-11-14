@@ -19,6 +19,7 @@ export type StoredRecord = {
   raw: Raw;
 };
 export type Detail = {
+  sourceId?: string;
   kind: string;
   date: string;
   start: string;
@@ -189,6 +190,7 @@ export function detail(record: StoredRecord, date = record.localDate): Detail {
     add(["height_meter", "weight_kilogram", "max_heart_rate"], r);
   return {
     kind: record.kind,
+    ...(record.kind === "workout" ? { sourceId: record.sourceId } : {}),
     date,
     start: record.start.toISOString(),
     end: record.end?.toISOString() ?? null,

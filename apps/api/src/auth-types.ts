@@ -1,4 +1,4 @@
-export type AuthProviderName = 'google' | 'apple';
+export type AuthProviderName = 'google' | 'apple' | 'whoop';
 
 export type AuthTransactionPurpose = 'sign-in' | 'link';
 

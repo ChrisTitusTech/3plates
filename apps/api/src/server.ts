@@ -1,3 +1,6 @@
+import { createDbHealthStore, createMemoryHealthStore, type HealthStore } from './health-store.js';
+import { createWhoopService, type WhoopService } from './whoop-service.js';
+import { registerFitnessRoutes } from './routes/fitness.js';
 import cors from '@fastify/cors';
 import { serializeRequest, handleNotFound } from './request-log.js';
 import rateLimit from '@fastify/rate-limit';
@@ -33,6 +36,8 @@ import {
 
 type CreateServerOptions = {
   store?: UserStateStore;
+  healthStore?: HealthStore;
+  whoop?: WhoopService;
   authService?: AuthService;
 };
 
@@ -53,7 +58,7 @@ function createDefaultStore() {
   return createDbUserStateStore(env.DATABASE_URL);
 }
 
-function createDefaultAuthService(store: UserStateStore) {
+function createDefaultAuthService(store: UserStateStore, whoop?: WhoopService) {
   if (!env.DATABASE_URL) {
     throw new Error('DATABASE_URL is required to start the API without an injected auth service.');
   }
@@ -64,6 +69,7 @@ function createDefaultAuthService(store: UserStateStore) {
     providers: {
       google: createGoogleOAuthProvider(),
       apple: createAppleOAuthProvider(),
+      ...(whoop ? { whoop: whoop.provider } : {}),
     },
   });
 }
@@ -72,7 +78,13 @@ export function createServer(options: CreateServerOptions = {}) {
   const app = Fastify({ bodyLimit: 64 * 1024, logger: { serializers: { req: serializeRequest } } });
   app.setNotFoundHandler(handleNotFound);
   const store = options.store ?? createDefaultStore();
-  const authService = options.authService ?? createDefaultAuthService(store);
+  const whoop = options.whoop ?? createWhoopService();
+  const health = options.healthStore ?? (options.store ? createMemoryHealthStore() : createDbHealthStore(env.DATABASE_URL!));
+  const authService = options.authService ?? createDefaultAuthService(store, whoop);
+  app.addHook('onClose', async () => {
+    if (!options.authService) await authService.close?.();
+    if (!options.store) await store.close?.();
+  });
 
   app.decorateRequest('authUser', null);
   app.decorateRequest('authToken', null);
@@ -143,11 +155,17 @@ export function createServer(options: CreateServerOptions = {}) {
     timeWindow: '1 minute',
   });
 
+  app.get('/auth/providers', async () => ({ providers: [
+    ...(env.AUTH_GOOGLE_CLIENT_ID ? ['google'] : []),
+    ...(env.AUTH_APPLE_CLIENT_ID ? ['apple'] : []),
+    ...(whoop ? ['whoop'] : []),
+  ] }));
   app.register(registerHealthRoutes);
   app.register(async (authApp) => {
     await registerAuthRoutes(authApp, authService);
   });
   app.register(async (statefulApp) => {
+    await registerFitnessRoutes(statefulApp, store, health, whoop);
     await registerAdminWorkoutRoutes(statefulApp, store);
     await registerUserRoutes(statefulApp);
     await registerProgressRoutes(statefulApp, store);

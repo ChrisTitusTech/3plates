@@ -29,6 +29,8 @@ function createMissingUserStateApp() {
   };
 
   const store: UserStateStore = {
+    listIdentities: async () => [], unlinkIdentity: async () => {},
+    requestDeletion: async () => {}, pendingDeletions: async () => [], deleteAccount: async () => {},
     getOrCreateUser: async () => sessionUser,
     getUserById: async () => null,
     resolveOAuthIdentity: async () => ({

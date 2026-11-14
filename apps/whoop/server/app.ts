@@ -65,7 +65,9 @@ const sessionName =
   config.NODE_ENV === "production" ? "__Host-gallant" : "gallant";
 const fail = (statusCode: number, message: string) =>
   Object.assign(new Error(message), { statusCode });
+const integratedMembers = new WeakMap<FastifyRequest, typeof members.$inferSelect | null>();
 async function memberFor(request: FastifyRequest) {
+  if (integratedMembers.has(request)) return integratedMembers.get(request) ?? null;
   const token = request.cookies[sessionName];
   if (!token) return null;
   const [row] = await db
@@ -167,7 +169,12 @@ async function dashboard(
   };
 }
 export async function buildApp(
-  options: { logger?: boolean; serveStatic?: boolean } = {},
+  options: {
+    logger?: boolean;
+    serveStatic?: boolean;
+    // Only used by an in-process adapter; never enabled on the public listener.
+    resolveMember?: (request: FastifyRequest) => Promise<typeof members.$inferSelect | null>;
+  } = {},
 ) {
   const app = Fastify({
     logger: options.logger
@@ -190,8 +197,15 @@ export async function buildApp(
     trustProxy: ["127.0.0.1", "::1"],
     bodyLimit: 65536,
   });
+  if (options.resolveMember) {
+    app.addHook("onRequest", async (request) => {
+      integratedMembers.set(request, await options.resolveMember!(request));
+    });
+  }
   await app.register(cookie);
-  await app.register(rateLimit, { max: 180, timeWindow: "1 minute" });
+  await app.register(rateLimit, { max: 180, timeWindow: "1 minute",
+    keyGenerator: (request) => integratedMembers.get(request)?.id ?? request.ip,
+  });
   await app.register(rawBody, {
     field: "rawBody",
     global: false,

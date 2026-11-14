@@ -14,6 +14,7 @@ import {
 } from '@3plates/contract';
 import { createDatabaseClient } from '@3plates/db';
 import {
+  authSessions,
   notificationDevices,
   progressEvents,
   userIdentities,
@@ -22,7 +23,7 @@ import {
   users,
   workouts,
 } from '@3plates/db';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql, isNull, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -50,6 +51,11 @@ export type AuthBootstrapResult = {
 };
 
 export interface UserStateStore {
+  listIdentities(userId: string): Promise<Array<{ provider: string; providerSubjectId: string }>>;
+  unlinkIdentity(userId: string, provider: string, beforeRemove?: (subject: string) => Promise<void>): Promise<void>;
+  requestDeletion(userId: string): Promise<void>;
+  pendingDeletions(): Promise<string[]>;
+  deleteAccount(userId: string): Promise<void>;
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
   getUserById(userId: string): Promise<UserRecord | null>;
   resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null }): Promise<AuthBootstrapResult>;
@@ -118,7 +124,7 @@ export function computeStreakUpdate(
   return { streakDays: 1, lastStreakDate: today };
 }
 
-function mapUser(row: { id: string; email: string; displayName: string | null }): UserRecord {
+function mapUser(row: { id: string; email: string | null; displayName: string | null }): UserRecord {
   return userSchema.parse({
     id: row.id,
     email: row.email,
@@ -277,7 +283,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         displayName: users.displayName,
       })
       .from(users)
-      .where(eq(users.id, userId))
+      .where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)))
       .limit(1);
 
     return user ? mapUser(user) : null;
@@ -285,6 +291,34 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
 
   return {
     getUserById,
+    async listIdentities(userId) {
+      return db.select({ provider: userIdentities.provider, providerSubjectId: userIdentities.providerSubjectId })
+        .from(userIdentities).where(eq(userIdentities.userId, userId));
+    },
+    async unlinkIdentity(userId, provider, beforeRemove) {
+      await db.transaction(async (tx) => {
+        const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+        if (!user || user.deletionRequestedAt) throw missingUserStateError();
+        const identities = await tx.select().from(userIdentities).where(eq(userIdentities.userId, userId));
+        const identity = identities.find((item) => item.provider === provider);
+        if (!identity) return;
+        if (!identities.some((item) => item.provider !== provider)) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
+        if (beforeRemove) await beforeRemove(identity.providerSubjectId);
+        await tx.delete(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, provider)));
+        // Removing a sign-in method also invalidates sessions created through it.
+        await tx.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
+      });
+    },
+    async requestDeletion(userId) {
+      await db.transaction(async (tx) => {
+        await tx.update(users).set({ deletionRequestedAt: new Date() }).where(eq(users.id, userId));
+        await tx.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
+      });
+    },
+    async pendingDeletions() {
+      return (await db.select({ id: users.id }).from(users).where(isNotNull(users.deletionRequestedAt)).limit(100)).map((row) => row.id);
+    },
+    async deleteAccount(userId) { await db.delete(users).where(and(eq(users.id, userId), isNotNull(users.deletionRequestedAt))); },
 
     async resolveOAuthIdentity(input) {
       const identity = input;
@@ -322,6 +356,10 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         }
 
         if (identity.linkedUserId) {
+          const [owner] = await transaction.select().from(users).where(eq(users.id, identity.linkedUserId)).for('update');
+          if (!owner || owner.deletionRequestedAt) throw missingUserStateError();
+          const [sameProvider] = await transaction.select().from(userIdentities).where(and(eq(userIdentities.userId, identity.linkedUserId), eq(userIdentities.provider, identity.provider)));
+          if (sameProvider) throw conflictOrStaleUpdateError('This account already has a login with that provider.');
           await transaction.insert(userIdentities).values({
             userId: identity.linkedUserId,
             provider: identity.provider,
@@ -342,39 +380,10 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
           };
         }
 
-        if (identity.email && identity.emailVerified) {
-          const [existingUserByEmail] = await transaction
-            .select({
-              id: users.id,
-              email: users.email,
-              displayName: users.displayName,
-            })
-            .from(users)
-            .where(eq(users.email, identity.email))
-            .limit(1);
-
-          if (existingUserByEmail) {
-            await transaction.insert(userIdentities).values({
-              userId: existingUserByEmail.id,
-              provider: identity.provider,
-              providerSubjectId: identity.providerSubjectId,
-              email: identity.email,
-            });
-
-            const user = mapUser(existingUserByEmail);
-            const effectiveLevel = await getOrCreateUserLevel(transaction, user.id);
-            return {
-              user,
-              isNewUser: false,
-              effectiveLevel,
-            };
-          }
-        }
-
         const [createdUser] = await transaction
           .insert(users)
           .values({
-            email: identity.email ?? `${identity.providerSubjectId}@${identity.provider}.local`,
+            email: identity.email,
             displayName: identity.displayName,
           })
           .returning({
@@ -819,6 +828,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
 } {
   const usersByEmail = new Map<string, MemoryUser>();
   const usersById = new Map<string, MemoryUser>();
+  const deletionRequests = new Set<string>();
   const identitiesByKey = new Map<string, string>();
   const progressByUserId = new Map<string, ProgressRecord>();
   const manualWorkoutsByUserId = new Map<string, ManualWorkoutRecord[]>();
@@ -869,7 +879,29 @@ export function createMemoryUserStateStore(): UserStateStore & {
     },
 
     async getUserById(userId) {
-      return usersById.get(userId) ?? null;
+      return deletionRequests.has(userId) ? null : usersById.get(userId) ?? null;
+    },
+    async listIdentities(userId) {
+      return [...identitiesByKey.entries()].filter(([, id]) => id === userId).map(([key]) => {
+        const separator = key.indexOf(':');
+        return { provider: key.slice(0, separator), providerSubjectId: key.slice(separator + 1) };
+      });
+    },
+    async unlinkIdentity(userId, provider, beforeRemove) {
+      const entries = [...identitiesByKey.entries()].filter(([, id]) => id === userId);
+      const identity = entries.find(([key]) => key.startsWith(provider + ':'));
+      if (!identity) return;
+      if (!entries.some(([key]) => !key.startsWith(provider + ':'))) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
+      if (beforeRemove) await beforeRemove(identity[0].slice(provider.length + 1));
+      identitiesByKey.delete(identity[0]);
+    },
+    async requestDeletion(userId) { deletionRequests.add(userId); },
+    async pendingDeletions() { return [...deletionRequests]; },
+    async deleteAccount(userId) {
+      if (!deletionRequests.has(userId)) return;
+      for (const [key, id] of identitiesByKey) if (id === userId) identitiesByKey.delete(key);
+      for (const [email, user] of usersByEmail) if (user.id === userId) usersByEmail.delete(email);
+      usersById.delete(userId); deletionRequests.delete(userId);
     },
 
     async resolveOAuthIdentity(input) {
@@ -880,7 +912,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
         }
 
         const existingUser = usersById.get(existingUserId);
-        if (!existingUser) {
+        if (!existingUser || deletionRequests.has(existingUserId)) {
           throw missingUserStateError('Identity references a missing user.');
         }
 
@@ -895,10 +927,11 @@ export function createMemoryUserStateStore(): UserStateStore & {
 
       if (input.linkedUserId) {
         const linkedUser = usersById.get(input.linkedUserId);
-        if (!linkedUser) {
+        if (!linkedUser || deletionRequests.has(input.linkedUserId)) {
           throw missingUserStateError('Linked account is missing.');
         }
 
+        if ([...identitiesByKey.entries()].some(([key, id]) => id === linkedUser.id && key.startsWith(input.provider + ':'))) throw conflictOrStaleUpdateError('This account already has a login with that provider.');
         identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), linkedUser.id);
         const effectiveLevel = levelsByUserId.get(linkedUser.id) ?? 1;
         levelsByUserId.set(linkedUser.id, effectiveLevel);
@@ -909,23 +942,9 @@ export function createMemoryUserStateStore(): UserStateStore & {
         };
       }
 
-      if (input.email && input.emailVerified) {
-        const existingUserByEmail = usersByEmail.get(input.email);
-        if (existingUserByEmail) {
-          identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), existingUserByEmail.id);
-          const effectiveLevel = levelsByUserId.get(existingUserByEmail.id) ?? 1;
-          levelsByUserId.set(existingUserByEmail.id, effectiveLevel);
-          return {
-            user: existingUserByEmail,
-            isNewUser: false,
-            effectiveLevel,
-          };
-        }
-      }
-
       const createdUser = userSchema.parse({
         id: crypto.randomUUID(),
-        email: input.email ?? `${input.providerSubjectId}@${input.provider}.local`,
+        email: input.email,
         displayName: input.displayName,
       });
 

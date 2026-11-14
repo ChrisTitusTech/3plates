@@ -19,7 +19,12 @@
     "fastify": "^5.12.8",
     "jose": "^6.2.17",
     "zod": "^4.6.7",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "@3plates/whoop": "workspace:*",
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/static": "^10.1.10",
+    "fastify-raw-body": "^5.0.0",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

@@ -660,3 +660,20 @@ test("hashed assets cache immutably while errors and personal responses remain u
     await staticApp.close();
   }
 });
+
+test("integrated member resolver isolates owners and public headers cannot impersonate members", async () => {
+  const { memberRequest, ownsWorkout, workoutChoices } = await import('../server/integration.js');
+  const headers = { 'x-internal-whoop-subject': '1' };
+  assert.equal((await app.inject({ url: '/api/me/dashboard', headers })).statusCode, 401);
+  const a = await memberRequest('1', 'dashboard', 'GET', { start: '2026-01-01', end: '2026-01-03' });
+  const b = await memberRequest('2', 'dashboard', 'GET', { start: '2026-01-01', end: '2026-01-03' });
+  assert.equal(a.status, 200); assert.equal(b.status, 200);
+  assert.equal(JSON.parse(a.body).summary.strain.value, 12);
+  assert.equal(JSON.parse(b.body).summary.strain.value, 20);
+  assert.equal((await memberRequest('missing', 'profile', 'GET')).status, 401);
+  await upsert(db, memberA, 'workout', { id: 'owned-workout', start: '2026-01-02T12:00:00Z', end: '2026-01-02T13:00:00Z', sport_name: 'Cycling', score_state: 'SCORED', score: { strain: 8 } });
+  assert.equal(await ownsWorkout('1', 'owned-workout'), true);
+  assert.equal(await ownsWorkout('2', 'owned-workout'), false);
+  assert.equal((await workoutChoices('1'))[0].id, 'owned-workout');
+  assert.deepEqual(await workoutChoices('2'), []);
+});

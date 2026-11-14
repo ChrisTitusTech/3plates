@@ -13,9 +13,9 @@ Native apps first; Apple Health and Health Connect are deferred. Native charts m
 
 # Implementation gates
 
-- [ ] Import Gallant server, worker, analytics, compatibility web UI, and tests; validate unchanged behavior.
-- [ ] WHOOP sign-in and linking; tenant-scoped access, reconnect/disconnect, exports/sharing, deletion, prevent removal of sole login.
-- [ ] Structured manual logs and durable offline CRUD, retries, conflicts, and per-user isolation.
+- [x] Import Gallant server, worker, analytics, compatibility web UI, and tests; validate unchanged behavior.
+- [x] WHOOP sign-in and linking; tenant-scoped access, reconnect/disconnect, exports/sharing, deletion, prevent removal of sole login.
+- [x] Structured manual logs and durable offline CRUD, retries, conflicts, and per-user isolation.
 - [ ] Today, Log, Workouts, Trends, Account experiences across web and native.
 - [ ] Automated unit/database/browser tests, production exports, native builds, independent review.
 - [ ] Real-device Google/Apple/WHOOP login and linking, offline recovery, cross-device sync, reminders and accessibility.
@@ -28,3 +28,15 @@ Implementation is authorized. Publishing/deploying this integration requires exp
 # Baseline
 
 3plates: 7d36cd8. Gallant: 9367c25. Native CI passes for baseline, but historical device checklist is incomplete. Existing manual workout writes require network connectivity. WHOOP has a separate cookie-based identity and database. This document tracks implementation; checked gates require actual evidence.
+
+# Implementation evidence
+
+2026-11-14: imported compatibility module passes 23 unit tests, 16 database tests,
+and 26 desktop/mobile browser tests. Main workspace passes 85 contract/API/client
+tests, including identity isolation, sole-login protection, deletion retry, SQL
+concurrency/idempotency, offline restart/lost response/conflict handling, and
+workout association. Typechecking and API build pass. Expo production exports
+for web, Android, and iOS pass; these are not native compilation/device evidence.
+The unified browser suite passes six desktop/phone tests. Native compilation and
+independent review are in progress. See [operations and acceptance](unified-fitness-operations.md)
+for configuration, rollout, rollback, and remaining external gates.

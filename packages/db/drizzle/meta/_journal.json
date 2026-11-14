@@ -57,6 +57,13 @@
       "when": 1778733000000,
       "tag": "0007_admin_workout_growth",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794698220917,
+      "tag": "0008_foamy_wallflower",
+      "breakpoints": true
     }
   ]
 }

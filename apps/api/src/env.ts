@@ -23,6 +23,11 @@ const optionalUrl = z.preprocess(
 );
 
 const envSchema = z.object({
+  WHOOP_DATABASE_URL: optionalNonEmptyString,
+  WHOOP_CLIENT_ID: optionalNonEmptyString,
+  WHOOP_CLIENT_SECRET: optionalNonEmptyString,
+  WHOOP_TOKEN_KEY: z.preprocess((value) => value === '' ? undefined : value, z.string().regex(/^[a-f0-9]{64}$/i).optional()),
+  WHOOP_PUBLIC_URL: optionalUrl,
   API_PORT: z.coerce.number().int().positive().default(3000),
   API_HOST: z.string().min(1).default('0.0.0.0'),
   DATABASE_URL: optionalNonEmptyString,

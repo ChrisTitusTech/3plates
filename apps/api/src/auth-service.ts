@@ -56,6 +56,7 @@ export interface AuthRepository {
 }
 
 export type AuthService = {
+  close?(): Promise<void>;
   startAuthentication(input: {
     provider: AuthProviderName;
     purpose: AuthTransactionPurpose;
@@ -530,7 +531,7 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
 export function createAuthService(input: {
   authRepository: AuthRepository;
   userStateStore: UserStateStore;
-  providers: Record<AuthProviderName, OAuthProviderAdapter>;
+  providers: Partial<Record<AuthProviderName, OAuthProviderAdapter>>;
 }): AuthService {
   const { authRepository, providers, userStateStore } = input;
   const sessionTtlMilliseconds = env.AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -548,6 +549,8 @@ export function createAuthService(input: {
 
   return {
     async startAuthentication({ provider, purpose, redirectTo, userId, callbackUrl }) {
+      const adapter = providers[provider];
+      if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const codeVerifier = buildCodeVerifier();
       const state = randomUUID();
       const expiresAt = new Date(Date.now() + oauthTransactionTtlMilliseconds);
@@ -562,7 +565,7 @@ export function createAuthService(input: {
         expiresAt,
       });
 
-      const next = providers[provider].buildAuthorizationUrl({
+      const next = adapter.buildAuthorizationUrl({
         redirectUri: callbackUrl,
         state,
         codeChallenge: buildCodeChallenge(codeVerifier),
@@ -585,7 +588,9 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
-      const identity = await providers[transaction.provider].exchangeCode({
+      const adapter = providers[transaction.provider];
+      if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
+      const identity = await adapter.exchangeCode({
         code,
         redirectUri: callbackUrl,
         codeVerifier: transaction.codeVerifier,
@@ -704,5 +709,6 @@ export function createAuthService(input: {
 
       return user;
     },
+    async close() { await authRepository.close?.(); },
   };
 }

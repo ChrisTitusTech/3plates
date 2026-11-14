@@ -433,3 +433,18 @@ test('contract routes expose expected endpoint paths', () => {
   assert.equal(appContract.adminPublishWorkout.path, '/admin/workouts/:workoutId/publish');
   assert.equal(appContract.adminUnpublishWorkout.path, '/admin/workouts/:workoutId/unpublish');
 });
+
+
+test('oversized workout pages fail before validating individual entries', () => {
+  const entries = Array.from({ length: 51 }, () => ({
+    get id(): string {
+      throw new Error('Oversized collection elements must not be parsed');
+    },
+  }));
+  const result = workoutListResponseSchema.shape.workouts.safeParse(entries);
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues.length, 1);
+    assert.equal(result.error.issues[0].code, 'too_big');
+  }
+});

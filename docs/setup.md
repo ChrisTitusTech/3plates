@@ -90,3 +90,17 @@ Track remaining VPS and website validation work in [VPS And Website Tasks](vps-w
 - Keep all documentation pages inside the `docs/` folder.
 - Update `docs/index.md` when the site structure changes.
 - Keep the docs aligned with the actual app scaffold and setup commands.
+
+
+## Validation dependency compatibility
+
+The shared contract, API and mobile client use Zod 4.6.7 or newer. This includes
+[the constrained-collection resource exhaustion fix](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+Paginated workout responses cap arrays at the existing 50-item page limit so
+oversized pages fail before individual entries are validated.
+
+`@ts-rest/core` is pinned to `3.53.0-rc.1`, the upstream release candidate that
+[officially supports Standard Schema and Zod 4](https://github.com/ts-rest/ts-rest/releases).
+This is an intentional prerelease dependency: stable 3.52.x requires vulnerable
+Zod 3. Before changing the pin, run workspace typechecks and tests, Expo exports
+for all platforms, and the dependency audit. No audit finding is suppressed.

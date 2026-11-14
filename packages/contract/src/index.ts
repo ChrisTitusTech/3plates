@@ -155,7 +155,7 @@ export const adminWorkoutPublishSchema = z.object({
 });
 
 export const workoutListResponseSchema = z.object({
-  workouts: z.array(workoutSchema),
+  workouts: z.array(workoutSchema).max(50),
   pagination: z.object({
     page: z.number().int().min(1),
     pageSize: z.number().int().min(1).max(50),

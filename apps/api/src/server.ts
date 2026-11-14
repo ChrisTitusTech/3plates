@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import { serializeRequest, handleNotFound } from './request-log.js';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { ZodError } from 'zod';
@@ -68,7 +69,8 @@ function createDefaultAuthService(store: UserStateStore) {
 }
 
 export function createServer(options: CreateServerOptions = {}) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ bodyLimit: 64 * 1024, logger: { serializers: { req: serializeRequest } } });
+  app.setNotFoundHandler(handleNotFound);
   const store = options.store ?? createDefaultStore();
   const authService = options.authService ?? createDefaultAuthService(store);
 
@@ -112,6 +114,18 @@ export function createServer(options: CreateServerOptions = {}) {
 
     if (isApiError(error)) {
       reply.status(error.statusCode).send(serializeApiError(error));
+      return;
+    }
+
+    // Preserve framework client errors, including rate limiting and JSON parsing.
+    if (error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500) {
+      reply.status(error.statusCode).send({
+        ok: false,
+        error: {
+          code: error.statusCode === 429 ? 'rate_limit_exceeded' : 'invalid_request_payload',
+          message: error.statusCode === 429 ? 'Too many requests. Try again later.' : 'Request payload is invalid.',
+        },
+      });
       return;
     }
 

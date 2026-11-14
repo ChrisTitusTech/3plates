@@ -36,7 +36,7 @@ pnpm --filter @3plates/api typecheck
 pnpm --filter @3plates/api test
 ```
 
-Use the repo's pinned runtime requirements: Node 24 and pnpm 9.15.4.
+Use the repo's pinned runtime requirements: Node 24 and pnpm 12.18.0.
 
 ## Android Device Test Command
 

@@ -48,7 +48,7 @@ This app has three client surfaces: a website, an Android app, and an iOS app. A
 
 - Keep these package versions at or above the current baseline unless there is a validated compatibility reason to change them:
 	- `node`: `24.x` LTS runtime
-	- `typescript`: `6.0.3` (workspace baseline)
+	- `typescript`: `7.0.2` (root, API, database, and contract); Expo client stays on SDK-supported `6.0.3`
 	- `@types/node`: `24.13.2`
 	- `expo-constants`: `55.0.16`
 	- `expo-status-bar`: `55.0.6`
@@ -57,7 +57,7 @@ This app has three client surfaces: a website, an Android app, and an iOS app. A
 - Do not downgrade the above packages during unrelated feature work.
 - Keep `zod` on major version 3 for now (`3.25.76` baseline). Do not upgrade to `zod` v4 until `@ts-rest/core` officially supports it and the mobile/API typecheck passes.
 - Before changing dependency majors, run typecheck and tests across contract, db, api, and mobile to confirm compatibility.
-- Preserve existing TypeScript 6 config compatibility settings unless there is a specific reason to change them.
+- Preserve shared TypeScript 6/7 config compatibility settings unless there is a specific reason to change them.
 
 ## Quality Bar
 

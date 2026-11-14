@@ -44,8 +44,9 @@ module.exports = ({ config }) => ({
   web: {
     favicon: './assets/app-icon.png',
     bundler: 'metro',
+    output: 'single',
   },
-  plugins: ['expo-router', 'expo-secure-store', 'expo-notifications'],
+  plugins: ['expo-router', 'expo-secure-store', 'expo-notifications', 'expo-status-bar'],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL || productionApiUrl,
     ...(easProjectId

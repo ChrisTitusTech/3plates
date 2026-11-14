@@ -10,6 +10,7 @@ import {
   invalidRequestPayloadError,
 } from '../api-error.js';
 import { env } from '../env.js';
+import { isAllowedAuthRedirect } from '../auth-redirect.js';
 
 const authStartBodySchema = z.object({
   provider: authProviderSchema,
@@ -59,6 +60,10 @@ async function handleStartAuthentication(
 
   if (!parsedBody.success) {
     throw invalidRequestPayloadError();
+  }
+
+  if (parsedBody.data.redirectTo && !isAllowedAuthRedirect(parsedBody.data.redirectTo)) {
+    throw invalidRequestPayloadError('Redirect URL is not allowed.');
   }
 
   const currentUser = purpose === 'link' ? request.authUser : null;

@@ -112,7 +112,7 @@ assert_json_field_equals() {
 	local expected="$3"
 	local label="$4"
 
-	PAYLOAD="$payload" FIELD="$field" EXPECTED="$expected" node <<'NODE'
+	if PAYLOAD="$payload" FIELD="$field" EXPECTED="$expected" node <<'NODE'; then
 const payload = JSON.parse(process.env.PAYLOAD ?? '{}');
 const field = process.env.FIELD;
 const expected = process.env.EXPECTED;
@@ -121,9 +121,8 @@ if (!field || payload[field] !== expected) {
   process.exit(1);
 }
 NODE
-	local status=$?
-
-	if [[ "$status" -ne 0 ]]; then
+		return 0
+	else
 		printf 'Unexpected %s payload returned by API:\n%s\n' "$label" "$payload" >&2
 		exit 1
 	fi
@@ -140,6 +139,7 @@ echo "==> Ensuring Postgres container is running"
 compose up -d postgres >/dev/null
 
 echo "==> Checking Postgres readiness"
+pnpm db:wait
 if ! postgres_exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null; then
 	echo "Postgres is not ready yet. Inspect logs with: pnpm db:logs" >&2
 	exit 1

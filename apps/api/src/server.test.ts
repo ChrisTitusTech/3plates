@@ -1322,3 +1322,71 @@ test('streak engine: computeStreakUpdate - missed day resets streak to 1', () =>
   assert.equal(after1.streakDays, 1);
   assert.equal(after1.lastStreakDate, day3);
 });
+
+
+test('authentication rate limits return 429 instead of an internal error', async () => {
+  const { app } = createAuthenticatedApp();
+  try {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const response = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'google' } });
+      assert.equal(response.statusCode, 200);
+    }
+    const response = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'google' } });
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.json().error.code, 'rate_limit_exceeded');
+    assert.ok(response.headers['retry-after']);
+  } finally {
+    await app.close();
+  }
+});
+
+test('malformed JSON returns a client error', async () => {
+  const { app } = createAuthenticatedApp();
+  try {
+    const response = await app.inject({
+      method: 'POST', url: '/auth/start',
+      headers: { 'content-type': 'application/json' }, payload: '{',
+    });
+    assert.equal(response.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('OAuth start rejects untrusted redirect targets before issuing state', async () => {
+  const { app } = createAuthenticatedApp();
+  try {
+    for (const redirectTo of [
+      'https://attacker.example/auth/callback',
+      'https://3spinningplates.com.attacker.example/auth/callback',
+      'https://attacker@3spinningplates.com/auth/callback',
+      'threeplates://attacker/path',
+      'javascript:alert(1)',
+      'https://3spinningplates.com/auth/callback?next=https://attacker.example',
+    ]) {
+      const response = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'google', redirectTo } });
+      assert.equal(response.statusCode, 400, redirectTo);
+    }
+    const response = await app.inject({ method: 'POST', url: '/auth/start', payload: {
+      provider: 'google', redirectTo: 'threeplates://auth/callback',
+    } });
+    assert.equal(response.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('oversized bodies are rejected before schema validation', async () => {
+  const { app } = createAuthenticatedApp();
+  try {
+    const response = await app.inject({
+      method: 'POST', url: '/auth/start',
+      payload: { provider: 'google', padding: 'x'.repeat(64 * 1024) },
+    });
+    assert.equal(response.statusCode, 413);
+  } finally {
+    await app.close();
+  }
+});

@@ -1,28 +1,10 @@
 {
   "name": "3plates",
   "private": true,
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@12.18.0",
   "engines": {
     "node": ">=24 <25",
-    "pnpm": "9.15.4"
-  },
-  "pnpm": {
-    "overrides": {
-      "@babel/core": "7.29.7",
-      "esbuild": "0.28.1",
-      "js-yaml": "4.3.0",
-      "postcss": "8.5.10",
-      "shell-quote": "1.9.0",
-      "uuid": "11.1.1",
-      "ws@^7.0.0": "7.5.11",
-      "ws@^8.0.0": "8.21.0"
-    },
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "@expo/metro-runtime": "5.0.5",
-        "typescript": ">=5 <7"
-      }
-    }
+    "pnpm": "12.18.0"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @3plates/api --filter @3plates/mobile dev",
@@ -42,6 +24,6 @@
     "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test && pnpm --filter @3plates/mobile test"
   },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }

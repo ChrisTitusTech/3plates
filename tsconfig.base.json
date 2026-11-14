@@ -9,11 +9,13 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
-      "@3plates/contract": ["packages/contract/src"],
-      "@3plates/db": ["packages/db/src"]
+      "@3plates/contract": [
+        "./packages/contract/src"
+      ],
+      "@3plates/db": [
+        "./packages/db/src"
+      ]
     }
   }
 }

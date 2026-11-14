@@ -1,20 +1,22 @@
 import type { PropsWithChildren } from 'react';
-import { ImageBackground, StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 
 const gymBackground = require('../../assets/gym-sign-in-background.png');
 
 export function AuthBackground({ children }: PropsWithChildren) {
   return (
-    <ImageBackground
-      source={gymBackground}
-      resizeMode="cover"
-      blurRadius={10}
-      style={styles.background}
-      imageStyle={styles.image}
-    >
+    <View style={styles.background}>
+      <Image
+        source={gymBackground}
+        resizeMode="cover"
+        blurRadius={10}
+        style={styles.image}
+        accessible={false}
+        pointerEvents="none"
+      />
       <View pointerEvents="none" style={styles.scrim} />
       {children}
-    </ImageBackground>
+    </View>
   );
 }
 
@@ -26,6 +28,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   image: {
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
     opacity: 0.92,

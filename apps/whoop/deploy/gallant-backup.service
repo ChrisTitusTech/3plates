@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up Gallant PostgreSQL (14-day retention)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gallant-dashboard/current/deploy/backup.sh
+UMask=0077

@@ -1,0 +1,27 @@
+name: gallant
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gallant-postgres
+    restart: unless-stopped
+    env_file: /etc/gallant-postgres.env
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - gallant-postgres:/var/lib/postgresql/data
+    command:
+      ["postgres", "-c", "max_connections=30", "-c", "shared_buffers=64MB"]
+    mem_limit: 512m
+    cpus: 1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gallant -d gallant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  gallant-postgres:

@@ -1,0 +1,61 @@
+{
+  "name": "@3plates/whoop",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:server": "tsx watch server/main.ts",
+    "worker": "tsx server/worker.ts",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/server/main.js",
+    "start:worker": "node dist/server/server/worker.js",
+    "db:migrate": "tsx server/migrate.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test tests/*.test.ts",
+    "test:db": "tsx --test tests/*.integration.ts",
+    "test:browser": "playwright test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/static": "^10.1.10",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.12.8",
+    "fastify-raw-body": "^5.0.0",
+    "lucide-react": "^0.468.0",
+    "postgres": "^3.4.9",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9.39.5",
+    "prettier": "3.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^7.3.8"
+  },
+  "exports": {
+    "./integration": "./server/integration.ts",
+    "./types": "./web/types.ts",
+    "./analytics": "./server/analytics.ts",
+    "./explore": "./server/explore.ts"
+  }
+}

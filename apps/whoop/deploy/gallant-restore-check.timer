@@ -1,0 +1,7 @@
+[Unit]
+Description=Weekly Gallant restore verification
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

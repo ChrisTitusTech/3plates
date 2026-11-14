@@ -1,0 +1,8 @@
+[Unit]
+Description=Gallant operational health checks
+After=gallant-web.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gallant-dashboard/current/deploy/monitor.sh
+TimeoutStartSec=60
+UMask=0077

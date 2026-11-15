@@ -590,10 +590,13 @@ export async function signOutAndClearSession() {
 
 export async function fetchMe(): Promise<CachedReadResult<User>> {
   const token = await requireSessionToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.me({
       extraHeaders: buildAuthHeaders(token),
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
@@ -607,10 +610,12 @@ export async function fetchMe(): Promise<CachedReadResult<User>> {
       source: 'network',
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
+    await assertCurrentSession(token);
     const cached = await readCache<User>(storageKeys.me);
     if (!cached) {
       throw error;
@@ -620,6 +625,8 @@ export async function fetchMe(): Promise<CachedReadResult<User>> {
       data: cached,
       source: 'cache',
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

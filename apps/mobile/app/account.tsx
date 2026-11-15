@@ -81,7 +81,10 @@ export default function AccountScreen() {
     await signOutAndClearSession(); router.replace('/sign-in');
   }
   if (!owner || loadedOwner !== owner) return <FitnessPage title="Account"><Text style={ui.notice}>{message}</Text>
-    <Button title="Retry loading account" disabled={busy || !owner} onPress={() => { void action(load, 'Account settings loaded.'); }} /></FitnessPage>;
+    <Button title="Retry loading account" disabled={busy || !owner} onPress={() => { void action(load, 'Account settings loaded.'); }} />
+    <Button title="Sign out" disabled={busy || !owner || snapshot.pending > 0} onPress={() => { void action(() => signOut(), 'Signed out.'); }} />
+    {!!snapshot.pending && <Text style={ui.notice}>Your pending entries stay on this device. Synchronize them from Log before signing out.</Text>}
+  </FitnessPage>;
   return <FitnessPage title="Account">
     <Text accessibilityLiveRegion="polite" style={ui.notice}>{message}</Text>
     <Text style={ui.text}>{account?.user.displayName ?? 'Your account'}{account?.user.email ? ` / ${account.user.email}` : ''}</Text>

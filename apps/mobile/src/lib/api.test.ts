@@ -681,3 +681,13 @@ test('upgrading moves legacy offline changes into their original account before 
   assert.equal(await getPendingMutationCount(), 1);
   const flushed = await flushPendingMutations(); assert.equal(flushed.flushed, 1); assert.equal(writes, 1);
 });
+
+test('temporary API outages permit cached account access but invalid sessions never do', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 200;
+  const client = createClientOverrides({ me: async () => ({ status, body: status === 200 ? user : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('cached-account-token'); await fetchMe();
+  for (status of [502, 503, 429]) assert.deepEqual(await fetchMe(), { data: user, source: 'cache' });
+  status = 401; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 401);
+  status = 404; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 404);
+});

@@ -5,6 +5,7 @@ const user = { id: '00000000-0000-4000-8000-000000000001', email: 'synthetic@exa
 async function setup(page: Page, signedIn = true) {
   let offline = false;
   let whoopUnavailable = false;
+  let apiUnavailable = false;
   let dashboardReads = 0;
   let activeUser = user;
   const logs = new Map<string, HealthLog>();
@@ -20,6 +21,7 @@ async function setup(page: Page, signedIn = true) {
     if (offline) return route.abort('failed');
     const send = (json: unknown, status = 200) => route.fulfill({ status, json, headers: { 'access-control-allow-origin': '*' } });
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    if (apiUnavailable) return send({ error: 'API unavailable' }, 502);
     if (whoopUnavailable && url.pathname.startsWith('/users/me/whoop/')) return send({ error: 'WHOOP is unavailable' }, 503);
     switch (url.pathname) {
       case '/auth/providers': return send({ providers: ['google', 'apple', 'whoop'] });
@@ -42,7 +44,7 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
+  return { logs, errors, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
     async switchAccount() {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
       await page.evaluate((next) => {
@@ -109,7 +111,7 @@ test('unified navigation renders WHOOP charts, account controls, and structured 
   expect(entry?.kind).toBe('workout');
   if (entry?.kind === 'workout') expect(entry.details.exercises[0].sets[0]).toEqual({ reps: 5, weightKg: 100 });
   await page.getByRole('link', { name: 'Workouts', exact: true }).click();
-  await expect(page.getByText(/Strength day/)).toBeVisible();
+  await expect(page.getByText(/^\d{4}-\d{2}-\d{2}: Strength day - 45 min$/)).toBeVisible();
   expect(f.errors).toEqual([]);
 });
 
@@ -181,5 +183,25 @@ test('loading the same workout history dates retries WHOOP', async ({ page }) =>
   await expect.poll(f.dashboardReads).toBe(1);
   await page.getByRole('button', { name: 'Load history', exact: true }).click();
   await expect.poll(f.dashboardReads).toBe(2);
+  expect(f.errors).toEqual([]);
+});
+
+
+test('API 502 responses still allow offline manual entries and cached accounts can sign out', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await expect(page.getByRole('button', { name: 'Save entry', exact: true })).toBeEnabled();
+  f.setApiUnavailable(true); await page.reload();
+  await page.getByRole('button', { name: 'hydration', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('350');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect(page.getByText('350 mL', { exact: true })).toBeVisible();
+  expect(f.logs.size).toBe(0);
+  f.setApiUnavailable(false); await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  f.setApiUnavailable(true); await page.getByRole('link', { name: 'Account', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
   expect(f.errors).toEqual([]);
 });

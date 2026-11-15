@@ -27,7 +27,8 @@ export async function registerFitnessRoutes(app: FastifyInstance, store: UserSta
     return payload;
   });
   app.get('/users/me/logs', async (request) => health.list(owner(request), healthLogQuerySchema.parse(request.query)));
-  app.post('/users/me/logs', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request) => {
+  // Allow the contract's 100 exercises x 50 sets, including JSON-escaped text.
+  app.post('/users/me/logs', { bodyLimit: 1024 * 1024, config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request) => {
     const userId = owner(request);
     const mutation = healthMutationSchema.parse(request.body);
     return health.mutate(userId, mutation, async () => {

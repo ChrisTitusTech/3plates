@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import type { HealthLogInput } from '@3plates/contract';
+import { healthMutationSchema, type HealthLogInput } from '@3plates/contract';
 import { createAuthService, createMemoryAuthRepository } from './auth-service.js';
 import { createMemoryUserStateStore } from './user-state-store.js';
 import { createMemoryHealthStore } from './health-store.js';
@@ -57,6 +57,26 @@ test('manual writes are idempotent, versioned, validated, and scoped to their ow
   assert.equal((await post({ ...mutation, mutationId: randomUUID(), expectedVersion: 2 })).statusCode, 409);
   const logs = await f.app.inject({ url: '/users/me/logs?limit=1', headers });
   assert.equal(logs.json().logs[0].entry, null);
+});
+
+test('maximum-size workouts sync while oversized bodies remain bounded per route', async (t) => {
+  const f = fixture(); t.after(() => f.app.close());
+  const session = await signIn(f.app, 'google');
+  const headers = { authorization: `Bearer ${session.sessionToken}`, 'content-type': 'application/json' };
+  const mutation = healthMutationSchema.parse({ id: randomUUID(), mutationId: randomUUID(), expectedVersion: 0,
+    entry: { kind: 'workout', date: '2026-11-14', timezone: 'UTC', notes: '\u0000'.repeat(4000),
+      details: { title: '\u0000'.repeat(200), sport: '\u0000'.repeat(80), durationMinutes: 1440,
+        exercises: Array.from({ length: 100 }, () => ({ name: '\u0000'.repeat(100),
+          sets: Array.from({ length: 50 }, () => ({ reps: 1000, weightKg: 1999.9999999999998 })) })) } } });
+  const payload = JSON.stringify(mutation);
+  assert.ok(Buffer.byteLength(payload) > 64 * 1024);
+  const saved = await f.app.inject({ method: 'POST', url: '/users/me/logs', headers, payload });
+  assert.equal(saved.statusCode, 200);
+  const logs = await f.app.inject({ url: '/users/me/logs', headers });
+  assert.deepEqual(logs.json().logs[0].entry, mutation.entry);
+  const oversized = JSON.stringify({ ...mutation, padding: 'x'.repeat(1024 * 1024) });
+  assert.equal((await f.app.inject({ method: 'POST', url: '/users/me/logs', headers, payload: oversized })).statusCode, 413);
+  assert.equal((await f.app.inject({ method: 'PUT', url: '/users/me/preferences', headers, payload })).statusCode, 413);
 });
 
 test('linking preserves the account, validates workout ownership, and deletion disables login', async (t) => {

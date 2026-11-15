@@ -85,6 +85,45 @@ projects. A JavaScript export is a separate gate from native compilation and
 real-device testing. On Linux, iOS compilation needs the macOS CI runner or a Mac.
 Do not treat unsigned simulator builds as signed app-store artifacts.
 
+## Local acceptance evidence (2026-11-14)
+
+The implementation through `8bd8b6f` has the following passing local evidence.
+Unchanged contract, API, and compatibility suites retain their earlier passing
+results; affected client tests, exports, and native compilation were rerun after
+the final units and offline sign-out fixes.
+
+| Check | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | Passed |
+| `pnpm typecheck` | Passed; mobile typecheck repeated after the final client fix |
+| `pnpm test` | Contract 6, API 54, client 30; no skips |
+| `pnpm --filter @3plates/whoop check` | Typecheck, lint, 23 unit tests, and production build passed |
+| `pnpm --filter @3plates/whoop test:db` | 17 passed against the isolated fixture database |
+| `pnpm --filter @3plates/whoop test:browser` | 26 desktop/phone tests passed |
+| `pnpm --filter @3plates/mobile test:browser` | 22 desktop/phone tests passed |
+| `pnpm --filter @3plates/mobile exec expo export --platform all --output-dir dist` | Web, Android, iOS exports passed |
+| `pnpm --filter @3plates/mobile exec expo install --check` | Dependencies current for SDK 58 |
+| `pnpm --filter @3plates/api build` | Passed; built API health/shutdown verified with WHOOP enabled and disabled |
+| `pnpm db:generate` | No migration drift |
+| Android `:app:assembleRelease` | ARM64 and x86_64 passed with local debug signing |
+| Independent Codex review | Full integration reviewed against `main`; all findings fixed; follow-up of `8bd8b6f` found no actionable regressions |
+
+The Android build used JDK 17 and the installed Android SDK with this command
+from `apps/mobile/android`:
+
+```bash
+JAVA_HOME=/home/titus/.cache/3plates-toolchain/java/jdk-17.0.21+9 \
+ANDROID_HOME=/home/titus/.cache/3plates-toolchain/sdk \
+./gradlew :app:assembleRelease \
+  -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon
+```
+
+This produces an APK at
+`apps/mobile/android/app/build/outputs/apk/release/app-release.apk`; it is a local
+validation artifact, not a signed store release. No real-device testing or iOS
+native compilation was performed on this Linux workstation. There is no PR for
+this integration, so remote CI and PR review/thread state are not applicable.
+
 # Server configuration and rollout
 
 Publishing and deployment of this integration have not been authorized. The

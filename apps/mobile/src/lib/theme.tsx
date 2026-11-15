@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { AppState, useColorScheme } from 'react-native';
 import type { Preferences } from '@3plates/contract';
-import { fetchMe, fetchPreferences, syncPendingPreferences, getSessionGeneration, getSessionToken, subscribePreferences, subscribeSession, updatePreferences } from './api';
+import { fetchMe, fetchPreferences, getCachedPreferences, syncPendingPreferences, getSessionGeneration, getSessionToken, subscribePreferences, subscribeSession, updatePreferences } from './api';
 
 export const palettes = {
   light: { ink: '#142b38', muted: '#526975', accent: '#087f73', onAccent: '#ffffff', light: '#edf7f4', border: '#d6e2e6', danger: '#a52c36', onDanger: '#ffffff', background: '#f4f7f9', surface: '#ffffff', strong: '#142b38', onStrong: '#ffffff', success: '#067647' },
@@ -19,12 +19,16 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   const [message, setMessage] = useState('');
   const revision = useRef(0);
   const mounted = useRef(true);
-  async function load() {
+  async function load(hydrate = true) {
     const current = ++revision.current;
     const active = () => mounted.current && revision.current === current;
     setBusy(true);
     try {
       if (!await getSessionToken()) { if (active()) setPreferences(null); return; }
+      if (hydrate) {
+        const cached = await getCachedPreferences();
+        if (active() && cached) { setPreferences(cached); setBusy(false); }
+      }
       await fetchMe();
       if (!active()) return;
       // Offline queues remain authoritative until a later connection can flush them.
@@ -37,14 +41,20 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   }
   useEffect(() => {
     mounted.current = true;
-    const session = subscribeSession(() => { revision.current++; setPreferences(null); setMessage(''); void load(); });
+    // A new session must prove its owner before using the previous account cache.
+    const session = subscribeSession(() => { revision.current++; setPreferences(null); setMessage(''); void load(false); });
     const changes = subscribePreferences((value) => { revision.current++; setPreferences(value); setBusy(false); });
     const foreground = AppState.addEventListener('change', (state) => { if (state === 'active') void load(); });
     const online = () => { void load(); };
+    // Native connectivity may recover without an AppState change. Retry only
+    // queued preferences while active; an empty queue performs no network call.
+    const retryPending = setInterval(() => {
+      if (AppState.currentState === 'active') void syncPendingPreferences().catch(() => undefined);
+    }, 30000);
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('online', online);
     void load();
     return () => {
-      mounted.current = false; revision.current++; session(); changes(); foreground.remove();
+      mounted.current = false; revision.current++; session(); changes(); foreground.remove(); clearInterval(retryPending);
       if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('online', online);
     };
   }, []);

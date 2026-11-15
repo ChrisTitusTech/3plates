@@ -48,7 +48,7 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
+  return { logs, errors, preferences, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
     async switchAccount() {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
       await page.evaluate((next) => {
@@ -279,6 +279,7 @@ test('appearance follows system changes and explicit choices persist across rout
 });
 
 test('offline appearance survives restart, synchronizes, and stays scoped to its account', async ({ page }) => {
+  await page.clock.install();
   const f = await setup(page); await page.emulateMedia({ colorScheme: 'light' }); await page.goto('/today');
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
   f.setApiUnavailable(true);
@@ -286,7 +287,8 @@ test('offline appearance survives restart, synchronizes, and stays scoped to its
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
   await page.reload();
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
-  f.setApiUnavailable(false); await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  f.setApiUnavailable(false); await page.clock.fastForward(31000);
+  await expect.poll(() => f.preferences.get(user.id)?.theme).toBe('dark');
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
   await page.reload();
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
@@ -311,5 +313,21 @@ test('saved Settings theme updates the fitness screens and preserves other prefe
   await page.goto('/preferences');
   await expect(page.getByRole('button', { name: 'imperial', exact: true })).toHaveCSS('background-color', 'rgb(20, 43, 56)');
   await expect(page.getByLabel('Reminder time')).toHaveValue('08:30');
+  expect(f.errors).toEqual([]);
+});
+
+
+test('cached dark appearance is usable before an unreachable API responds', async ({ page }) => {
+  const f = await setup(page); await page.emulateMedia({ colorScheme: 'light' }); await page.goto('/today');
+  await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  let release!: () => void;
+  const stalled = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/users/me', async (route) => { await stalled; await route.abort('failed'); });
+  try {
+    await page.reload();
+    await expect(page.locator('[data-testid="fitness-page"]:visible')).toHaveCSS('background-color', 'rgb(14, 23, 31)', { timeout: 1500 });
+    await expect(page.getByRole('radio', { name: 'Theme: Light', exact: true })).toBeEnabled({ timeout: 1500 });
+  } finally { release(); }
   expect(f.errors).toEqual([]);
 });

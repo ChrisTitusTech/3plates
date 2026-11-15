@@ -561,6 +561,12 @@ export async function redeemMobileAuthExchangeCode(code: string) {
 let beforeSignOut: (() => Promise<void>) | undefined;
 export function registerSignOutCleanup(handler: () => Promise<void>) { beforeSignOut = handler; }
 export async function getCachedUser() { return readCache<User>(storageKeys.me); }
+export async function getCachedPreferences() {
+  const token = await requireSessionToken();
+  const cached = await readCache<Preferences>(storageKeys.preferences);
+  await assertCurrentSession(token);
+  return cached;
+}
 
 export async function signOutAndClearSession() {
   if (beforeSignOut) await beforeSignOut();

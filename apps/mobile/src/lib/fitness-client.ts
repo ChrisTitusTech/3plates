@@ -1,3 +1,4 @@
+import { clearLogDraft } from './log-draft';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { apiBaseUrl, fetchMe, getCachedUser, getSessionGeneration, getSessionToken, registerSignOutCleanup } from './api';
@@ -60,6 +61,7 @@ export async function loadWhoopDashboard(userId: string, start: string, end: str
 export async function clearFitnessCache(userId: string, discardPending = false) {
   const engine = engines.get(userId) ?? createHealthSync({ userId, storage: AsyncStorage, uuid: randomUUID, request: async () => { throw new Error('Offline'); } });
   await engine.clear(discardPending);
+  clearLogDraft(userId);
   await AsyncStorage.removeItem(whoopKey(userId));
   engines.delete(userId); checkedToken = null; checkedOwner = null;
 }

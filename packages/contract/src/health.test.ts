@@ -15,3 +15,14 @@ test('health log validation rejects invalid dates, zones, quantities and sleep i
   assert.equal(healthLogInputSchema.safeParse({ ...sleep, details: { ...sleep.details, end: '2026-11-18T07:00:00-06:00' } }).success, false);
   assert.equal(healthLogQuerySchema.safeParse({ start: '2026-11-15', end: '2026-11-14' }).success, false);
 });
+
+test('health text rejects PostgreSQL-incompatible null characters, including nested fields', () => {
+  const workout = { kind: 'workout', date: '2026-11-14', timezone: 'UTC', notes: '\u0001', details: {
+    title: 'Lift', sport: 'Strength', durationMinutes: 45, exercises: [{ name: 'Squat', sets: [{ reps: 5, weightKg: 100 }] }],
+  } };
+  assert.equal(healthLogInputSchema.safeParse(workout).success, true);
+  assert.equal(healthLogInputSchema.safeParse({ ...workout, notes: 'bad\0note' }).success, false);
+  assert.equal(healthLogInputSchema.safeParse({ ...workout, details: { ...workout.details, title: 'bad\0title' } }).success, false);
+  assert.equal(healthLogInputSchema.safeParse({ ...workout, details: { ...workout.details,
+    exercises: [{ ...workout.details.exercises[0], name: 'bad\0name' }] } }).success, false);
+});

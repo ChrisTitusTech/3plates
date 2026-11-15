@@ -918,3 +918,46 @@ test("full reconciliation retires covered webhook failures but retains newer and
   assert.equal(await failed('event:new'), 'failed');
   assert.equal(await failed('event:other'), 'failed');
 });
+
+test("empty namespaced settings retain valid standalone WHOOP credentials", () => {
+  const result = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    const {config} = await import('./server/config.ts');
+    if (config.ClientID !== 'legacy-client' || config.ClientSecret !== 'legacy-secret'
+      || config.DATABASE_URL !== 'postgres://test:test@localhost/legacy' || config.TOKEN_KEY !== 'c'.repeat(64)) process.exit(1);
+    console.log('legacy fallback accepted');
+  `], { env: { ...process.env, WHOOP_CLIENT_ID: "", WHOOP_CLIENT_SECRET: "", WHOOP_DATABASE_URL: "", WHOOP_TOKEN_KEY: "",
+    ClientID: "legacy-client", ClientSecret: "legacy-secret", DATABASE_URL: "postgres://test:test@localhost/legacy", TOKEN_KEY: "c".repeat(64) }, encoding: "utf8" });
+  assert.equal(result.trim(), "legacy fallback accepted");
+});
+
+test("shared history revalidates policy and token in its data snapshot", { timeout: 15000 }, async (t) => {
+  const original = db.transaction.bind(db);
+  for (const change of ['restrict', 'revoke', 'disconnect', 'expire'] as const) {
+    const token = randomToken();
+    await db.update(members).set({ shareToken: token, sharePolicy: null, connected: true }).where(eq(members.id, memberA));
+    let entered!: () => void; let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const mock = t.mock.method(db, 'transaction', async (...args: Parameters<typeof db.transaction>) => {
+      entered(); await wait; return original(...args);
+    });
+    const response = app.inject(`/api/shared/${token}?start=2026-01-01&end=2026-01-03`);
+    // Start injection, then pause after token lookup but before history's snapshot.
+    const pending = response.then((value) => value);
+    try {
+      await started;
+      await db.update(members).set(change === 'revoke' ? { shareToken: null }
+        : change === 'disconnect' ? { connected: false }
+        : { sharePolicy: { kinds: ['sleep'], ...(change === 'expire' ? { expires: '2020-01-01T00:00:00Z' } : {}) } }).where(eq(members.id, memberA));
+      await db.insert(records).values({ memberId: memberA, kind: 'cycle', sourceId: '909', raw: cycle(909), start: new Date('2026-01-02T08:00:00Z'), localDate: '2026-01-02' });
+      await db.update(members).set({ dataRevision: sql`${members.dataRevision} + 1` }).where(eq(members.id, memberA));
+      release(); const result = await pending;
+      assert.equal(result.statusCode, change === 'restrict' ? 200 : 404);
+      if (change === 'restrict') {
+        assert.equal(result.json().lifetime.metrics.strain.count, 0);
+        assert.deepEqual(result.json().details, []);
+      }
+    } finally { release(); await pending; mock.mock.restore(); }
+    await db.delete(records).where(eq(records.sourceId, '909'));
+  }
+});

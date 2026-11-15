@@ -272,18 +272,22 @@ function migrateLegacyCache(userId: string) {
       const legacy = await storage.getItem(key);
       if (!legacy) continue;
       const destination = `${key}/user/${userId}`;
-      const existing = await storage.getItem(destination);
-      let value = existing ?? legacy;
-      if (key === storageKeys.pendingMutations && existing) {
-        const oldQueue = JSON.parse(legacy) as PendingMutation[];
-        const newQueue = JSON.parse(existing) as PendingMutation[];
-        if (!Array.isArray(oldQueue) || !Array.isArray(newQueue)) throw new Error('Offline changes need storage recovery. They have not been discarded.');
-        value = JSON.stringify([...oldQueue.filter((item) => !newQueue.some((other) => other.id === item.id)), ...newQueue]);
-      }
-      // Copy before removal. An interrupted migration can safely repeat; receipt
-      // IDs in a pending queue are retained, including across account switches.
-      await storage.setItem(destination, value);
-      await storage.removeItem(key);
+      const migrate = async () => {
+        const existing = await storage.getItem(destination);
+        let value = existing ?? legacy;
+        if (key === storageKeys.pendingMutations && existing) {
+          const oldQueue = JSON.parse(legacy) as PendingMutation[];
+          const newQueue = JSON.parse(existing) as PendingMutation[];
+          if (!Array.isArray(oldQueue) || !Array.isArray(newQueue)) throw new Error('Offline changes need storage recovery. They have not been discarded.');
+          value = JSON.stringify([...oldQueue.filter((item) => !newQueue.some((other) => other.id === item.id)), ...newQueue]);
+        }
+        // Copy before removal. An interrupted migration can safely repeat; receipt
+        // IDs in a pending queue are retained, including across account switches.
+        await storage.setItem(destination, value);
+        await storage.removeItem(key);
+      };
+      if (key === storageKeys.pendingMutations) await withQueue(destination, migrate);
+      else await migrate();
     }
     migratedUsers.add(userId);
   });
@@ -368,6 +372,19 @@ async function readPendingMutations(key?: string): Promise<PendingMutation[]> {
   }
 }
 
+// Serialize all queue mutations per account, including across browser tabs.
+const queueWork = new Map<string, Promise<unknown>>();
+function withQueue<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = queueWork.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => {
+    const locks = (globalThis as unknown as { navigator?: { locks?: { request<T>(key: string, run: () => Promise<T>): Promise<T> } } }).navigator?.locks;
+    return locks ? locks.request(key, run) : run();
+  });
+  queueWork.set(key, next);
+  void next.finally(() => { if (queueWork.get(key) === next) queueWork.delete(key); }).catch(() => undefined);
+  return next;
+}
+
 async function writePendingMutations(key: string, mutations: PendingMutation[]) {
   await storage.setItem(key, JSON.stringify(mutations));
 }
@@ -392,22 +409,26 @@ async function queuePendingMutation(mutation: PendingMutation, token: string) {
   await assertCurrentSession(token);
   const key = await accountStorageKey(storageKeys.pendingMutations);
   await assertCurrentSession(token);
-  const existing = coalescePendingMutations(await readPendingMutations(key));
-  const nextMutations = mutation.type === 'updateProgress' || mutation.type === 'updatePreferences'
-    ? existing.filter((candidate) => candidate.type !== mutation.type)
-    : existing;
-
-  await assertCurrentSession(token);
-  await writePendingMutations(key, [...nextMutations, mutation]);
+  await withQueue(key, async () => {
+    await assertCurrentSession(token);
+    const existing = coalescePendingMutations(await readPendingMutations(key));
+    const nextMutations = mutation.type === 'updateProgress' || mutation.type === 'updatePreferences'
+      ? existing.filter((candidate) => candidate.type !== mutation.type)
+      : existing;
+    await assertCurrentSession(token);
+    await writePendingMutations(key, [...nextMutations, mutation]);
+  });
 }
 
 async function removePendingMutationsByType(type: PendingMutation['type'], token: string) {
   await assertCurrentSession(token);
   const key = await accountStorageKey(storageKeys.pendingMutations);
   await assertCurrentSession(token);
-  const existing = JSON.parse(await storage.getItem(key) ?? '[]') as PendingMutation[];
-  await assertCurrentSession(token);
-  await storage.setItem(key, JSON.stringify(existing.filter((mutation) => mutation.type !== type)));
+  await withQueue(key, async () => {
+    const existing = await readPendingMutations(key);
+    await assertCurrentSession(token);
+    await writePendingMutations(key, existing.filter((mutation) => mutation.type !== type));
+  });
 }
 
 async function executePendingMutation(mutation: PendingMutation, token: string) {
@@ -523,13 +544,15 @@ export function clearSession(expectedGeneration = getSessionGeneration()) {
     await writeSessionToken(null);
     sessionChanged();
     for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
-      await storage.removeItem(owner ? `${key}/user/${owner.id}` : key);
+      const destination = owner ? `${key}/user/${owner.id}` : key;
+      if (key === storageKeys.pendingMutations) await withQueue(destination, () => storage.removeItem(destination));
+      else await storage.removeItem(destination);
     }
     await storage.removeItem(storageKeys.me);
     await storage.removeItem(storageKeys.progress);
     await storage.removeItem(storageKeys.manualWorkouts);
     await storage.removeItem(storageKeys.preferences);
-    await storage.removeItem(storageKeys.pendingMutations);
+    await withQueue(storageKeys.pendingMutations, () => storage.removeItem(storageKeys.pendingMutations));
   });
 }
 
@@ -1106,47 +1129,52 @@ async function flushPendingMutationsSerial() {
 
   const key = await accountStorageKey(storageKeys.pendingMutations);
   await assertCurrentSession(token);
-  const queue = coalescePendingMutations(await readPendingMutations(key));
-  if (queue.length === 0) {
-    return {
-      flushed: 0,
-      remaining: 0,
-    };
-  }
-
-  const owner = await getCachedUser();
-  if (owner) {
-    const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token) });
-    if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+  return withQueue(key, async () => {
     await assertCurrentSession(token);
-  }
-
-  const remaining: PendingMutation[] = [];
-  let flushed = 0;
-
-  for (const mutation of queue) {
-    await assertCurrentSession(token);
-    try {
-      await executePendingMutation(mutation, token);
-      flushed += 1;
-    } catch (error) {
-      if (error instanceof ApiRequestError && error.status === 401) throw error;
-      if (isNetworkFailure(error) || (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500))) {
-        remaining.push(mutation);
-        continue;
-      }
-
-      // Drop non-retriable mutations and continue with later entries.
+    const queue = coalescePendingMutations(await readPendingMutations(key));
+    if (queue.length === 0) {
+      return {
+        flushed: 0,
+        remaining: 0,
+      };
     }
-  }
 
-  await assertCurrentSession(token);
-  await writePendingMutations(key, remaining);
+    const owner = await getCachedUser();
+    if (owner) {
+      const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token) });
+      if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+      await assertCurrentSession(token);
+    }
 
-  return {
-    flushed,
-    remaining: remaining.length,
-  };
+    let remaining = queue;
+    await writePendingMutations(key, remaining);
+    let flushed = 0;
+
+    for (const mutation of queue) {
+      await assertCurrentSession(token);
+      try {
+        await executePendingMutation(mutation, token);
+        flushed += 1;
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 401) throw error;
+        if (isNetworkFailure(error) || (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500))) {
+          continue;
+        }
+
+        // Drop non-retriable mutations and continue with later entries.
+      }
+      remaining = remaining.filter((item) => item.id !== mutation.id);
+      // Persist acknowledged work before the next request can fail (including 401).
+      await writePendingMutations(key, remaining);
+    }
+
+    await assertCurrentSession(token);
+
+    return {
+      flushed,
+      remaining: remaining.length,
+    };
+  });
 }
 
 export async function getPendingMutationCount() {

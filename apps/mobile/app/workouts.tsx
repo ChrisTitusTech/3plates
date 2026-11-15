@@ -1,5 +1,5 @@
 import { useTheme, type ThemeColors } from '../src/lib/theme';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -68,14 +68,18 @@ export default function WorkoutsScreen() {
     );
   }, [manualForm, manualType]);
 
+  const loadSequence = useRef(0);
   const loadWorkouts = async (nextMode: WorkoutMode, page = 1) => {
     const generation = getSessionGeneration();
+    const sequence = ++loadSequence.current;
+    const current = () => generation === getSessionGeneration() && sequence === loadSequence.current;
     setStatus('loading');
     setError(null);
     setMessage(null);
 
     try {
       const result = await fetchWorkoutsByMode(nextMode, { page, pageSize });
+      if (!current()) return;
       setWorkoutList(result.data);
       setSource(result.source);
       setStatus('ready');
@@ -88,6 +92,7 @@ export default function WorkoutsScreen() {
         setMessage('No workouts are published for this mode yet.');
       }
     } catch (loadError) {
+      if (!current()) return;
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
         if (await expireSession(generation)) router.replace('/sign-in');
         return;

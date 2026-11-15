@@ -959,3 +959,46 @@ test('a refresh queued behind a newer sign-in cannot replace that session', asyn
   release(); await signIn; await rejected;
   assert.equal(await getSessionToken(), 'bob');
 });
+
+test('concurrent offline progress and device mutations both survive account queue writes', async (t) => {
+  const backing = createMemoryStorage();
+  const key = '@3plates/pending-mutations/user/user-1';
+  const storage = { ...backing, async getItem(k: string) {
+    const value = await backing.getItem(k);
+    if (k === key) await new Promise((resolve) => setImmediate(resolve));
+    return value;
+  } };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { throw new Error('Network request failed'); },
+    registerDevice: async () => { throw new Error('Network request failed'); } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('queue-race'); await fetchMe();
+  await Promise.all([updateProgress(createProgress()), registerDevice({ platform: 'ios', pushToken: 'concurrent-device' })]);
+  const queue = JSON.parse((await backing.getItem(key))!);
+  assert.deepEqual(queue.map((item: { type: string }) => item.type).sort(), ['registerDevice', 'updateProgress']);
+});
+
+test('flush checkpoints successes before a later 401 and preserves new concurrent writes', async (t) => {
+  const storage = createMemoryStorage(); let online = false; let authorized = false; let progressWrites = 0;
+  let entered!: () => void; let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { if (!online) throw new Error('Network request failed'); progressWrites++; return { status: 200, body: createProgress() }; },
+    registerDevice: async () => {
+      if (!online) throw new Error('Network request failed');
+      if (authorized) return { status: 200, body: { registered: true } };
+      entered(); await wait; return { status: 401, body: { ok: false, error: { code: 'invalid_auth', message: 'Expired' } } };
+    } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('checkpoint'); await fetchMe();
+  await updateProgress(createProgress()); await registerDevice({ platform: 'ios', pushToken: 'old-device' });
+  online = true; const flush = flushPendingMutations(); const rejected = assert.rejects(flush, /Expired/);
+  await started;
+  online = false;
+  const concurrent = registerDevice({ platform: 'android', pushToken: 'new-device' });
+  release(); await rejected; await concurrent;
+  assert.equal(await getPendingMutationCount(), 2);
+  online = true; authorized = true; await flushPendingMutations();
+  assert.equal(progressWrites, 1); assert.equal(await getPendingMutationCount(), 0);
+});

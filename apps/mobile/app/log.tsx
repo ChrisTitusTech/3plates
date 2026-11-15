@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { calendarDateSchema, type HealthLog } from '@3plates/contract';
 import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
+import { clearLogDraft, readLogDraft, writeLogDraft } from '../src/lib/log-draft';
 import { useFitness } from '../src/lib/use-fitness';
 import { fetchPreferences } from '../src/lib/api';
 import { fitnessRequest } from '../src/lib/fitness-client';
@@ -16,16 +17,19 @@ export default function LogScreen() {
 function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) {
   const { ui, colors } = useFitnessStyles();
   const { account, snapshot, message, busy, refresh, setMessage } = fitness;
-  const [kind, setKind] = useState<LogKind>('workout');
+  const owner = account!.user.id;
+  const [restored] = useState(() => readLogDraft(owner));
+  const dirty = useRef(!!restored);
+  const [kind, setKind] = useState<LogKind>(restored?.kind ?? 'workout');
   const draftRevision = useRef(0);
-  const [form, writeForm] = useState(newLogForm);
-  const [exercises, writeExercises] = useState<ExerciseForm[]>([]);
-  const setForm: typeof writeForm = (value) => { draftRevision.current++; writeForm(value); };
-  const setExercises: typeof writeExercises = (value) => { draftRevision.current++; writeExercises(value); };
-  const [editing, setEditing] = useState<string | undefined>();
-  const [editingVersion, setEditingVersion] = useState<number | undefined>();
-  const editingTarget = useRef<{ id: string; version: number } | null>(null);
-  const [imperial, setImperial] = useState(false);
+  const [form, writeForm] = useState(() => restored?.form ?? newLogForm());
+  const [exercises, writeExercises] = useState<ExerciseForm[]>(restored?.exercises ?? []);
+  const setForm: typeof writeForm = (value) => { draftRevision.current++; dirty.current = true; writeForm(value); };
+  const setExercises: typeof writeExercises = (value) => { draftRevision.current++; dirty.current = true; writeExercises(value); };
+  const [editing, setEditing] = useState<string | undefined>(restored?.editing);
+  const [editingVersion, setEditingVersion] = useState<number | undefined>(restored?.editingVersion);
+  const editingTarget = useRef<{ id: string; version: number } | null>(restored?.editing && restored.editingVersion !== undefined ? { id: restored.editing, version: restored.editingVersion } : null);
+  const [imperial, setImperial] = useState(restored?.imperial ?? false);
   const [unitsReady, setUnitsReady] = useState(false);
   const [unitNotice, setUnitNotice] = useState('');
   const [saving, setSaving] = useState(false);
@@ -36,9 +40,9 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   useEffect(() => {
     let active = true;
     void fetchPreferences().then((result) => {
-      if (active) setImperial(result.data.units === 'imperial');
+      if (active && !restored) setImperial(result.data.units === 'imperial');
     }).catch(() => {
-      if (active) setUnitNotice('Using metric units because your preferences are unavailable.');
+      if (active && !restored) setUnitNotice('Using metric units because your preferences are unavailable.');
     }).finally(() => { if (active) setUnitsReady(true); });
     return () => { active = false; };
   }, []);
@@ -50,6 +54,11 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
     }
     return () => { active = false; };
   }, [account?.user.id, form.date]);
+  useEffect(() => {
+    if (!unitsReady) return;
+    if (dirty.current) writeLogDraft(owner, { kind, form, exercises, imperial, editing, editingVersion });
+    else clearLogDraft(owner);
+  }, [owner, kind, form, exercises, imperial, editing, editingVersion, unitsReady]);
   const field = (key: string, label: string, numeric = false, multiline = false) => <Field key={key}
     label={label} value={form[key] ?? ''} numeric={numeric} multiline={multiline}
     onChange={(value) => setForm((current) => ({ ...current, [key]: value }))} />;
@@ -60,7 +69,7 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
     setKind(record.entry.kind); setForm(loaded.form); setExercises(loaded.exercises); setEditing(record.id); setEditingVersion(record.version);
     setMessage('Editing the selected entry in the form above.');
   }
-  function reset() { editingTarget.current = null; setEditing(undefined); setEditingVersion(undefined); setForm(newLogForm()); setExercises([]); }
+  function reset() { editingTarget.current = null; setEditing(undefined); setEditingVersion(undefined); setForm(newLogForm()); setExercises([]); dirty.current = false; clearLogDraft(owner); }
   async function save() {
     if (!account) return;
     const revision = draftRevision.current;
@@ -135,7 +144,7 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
         title={(form.metric === metric ? 'Selected: ' : '') + metric.replaceAll('_', ' ')} onPress={() => setForm((current) => ({ ...current, metric }))} />)}</View>{field('target', 'Target in the selected units', true)}</>}
       {field('notes', 'Notes (optional)', false, true)}
       <Button title={saving ? 'Saving...' : editing ? 'Save changes' : 'Save entry'} disabled={!account || saving} onPress={() => { void save(); }} />
-      {editing && <Button title="Cancel editing" onPress={reset} />}
+      <Button title={editing ? "Cancel editing" : "Discard draft"} onPress={reset} />
     </Card>
     <Card title="Your entries">
       {!snapshot.logs.length && <Text style={ui.muted}>No entries yet. Your first log can be saved even while offline after signing in.</Text>}

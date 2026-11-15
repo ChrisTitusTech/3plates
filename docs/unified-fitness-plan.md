@@ -197,3 +197,34 @@ acceptance work. No VPS changes were made in this review cycle.
 Independent Codex review of the completed batch found no actionable regressions;
 its focused API/mobile/operations checks also pass. Remote CI and review remain
 required on the next published head before merge.
+
+The latest review fixes preserve structured log drafts through credential expiry
+and restore them only after loading the same account. Browser drafts survive the
+OAuth redirect in session storage; native drafts last for the current process.
+Cancel/discard and explicit sign-out clear drafts. Legacy screens now observe
+session changes, and workouts ignore stale request completions.
+
+Account queue writes, migrations, cleanup, and flushes share a per-account lock
+(with Web Locks across browser tabs). A flush checkpoints each acknowledged
+mutation before attempting the next one. Health-log retryable failures retain
+the exact mutation ID and block only later edits of the same record; independent
+records still upload. Shared health validation rejects null characters before
+JSONB writes. Shared WHOOP reads recheck tokens, connection state, expiry, and
+policy inside the history snapshot. Empty namespaced WHOOP configuration falls
+back to valid standalone settings.
+
+Validation: 7 contract, 71 API, 54 mobile, 25 WHOOP unit, 30 WHOOP database,
+64 unified desktop/phone browser, and 34 legacy browser tests pass with no skips.
+The unchanged 10 operations and 5 web-deployment tests retain prior evidence
+(300 total). Workspace/WHOOP typechecks, WHOOP lint/build, API build, all-platform
+Expo exports, and the dependency audit pass. Regression tests cover simultaneous
+offline queue writes, a successful upload followed by 401, independent-record
+retry, draft recovery/isolation/cleanup, cross-tab sign-out, and sharing changes
+between token lookup and history reads. Native process termination intentionally
+does not preserve unsaved transient forms; saved offline entries remain durable.
+Real-device acceptance and VPS rollout remain the next phase after merge.
+
+Independent Codex review completed with no actionable regressions in this batch,
+including the new draft store. Its repeated 54 mobile and 7 contract tests,
+mobile typecheck, and whitespace checks passed. Remote CI and reviews still need
+to complete on the published head before merge.

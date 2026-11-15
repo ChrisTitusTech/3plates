@@ -213,3 +213,24 @@ test('notes-only measurement edits preserve canonical precision including bounda
   const saved = formEntry('workout', workout.form, workout.exercises, true);
   if (saved.kind === 'workout') assert.equal(saved.details.exercises[0].sets[0].weightKg, 225 * 0.45359237);
 });
+
+test('transient failure blocks only its record and retries the same mutation ID', async () => {
+  const values = new Map<string, string>(); const attempts: HealthMutation[] = [];
+  let blocked: string | undefined; let unavailable = true;
+  const engine = createHealthSync({ userId: 'alice', uuid: randomUUID,
+    storage: { async getItem(key) { return values.get(key) ?? null; }, async setItem(key, value) { values.set(key, value); }, async removeItem(key) { values.delete(key); } },
+    request: async (_path, mutation) => {
+      if (!mutation) return { logs: [], nextCursor: null };
+      attempts.push(structuredClone(mutation));
+      if (mutation.id === blocked && unavailable) throw new SyncFailure(503, 'One record unavailable');
+      return { id: mutation.id, version: mutation.expectedVersion + 1, entry: mutation.entry, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    } });
+  blocked = await engine.save(water()); await engine.save(water(500), blocked);
+  const independent = await engine.save(water(750));
+  await assert.rejects(engine.synchronize(), /One record unavailable/);
+  assert.deepEqual(attempts.map((m) => m.id), [blocked, independent]);
+  assert.equal((await engine.snapshot()).pending, 2);
+  unavailable = false; await engine.synchronize();
+  assert.deepEqual(attempts[2], attempts[0]);
+  assert.equal((await engine.snapshot()).pending, 0);
+});

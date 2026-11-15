@@ -32,6 +32,7 @@ export function createHealthSync(options: {
   }
   async function sendPending(state: State) {
     const blocked = new Set<string>();
+    let retryFailure: unknown;
     for (const pending of [...state.pending]) {
       const id = pending.mutation.id;
       if (pending.error || blocked.has(id)) { blocked.add(id); continue; }
@@ -48,10 +49,14 @@ export function createHealthSync(options: {
           await persist(state);
           continue;
         }
-        // Lost acknowledgements retain the exact mutation ID for a safe retry.
-        throw error;
+        // Authorization failures stop all uploads. Other transient failures only
+        // block this record, retaining its exact mutation ID for a safe retry.
+        if (error instanceof SyncFailure && error.status === 401) throw error;
+        blocked.add(id);
+        retryFailure ??= error;
       }
     }
+    if (retryFailure) throw retryFailure;
   }
   return {
     snapshot: () => exclusive(async () => {

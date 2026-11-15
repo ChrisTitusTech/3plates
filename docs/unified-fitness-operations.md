@@ -312,3 +312,19 @@ offsite upload. The local operations harness verifies timeout cleanup without
 publishing partial dumps. Local systemd validation substitutes the production
 executable and Docker dependency, which are absent on this Podman workstation;
 validation of the installed service remains part of the next VPS rollout.
+
+### Draft and synchronization recovery (PR #44)
+
+Credential expiry retains account-scoped unsaved log forms, including exercises,
+measurement units, and the original edit version. The same authenticated account
+can recover them after signing in. Browser drafts use tab session storage so they
+survive the OAuth redirect; native drafts remain in process memory and do not
+survive app termination. Save the entry for durable offline storage. Cancel or
+discard the draft, or explicitly sign out, to clear it on this client.
+
+Legacy mutation queues serialize per account, including browser Web Locks when
+available. Successful uploads are checkpointed individually; later authorization
+failures retain only outstanding work. Item-specific retryable health-log errors
+do not prevent other records from uploading. Shared WHOOP reads use authorization
+and history from the same database snapshot. Empty optional WHOOP overrides fall
+back to standalone environment variables instead of preventing startup.

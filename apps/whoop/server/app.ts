@@ -1,7 +1,6 @@
 import {
   createHistoryCache,
   completeness,
-  type SharePolicy,
 } from "./history.js";
 import Fastify, { type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
@@ -88,7 +87,7 @@ const cachedHistory = createHistoryCache();
 async function dashboard(
   member: typeof members.$inferSelect,
   query: unknown,
-  policy?: SharePolicy | null,
+  sharedToken?: string,
 ) {
   const {
     start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
@@ -99,16 +98,20 @@ async function dashboard(
   if (span < 1 || span > 20000)
     throw fail(400, "Select a valid date range of at most 20,000 days.");
   // Keep the revision and record loader on one MVCC snapshot.
-  const { saved, revision } = await db.transaction(async (tx) => {
+  const { saved, revision, policy } = await db.transaction(async (tx) => {
     const [currentMember] = await tx.select().from(members).where(eq(members.id, member.id));
     if (!currentMember) throw fail(401, "This account is no longer available.");
+    if (sharedToken !== undefined && (currentMember.shareToken !== sharedToken || !currentMember.connected
+      || (currentMember.sharePolicy?.expires && Date.parse(currentMember.sharePolicy.expires) <= Date.now())))
+      throw fail(404, "This shared dashboard is unavailable.");
+    const policy = sharedToken === undefined ? undefined : currentMember.sharePolicy;
     const saved = await cachedHistory(
       member.id + ":" + hash(JSON.stringify(policy ?? null)),
       currentMember.dataRevision,
       () => tx.select().from(records).where(and(eq(records.memberId, member.id), eq(records.deleted, false))),
       policy,
     );
-    return { saved, revision: currentMember.dataRevision };
+    return { saved, revision: currentMember.dataRevision, policy };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
   const contextVersion = revision + "-" + hash(member.id + JSON.stringify(policy ?? null));
   const { details, history } = saved;
@@ -534,7 +537,7 @@ export async function buildApp(
       Date.parse(m.sharePolicy.expires) <= Date.now()
     )
       throw fail(404, "This shared dashboard is unavailable.");
-    return dashboard(m, req.query, m.sharePolicy);
+    return dashboard(m, req.query, token);
   });
   app.get("/api/me/export", async (req, reply) => {
     const m = await requireMember(req);

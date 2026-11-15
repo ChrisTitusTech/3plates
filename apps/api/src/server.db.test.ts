@@ -812,10 +812,11 @@ dbTest('health logs serialize concurrent edits, replay receipts, paginate tombst
     const session = await signIn(app, 'google');
     const health = createDbHealthStore(requireDatabaseUrl());
     try {
-      const entry = { kind: 'hydration' as const, date: '2026-11-14', timezone: 'UTC', notes: '', details: { milliliters: 250 } };
+      const entry = { kind: 'hydration' as const, date: '2026-11-14', timezone: 'UTC', notes: 'JSONB control: \u0001', details: { milliliters: 250 } };
       const mutation = { id: randomUUID(), mutationId: randomUUID(), expectedVersion: 0, entry };
       const results = await Promise.all([health.mutate(session.user.id, mutation), health.mutate(session.user.id, mutation)]);
       assert.deepEqual(results[0], results[1]);
+      assert.deepEqual(results[0].entry, entry);
       const race = await Promise.allSettled([300, 500].map((milliliters) => health.mutate(session.user.id, {
         ...mutation, mutationId: randomUUID(), expectedVersion: 1, entry: { ...entry, details: { milliliters } },
       })));

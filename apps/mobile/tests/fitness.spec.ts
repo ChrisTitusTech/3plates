@@ -557,3 +557,66 @@ for (const kind of ['manual', 'WHOOP JSON', 'WHOOP CSV']) test(`${kind} export i
   await page.getByRole('button', { name: button, exact: true }).click();
   await download; expect(downloads).toHaveLength(1); expect(f.errors).toEqual([]);
 });
+
+test('unsaved structured drafts survive credential expiry and same-account reauthentication', async ({ page }) => {
+  const f = await setup(page); await page.clock.install(); await page.goto('/log');
+  await page.getByLabel('Workout title').fill('Unsaved squats');
+  await page.getByLabel('Duration (minutes)').fill('45');
+  await page.getByRole('button', { name: 'Add exercise', exact: true }).click();
+  await page.getByLabel('Exercise 1 name').fill('Squat');
+  await page.getByLabel('Exercise 1, set 1: reps').fill('5');
+  await page.getByLabel('Exercise 1, set 1: weight (kg)').fill('100');
+  await page.route('**/users/me/logs?*', (route) => route.fulfill({ status: 401, json: { error: { message: 'Expired session' } } }));
+  await page.clock.fastForward(31000);
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(f.logs.size).toBe(0);
+  await page.unroute('**/users/me/logs?*');
+  // A full page load models the browser's return from OAuth. setup restores
+  // the same authenticated owner, not the unvalidated expired profile.
+  await page.goto('/log');
+  await expect(page.getByLabel('Workout title')).toHaveValue('Unsaved squats');
+  await expect(page.getByLabel('Exercise 1, set 1: weight (kg)')).toHaveValue('100');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  await page.getByRole('button', { name: 'Edit workout entry', exact: true }).click();
+  await page.getByLabel('Workout title').fill('Unsent edit');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Workout title')).toHaveValue('Unsent edit');
+  await page.getByRole('button', { name: 'Cancel editing', exact: true }).click();
+  await page.reload(); await expect(page.getByLabel('Workout title')).toHaveValue('');
+  expect(f.errors).toEqual([]);
+});
+
+test('drafts are isolated from another account and cleared by explicit sign-out', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await page.getByLabel('Workout title').fill('First account private draft');
+  await f.switchAccount();
+  await expect(page.getByLabel('Workout title')).toHaveValue('');
+  await page.getByLabel('Workout title').fill('Second account draft');
+  await page.getByRole('button', { name: 'Discard draft', exact: true }).click();
+  await expect(page.getByLabel('Workout title')).toHaveValue('');
+  await page.getByLabel('Workout title').fill('Sign out removes this');
+  await page.getByRole('link', { name: 'Account', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(await page.evaluate(() => sessionStorage.getItem('@3plates/log-draft/00000000-0000-4000-8000-000000000002'))).toBeNull();
+  expect(f.errors).toEqual([]);
+});
+
+test('legacy workouts leave loading when another tab signs out during a request', async ({ page }) => {
+  const f = await setup(page);
+  let entered!: () => void; let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/workouts?*', async (route) => { entered(); await wait;
+    await route.fulfill({ status: 401, json: { ok: false, error: { code: 'invalid_auth', message: 'Signed out' } } });
+  });
+  await page.goto('/workouts');
+  try {
+    await started;
+    await page.evaluate(() => { localStorage.removeItem('@3plates/session-token'); window.dispatchEvent(new StorageEvent('storage', { key: '@3plates/session-token' })); });
+    await expect(page).toHaveURL(/\/sign-in$/);
+  } finally { release(); }
+  expect(f.errors).toEqual([]);
+});

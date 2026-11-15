@@ -679,3 +679,26 @@ test("integrated member resolver isolates owners and public headers cannot imper
   assert.equal((await workoutChoices('1', '2026-01-02'))[0].id, 'owned-workout');
   assert.deepEqual(await workoutChoices('1', '2026-01-03'), []);
 });
+
+test("3plates WHOOP authorization adopts the existing member without replacing history", async () => {
+  const { authorize } = await import('../server/integration.js');
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/oauth/oauth2/token')) {
+      const body = new URLSearchParams(String(init?.body));
+      assert.equal(body.get('redirect_uri'), 'https://api.example.test/auth/callback');
+      assert.equal(body.get('grant_type'), 'authorization_code');
+      return Response.json({ access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600 });
+    }
+    assert.equal(url, 'https://api.prod.whoop.com/developer/v2/user/profile/basic');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer new-access');
+    return Response.json({ user_id: 1, first_name: 'Existing', last_name: 'Member', email: 'existing@example.test' });
+  };
+  const identity = await authorize({ code: 'synthetic-code', redirectUri: 'https://api.example.test/auth/callback' });
+  assert.equal(identity.providerSubjectId, '1'); assert.equal(identity.emailVerified, false);
+  const [member] = await db.select().from(members).where(eq(members.whoopId, '1'));
+  assert.equal(member.id, memberA); assert.equal(member.name, 'Existing Member'); assert.equal(member.connected, true);
+  const history = await db.select().from(records).where(eq(records.memberId, memberA));
+  assert.equal(history.length, 1); assert.equal(history[0].sourceId, '101');
+  assert.ok((await db.select().from(jobs).where(eq(jobs.memberId, memberA))).length > 0);
+});

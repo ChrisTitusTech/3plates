@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useRouter } from 'expo-router';
 import * as ExpoLinking from 'expo-linking';
 import { Linking, Text, View } from 'react-native';
@@ -18,6 +18,7 @@ export default function AccountScreen() {
   const [available, setAvailable] = useState<AuthProvider[]>([]);
   const [member, setMember] = useState<Member | null>(null);
   const [sync, setSync] = useState<Sync | null>(null);
+  const [whoopMessage, setWhoopMessage] = useState('');
   const [message, setMessage] = useState('Loading account settings...');
   const [busy, setBusy] = useState(false);
   const [loadedOwner, setLoadedOwner] = useState<string>();
@@ -28,25 +29,37 @@ export default function AccountScreen() {
   const [shareEnd, setShareEnd] = useState(localDay());
   const [shareDays, setShareDays] = useState('7');
   const owner = account?.user.id;
+  const activeOwner = useRef(owner);
+  activeOwner.current = owner;
   async function load() {
     if (!owner) return;
     const identities = await fitnessRequest<{ providers: AuthProvider[] }>('/users/me/identities', 'GET', undefined, owner);
+    if (activeOwner.current !== owner) return;
     setProviders(identities.providers);
+    setMember(null); setSync(null); setWhoopMessage('Loading WHOOP connection...'); setAvailable([]);
+    setLoadedOwner(owner);
     const response = await fetch(apiBaseUrl + '/auth/providers');
     if (!response.ok) throw new Error('Unable to load sign-in options.');
-    setAvailable((await response.json()).providers);
+    const options = await response.json();
+    if (activeOwner.current !== owner) return;
+    setAvailable(options.providers);
     if (identities.providers.includes('whoop')) {
+      try {
       const [profile, status] = await Promise.all([
         fitnessRequest<Member>('/users/me/whoop/profile', 'GET', undefined, owner),
         fitnessRequest<Sync>('/users/me/whoop/sync', 'GET', undefined, owner),
       ]);
+      if (activeOwner.current !== owner) return;
       setMember(profile); setSync(status);
+      setWhoopMessage('');
       if (profile.sharePolicy) {
         setShareKinds(profile.sharePolicy.kinds);
         setShareStart(profile.sharePolicy.start ?? ''); setShareEnd(profile.sharePolicy.end ?? '');
       }
+      } catch {
+        if (activeOwner.current === owner) setWhoopMessage('WHOOP is temporarily unavailable. Your other account controls remain available. Refresh status to retry.');
+      }
     } else { setMember(null); setSync(null); }
-    setLoadedOwner(owner);
   }
   useEffect(() => { if (owner) void load().then(() => setMessage('Account settings loaded.')).catch((e) => setMessage(e.message)); }, [owner]);
   async function action(run: () => Promise<void>, success: string) {
@@ -91,6 +104,7 @@ export default function AccountScreen() {
     </Card>
     {providers.includes('whoop') && <>
       <Card title="WHOOP connection">
+        {!!whoopMessage && <Text style={ui.notice}>{whoopMessage}</Text>}
         <Text style={ui.text}>{member?.connected ? 'Connected' : 'Disconnected or unavailable'}. Last sync: {sync?.lastSync ? new Date(sync.lastSync).toLocaleString() : 'Not yet complete'}.</Text>
         {sync?.jobs.map((job, i) => <Text key={i} style={ui.muted}>{job.kind}: {job.status}, {job.count} {job.mode ?? ''}{job.error ? ' - retry needed' : ''}</Text>)}
         <View style={ui.row}><Button title="Refresh status" disabled={busy} onPress={() => { void action(load, 'Status refreshed.'); }} />

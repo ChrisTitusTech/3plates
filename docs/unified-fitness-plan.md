@@ -31,13 +31,13 @@ Implementation is authorized. Publishing/deploying this integration requires exp
 
 # Implementation evidence
 
-2026-11-14: imported compatibility module passes 23 unit tests, 16 database tests,
+2026-11-14: imported compatibility module passes 23 unit tests, 17 database tests,
 and 26 desktop/mobile browser tests. Main workspace passes 88 contract/API/client
 tests, including identity isolation, sole-login protection, deletion retry, SQL
 concurrency/idempotency, offline restart/lost response/conflict handling, and
 workout association. Typechecking and API build pass. Expo production exports
 for web, Android, and iOS pass; these are not native compilation/device evidence.
-The unified browser suite passes twelve desktop/phone tests. Android release compilation with local debug
+The unified browser suite passes sixteen desktop/phone tests. Android release compilation with local debug
 signing passes (ARM64 and x86_64). Production API health and graceful shutdown pass with
 WHOOP enabled and disabled. Migration generation reports no drift. iOS native
 compilation requires a Mac; independent review is in progress. See [operations and acceptance](unified-fitness-operations.md)
@@ -47,3 +47,8 @@ Review pass one identified legacy cache migration, stale open-form versions, and
 Today WHOOP refresh defects. All were reproduced/fixed and covered by regression
 tests. Session transitions also clear mounted forms, and workout linking can load
 WHOOP records for historical dates. Follow-up review is in progress.
+
+Review pass two identified WHOOP outage handling in Account and same-range
+workout reloads. Both are fixed and covered on desktop and phone layouts. A
+synthetic OAuth/database test also verifies existing Gallant member/history
+adoption. The current automated suites total 170 passing tests.

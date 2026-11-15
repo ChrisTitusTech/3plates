@@ -24,7 +24,8 @@ export default function TrainingScreen() {
   const [zoneMinutes, setZoneMinutes] = useState('');
   const [limit, setLimit] = useState(20);
   const [error, setError] = useState('');
-  const whoop = useWhoop(account?.user.id, range.start, range.end);
+  const [revision, setRevision] = useState(0);
+  const whoop = useWhoop(account?.user.id, range.start, range.end, revision);
   const numeric = (text: string) => text.trim() && Number.isFinite(Number(text)) && Number(text) >= 0 ? Number(text) : undefined;
   const filters = { sport: sport || undefined, minMinutes: numeric(minMinutes), maxMinutes: numeric(maxMinutes),
     minStrain: numeric(minStrain), zone: zone || undefined, minZoneMinutes: numeric(zoneMinutes) };
@@ -41,7 +42,7 @@ export default function TrainingScreen() {
     <Card title="History range"><View style={ui.row}><Field label="Start (YYYY-MM-DD)" value={start} onChange={setStart} /><Field label="End (YYYY-MM-DD)" value={end} onChange={setEnd} /></View>
       <Button title="Load history" onPress={() => {
         if (!calendarDateSchema.safeParse(start).success || !calendarDateSchema.safeParse(end).success || start > end || Date.parse(end) - Date.parse(start) > 3660 * 86400000) { setError('Choose valid dates up to ten years apart.'); return; }
-        setRange({ start, end }); setLimit(20); setError('');
+        setRange({ start, end }); setRevision((value) => value + 1); setLimit(20); setError('');
       }} />{!!error && <Text role="alert" style={ui.notice}>{error}</Text>}
       <Text style={ui.text}>{workoutCount(manual, whoop.data?.details ?? [])} activities in the loaded range, with linked manual/WHOOP records counted once.</Text>
       <Text style={ui.muted}>{whoop.status}</Text>

@@ -4,6 +4,7 @@ import type { HealthLog, HealthMutation } from '@3plates/contract';
 const user = { id: '00000000-0000-4000-8000-000000000001', email: 'synthetic@example.test', displayName: 'Synthetic Athlete' };
 async function setup(page: Page, signedIn = true) {
   let offline = false;
+  let whoopUnavailable = false;
   let dashboardReads = 0;
   let activeUser = user;
   const logs = new Map<string, HealthLog>();
@@ -19,6 +20,7 @@ async function setup(page: Page, signedIn = true) {
     if (offline) return route.abort('failed');
     const send = (json: unknown, status = 200) => route.fulfill({ status, json, headers: { 'access-control-allow-origin': '*' } });
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    if (whoopUnavailable && url.pathname.startsWith('/users/me/whoop/')) return send({ error: 'WHOOP is unavailable' }, 503);
     switch (url.pathname) {
       case '/auth/providers': return send({ providers: ['google', 'apple', 'whoop'] });
       case '/users/me': return send(activeUser);
@@ -40,7 +42,7 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, dashboardReads: () => dashboardReads,
+  return { logs, errors, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
     async switchAccount() {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
       await page.evaluate((next) => {
@@ -157,5 +159,27 @@ test("switching accounts clears the previous account\'s open form", async ({ pag
   await page.getByLabel('Workout title').fill('Private unsaved workout');
   await f.switchAccount();
   await expect(page.getByLabel('Workout title')).toHaveValue('');
+  expect(f.errors).toEqual([]);
+});
+
+
+test('WHOOP outages leave reconnect, manual export, deletion, and sign-out controls available', async ({ page }) => {
+  const f = await setup(page); f.setWhoopUnavailable(true); await page.goto('/account');
+  await expect(page.getByText(/WHOOP is temporarily unavailable/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect WHOOP', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Export manual data (JSON)', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+  await page.getByLabel('Type DELETE to confirm account deletion').fill('DELETE');
+  await expect(page.getByRole('button', { name: 'Delete my account', exact: true })).toBeEnabled();
+  f.setWhoopUnavailable(false); await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sync recent history', exact: true })).toBeEnabled();
+  expect(f.errors).toEqual([]);
+});
+
+test('loading the same workout history dates retries WHOOP', async ({ page }) => {
+  const f = await setup(page); await page.goto('/training');
+  await expect.poll(f.dashboardReads).toBe(1);
+  await page.getByRole('button', { name: 'Load history', exact: true }).click();
+  await expect.poll(f.dashboardReads).toBe(2);
   expect(f.errors).toEqual([]);
 });

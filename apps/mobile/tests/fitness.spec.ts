@@ -324,6 +324,7 @@ test('saved Settings theme updates the fitness screens and preserves other prefe
   await page.goto('/log');
   await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
   await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Theme: Light', exact: true })).toHaveAttribute('aria-checked', 'true');
   await page.goto('/preferences');
   await expect(page.getByRole('button', { name: 'imperial', exact: true })).toHaveCSS('background-color', 'rgb(20, 43, 56)');
   await expect(page.getByLabel('Reminder time')).toHaveValue('08:30');
@@ -618,5 +619,49 @@ test('legacy workouts leave loading when another tab signs out during a request'
     await page.evaluate(() => { localStorage.removeItem('@3plates/session-token'); window.dispatchEvent(new StorageEvent('storage', { key: '@3plates/session-token' })); });
     await expect(page).toHaveURL(/\/sign-in$/);
   } finally { release(); }
+  expect(f.errors).toEqual([]);
+});
+
+test('an older preference save cannot erase another tabs newer offline settings', async ({ page, context }) => {
+  const first = await setup(page); await page.clock.install(); await page.goto('/account');
+  const second = await context.newPage(); const other = await setup(second); await second.clock.install(); await second.goto('/account');
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
+  await expect(second.getByRole('radio', { name: 'Theme: Light', exact: true })).toBeEnabled();
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  await page.route('**/users/me/preferences', async (route) => {
+    if (route.request().method() === 'PUT') { entered(); await wait; }
+    await route.fallback();
+  });
+  try {
+    await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click(); await started;
+    other.setOffline(true);
+    await second.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
+    await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending?.some((lock) => lock.name?.endsWith('/operation')))).toBe(true);
+    release();
+    const queueKey = '@3plates/pending-mutations/user/' + user.id;
+    await expect.poll(() => second.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').map((row: { payload: Preferences }) => row.payload.theme), queueKey)).toEqual(['light']);
+    expect(await second.evaluate((id) => JSON.parse(localStorage.getItem('@3plates/cache/preferences/user/' + id)!).value.theme, user.id)).toBe('light');
+    other.setOffline(false); await second.reload();
+    await expect.poll(() => other.preferences.get(user.id)?.theme).toBe('light');
+    await expect(second.getByRole('radio', { name: 'Theme: Light', exact: true })).toHaveAttribute('aria-checked', 'true');
+    expect(first.errors).toEqual([]); expect(other.errors).toEqual([]);
+  } finally { release(); await second.close(); }
+});
+
+test('legacy workout history and open form clear when another account signs in', async ({ page }) => {
+  const f = await setup(page);
+  const entry = { id: '00000000-0000-4000-8000-000000000099', type: 'crossfit', date: '2026-11-14',
+    distance: '', duration: '', wodName: 'Private first account workout', workoutDetails: 'Private notes', scale: 'rx', score: '10 rounds', createdAt: '2026-11-14T12:00:00Z' };
+  await page.route('**/users/me/manual-workouts', (route) => route.fulfill({ json: { workouts: route.request().headers().authorization === 'Bearer synthetic-session' ? [entry] : [] } }));
+  await page.goto('/workouts');
+  await expect(page.getByText(/Private first account workout/)).toBeVisible();
+  await page.getByRole('button', { name: 'Select Crossfit workout type', exact: true }).click();
+  await page.getByLabel('WOD name or type').fill('Private unsaved form');
+  await f.switchAccount();
+  await expect(page.getByText(/Private first account workout/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Select Crossfit workout type', exact: true }).click();
+  await expect(page.getByLabel('WOD name or type')).toHaveValue('');
   expect(f.errors).toEqual([]);
 });

@@ -855,7 +855,7 @@ test('enqueue and flush keep their original queue key when the session switches 
       return value;
     } };
     const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
-      registerDevice: async () => { if (operation === 'flush') switchOnCheck = true; throw new Error('Network request failed'); } });
+      registerDevice: async () => { if (operation === 'flush') { switchOnCheck = true; await storage.getItem('@3plates/session-token'); } throw new Error('Network request failed'); } });
     __setApiTestAdapters({ storage, client: client as never });
     await setSessionToken('alice'); await fetchMe(); await getPendingMutationCount();
     const device: NotificationDevice = { platform: 'ios', pushToken: 'alice-push-token' };
@@ -863,7 +863,7 @@ test('enqueue and flush keep their original queue key when the session switches 
     const bobQueue = JSON.stringify([{ ...queued, id: 'bob-change', payload: { ...device, pushToken: 'bob-push-token' } }]);
     await backing.setItem(bobKey, bobQueue);
     armed = true;
-    if (operation === 'flush') { await backing.setItem(aliceKey, JSON.stringify([queued])); await flushPendingMutations(); }
+    if (operation === 'flush') { await backing.setItem(aliceKey, JSON.stringify([queued])); await assert.rejects(flushPendingMutations(), /Network request failed/); }
     else await registerDevice(device);
     assert.equal(await getSessionToken(), 'bob');
     assert.equal(await backing.getItem(bobKey), bobQueue);
@@ -1001,4 +1001,63 @@ test('flush checkpoints successes before a later 401 and preserves new concurren
   assert.equal(await getPendingMutationCount(), 2);
   online = true; authorized = true; await flushPendingMutations();
   assert.equal(progressWrites, 1); assert.equal(await getPendingMutationCount(), 0);
+});
+
+test('a flush waiting behind a preference operation cannot adopt a newer account', async (t) => {
+  const storage = createMemoryStorage(); let activeUser = createBaseUser(); let progressWrites = 0;
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: activeUser }),
+    updatePreferences: async (input: { body: Preferences }) => { entered(); await wait; return { status: 200, body: input.body }; },
+    updateProgress: async () => { progressWrites++; return { status: 200, body: createProgress() }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const preference = assert.rejects(updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '07:00' }), /active account changed/);
+  await started;
+  const flush = assert.rejects(flushPendingMutations(), /active account changed/);
+  await new Promise((resolve) => setImmediate(resolve));
+  await setSessionToken('bob'); activeUser = { ...activeUser, id: 'bob' }; await fetchMe();
+  await storage.setItem('@3plates/pending-mutations/user/bob', JSON.stringify([{ id: 'bob-progress', type: 'updateProgress', payload: createProgress(), createdAt: new Date().toISOString() }]));
+  release(); await preference; await flush;
+  assert.equal(progressWrites, 0); assert.equal(await getPendingMutationCount(), 1);
+});
+
+test('queue flush deadlines release waiting local writes and retain unacknowledged work', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] }); t.after(__resetApiTestAdapters);
+  for (const phase of ['owner', 'mutation']) {
+    const storage = createMemoryStorage(); let flushing = false; let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const stall = (signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Timed out', 'AbortError')), { once: true }); entered();
+    });
+    const client = createClientOverrides({
+      me: async (input: { fetchOptions?: { signal: AbortSignal } }) => {
+        if (flushing && phase === 'owner') return stall(input.fetchOptions!.signal);
+        return { status: 200, body: createBaseUser() };
+      },
+      updateProgress: async () => ({ status: 200, body: createProgress() }),
+      registerDevice: async (input: { fetchOptions?: { signal: AbortSignal } }) => {
+        if (input.fetchOptions) return stall(input.fetchOptions.signal);
+        throw new Error('Network request failed');
+      },
+    });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('deadline-' + phase); await fetchMe();
+    const key = '@3plates/pending-mutations/user/user-1';
+    await storage.setItem(key, JSON.stringify([
+      { id: 'progress', type: 'updateProgress', payload: createProgress(), createdAt: new Date().toISOString() },
+      { id: 'device', type: 'registerDevice', payload: { platform: 'ios', pushToken: 'old' }, createdAt: new Date().toISOString() },
+    ]));
+    flushing = true; const flush = assert.rejects(flushPendingMutations(), { name: 'AbortError' });
+    await started;
+    const local = registerDevice({ platform: 'android', pushToken: 'new' });
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(10000); await flush; await local;
+    const queue = JSON.parse((await storage.getItem(key))!);
+    assert.equal(queue.length, phase === 'owner' ? 3 : 2);
+    assert.ok(queue.some((item: { id: string }) => item.id === 'device'));
+    await clearSession(); await setSessionToken('next-' + phase);
+    assert.equal(await getSessionToken(), 'next-' + phase);
+  }
 });

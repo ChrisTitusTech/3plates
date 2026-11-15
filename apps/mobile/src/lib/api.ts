@@ -431,12 +431,13 @@ async function removePendingMutationsByType(type: PendingMutation['type'], token
   });
 }
 
-async function executePendingMutation(mutation: PendingMutation, token: string) {
+async function executePendingMutation(mutation: PendingMutation, token: string, signal: AbortSignal) {
   const extraHeaders = buildAuthHeaders(token);
 
   if (mutation.type === 'updateProgress') {
     const response = await contractClient.updateProgress({
       extraHeaders,
+      fetchOptions: { signal },
       body: mutation.payload,
     });
 
@@ -450,6 +451,7 @@ async function executePendingMutation(mutation: PendingMutation, token: string) 
   if (mutation.type === 'updatePreferences') {
     const response = await contractClient.updatePreferences({
       extraHeaders,
+      fetchOptions: { signal },
       body: mutation.payload,
     });
 
@@ -462,6 +464,7 @@ async function executePendingMutation(mutation: PendingMutation, token: string) 
 
   const response = await contractClient.registerDevice({
     extraHeaders,
+    fetchOptions: { signal },
     body: mutation.payload,
   });
 
@@ -480,7 +483,13 @@ const preferenceListeners = new Set<(preferences: Preferences) => void>();
 let preferenceWriteRevision = 0;
 let preferenceWork: Promise<unknown> = Promise.resolve();
 function serializePreferences<T>(action: () => Promise<T>) {
-  const next = preferenceWork.then(action, action);
+  const run = async () => {
+    // Distinct from the pending-queue lock: include the request and its cache
+    // acknowledgement, so another tab cannot queue a newer value mid-save.
+    const key = await accountStorageKey(storageKeys.preferences);
+    return withQueue(`${key}/operation`, action);
+  };
+  const next = preferenceWork.then(run, run);
   preferenceWork = next.catch(() => undefined);
   return next;
 }
@@ -1115,11 +1124,11 @@ export async function registerDevice(device: NotificationDevice) {
   }
 }
 
-export function flushPendingMutations() {
-  return serializePreferences(flushPendingMutationsSerial);
-}
-async function flushPendingMutationsSerial() {
+export async function flushPendingMutations() {
   const token = await getSessionToken();
+  return serializePreferences(() => flushPendingMutationsSerial(token));
+}
+async function flushPendingMutationsSerial(token: string | null) {
   if (!token) {
     return {
       flushed: 0,
@@ -1130,50 +1139,57 @@ async function flushPendingMutationsSerial() {
   const key = await accountStorageKey(storageKeys.pendingMutations);
   await assertCurrentSession(token);
   return withQueue(key, async () => {
-    await assertCurrentSession(token);
-    const queue = coalescePendingMutations(await readPendingMutations(key));
-    if (queue.length === 0) {
-      return {
-        flushed: 0,
-        remaining: 0,
-      };
-    }
-
-    const owner = await getCachedUser();
-    if (owner) {
-      const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token) });
-      if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+    // One deadline covers owner validation and the complete locked batch.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
       await assertCurrentSession(token);
-    }
-
-    let remaining = queue;
-    await writePendingMutations(key, remaining);
-    let flushed = 0;
-
-    for (const mutation of queue) {
-      await assertCurrentSession(token);
-      try {
-        await executePendingMutation(mutation, token);
-        flushed += 1;
-      } catch (error) {
-        if (error instanceof ApiRequestError && error.status === 401) throw error;
-        if (isNetworkFailure(error) || (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500))) {
-          continue;
-        }
-
-        // Drop non-retriable mutations and continue with later entries.
+      const queue = coalescePendingMutations(await readPendingMutations(key));
+      if (queue.length === 0) {
+        return {
+          flushed: 0,
+          remaining: 0,
+        };
       }
-      remaining = remaining.filter((item) => item.id !== mutation.id);
-      // Persist acknowledged work before the next request can fail (including 401).
+
+      const owner = await getCachedUser();
+      if (owner) {
+        const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
+        if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+        await assertCurrentSession(token);
+      }
+
+      let remaining = queue;
       await writePendingMutations(key, remaining);
-    }
+      let flushed = 0;
 
-    await assertCurrentSession(token);
+      for (const mutation of queue) {
+        await assertCurrentSession(token);
+        controller.signal.throwIfAborted();
+        try {
+          await executePendingMutation(mutation, token, controller.signal);
+          flushed += 1;
+        } catch (error) {
+          if (controller.signal.aborted || isNetworkFailure(error)) throw error;
+          if (error instanceof ApiRequestError && error.status === 401) throw error;
+          if (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500)) {
+            continue;
+          }
 
-    return {
-      flushed,
-      remaining: remaining.length,
-    };
+          // Drop non-retriable mutations and continue with later entries.
+        }
+        remaining = remaining.filter((item) => item.id !== mutation.id);
+        // Persist acknowledged work before the next request can fail (including 401).
+        await writePendingMutations(key, remaining);
+      }
+
+      await assertCurrentSession(token);
+
+      return {
+        flushed,
+        remaining: remaining.length,
+      };
+    } finally { clearTimeout(timeout); }
   });
 }
 

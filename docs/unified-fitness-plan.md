@@ -228,3 +228,57 @@ Independent Codex review completed with no actionable regressions in this batch,
 including the new draft store. Its repeated 54 mobile and 7 contract tests,
 mobile typecheck, and whitespace checks passed. Remote CI and reviews still need
 to complete on the published head before merge.
+
+Follow-up Codex findings align workout association choices with the dashboard's
+cycle/main-sleep date projection before filtering and limiting. Preference
+operations hold a separate account-scoped Web Lock across the request, queue
+acknowledgement, and cache update so an older tab cannot erase a newer queued
+setting. Local serialization remains the native fallback.
+
+Health-log uploads stop immediately on transport failures, timeouts, 401, and
+429. Other item-specific HTTP failures can continue within a 30-second pass
+budget checked between requests; the current request retains its own deadline.
+Budget exhaustion moves unattempted record groups first for the next pass while
+preserving each record's version ordering and every mutation ID. Local saves,
+snapshots, and confirmed discard can proceed after the bounded pass.
+
+Validation for these fixes: 7 contract, 71 API, 57 mobile, 25 WHOOP unit,
+31 WHOOP database, and 66 unified desktop/phone browser tests pass without skips.
+The unchanged 34 legacy browser, 10 operations, and 5 web-deployment checks retain
+passing evidence (306 total). Workspace/WHOOP typechecks, WHOOP lint/build, API
+build, web/Android/iOS exports, and dependency audit pass. The Settings browser
+test now waits for the confirmed saved theme before full-page navigation; both
+layouts pass after correcting that premature navigation. Database coverage
+compares association dates directly with dashboard history across midnight and
+main-sleep cycle anchoring. Outage tests verify local work resumes after one
+transport failure and that timed passes rotate unattempted record groups without
+reordering versions. No VPS deployment or native-device acceptance was performed.
+
+Additional CodeRabbit findings in this batch give legacy mutation flushing one
+10-second deadline covering owner validation and every request under its account
+queue lock. Transport failures end the pass; acknowledged mutations stay removed
+and unacknowledged work remains queued. Tests exercise owner lookup and a later
+mutation timing out while new local work waits, then prove cleanup and sign-in
+can proceed.
+
+Draft restoration now validates all form, exercise, unit, and edit-version fields.
+In-process writes and clear tombstones take priority over stale browser storage
+when browser writes/removals fail. The legacy Workouts screen remounts for each
+session generation, clearing history and open input and preventing old async
+completions from repopulating another account's screen. Regressions cover failed
+draft storage, malformed-but-valid JSON, and an account switch with visible
+manual history and an unsaved legacy form.
+
+Final evidence including the four additional findings: 60 mobile tests and 68
+unified browser tests pass. Combined with the unchanged 7 contract, 71 API,
+25 WHOOP unit, 31 WHOOP database, 34 legacy browser, 10 operations, and 5
+web-deployment checks, this is 311 passing tests. Final workspace typechecks and
+all-platform Expo exports pass. The earlier queue-key regression now expects a
+transport failure to end its pass while verifying both account queues remain
+isolated. An initial independent review found no issues in the first three fixes;
+the expanded seven-finding batch requires a fresh independent review before push.
+
+The fresh independent Codex review of the complete seven-finding batch finished
+with no actionable regressions, including the new draft tests. Its repeated
+60 mobile tests, mobile typecheck, and whitespace checks pass. CI and hosted
+reviews must still complete on the published commit before merge.

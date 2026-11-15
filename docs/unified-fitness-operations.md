@@ -328,3 +328,22 @@ failures retain only outstanding work. Item-specific retryable health-log errors
 do not prevent other records from uploading. Shared WHOOP reads use authorization
 and history from the same database snapshot. Empty optional WHOOP overrides fall
 back to standalone environment variables instead of preventing startup.
+
+Workout association choices now use dashboard-anchored dates, including workouts
+after midnight within the previous day's WHOOP cycle. Sharing and manual links
+continue to enforce account ownership. Browser preference operations share an
+account-scoped lock through the network response and local acknowledgement.
+
+During a transport outage, health synchronization stops after the first failed
+request rather than waiting for every pending entry to time out. Item-specific
+HTTP failures can try other records, but a 30-second budget checked between
+requests bounds each pass (the in-flight request retains its own deadline).
+Unattempted record groups go first on the next pass; versions within a record
+stay ordered. Pending mutations remain durable for subsequent retries.
+
+Legacy queue flushing now shares a 10-second deadline across account validation
+and all mutation requests while its lock is held. Timeouts retain unacknowledged
+work and release local writes and session cleanup. Unsaved draft restoration
+validates its shape; in-process edits and clear markers override stale browser
+storage after a storage failure. Legacy Workouts history and forms reset with
+every authenticated session generation.

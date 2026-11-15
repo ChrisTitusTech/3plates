@@ -40,10 +40,14 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
 const pageSize = 10;
 
 export default function WorkoutsScreen() {
+  const sessionReady = useRequireSession();
+  return sessionReady ? <AuthenticatedWorkoutsScreen key={sessionReady} sessionReady={sessionReady} /> : null;
+}
+
+function AuthenticatedWorkoutsScreen({ sessionReady }: { sessionReady: number }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
-  const sessionReady = useRequireSession();
   const [mode, setMode] = useState<WorkoutMode>('active_recovery');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [source, setSource] = useState<'network' | 'cache' | null>(null);

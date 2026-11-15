@@ -33,9 +33,20 @@ export function createHealthSync(options: {
   async function sendPending(state: State) {
     const blocked = new Set<string>();
     let retryFailure: unknown;
+    const deadline = Date.now() + 30000;
+    const attempted = new Set<string>();
     for (const pending of [...state.pending]) {
       const id = pending.mutation.id;
       if (pending.error || blocked.has(id)) { blocked.add(id); continue; }
+      if (Date.now() >= deadline) {
+        // Resume with unattempted records next time, without reordering any
+        // record's own versions. A slow failed record must not starve others.
+        state.pending = [...state.pending.filter((item) => !attempted.has(item.mutation.id)),
+          ...state.pending.filter((item) => attempted.has(item.mutation.id))];
+        await persist(state);
+        throw retryFailure ?? new Error('Sync paused to keep local logging available. Remaining entries will retry.');
+      }
+      attempted.add(id);
       try {
         const saved = healthLogSchema.parse(await options.request('/users/me/logs', pending.mutation));
         state.pending = state.pending.filter((item) => item.mutation.mutationId !== pending.mutation.mutationId);
@@ -49,9 +60,11 @@ export function createHealthSync(options: {
           await persist(state);
           continue;
         }
-        // Authorization failures stop all uploads. Other transient failures only
-        // block this record, retaining its exact mutation ID for a safe retry.
-        if (error instanceof SyncFailure && error.status === 401) throw error;
+        // Connection failures/timeouts and authorization/rate limits affect the
+        // whole pass. Do not hold the local-data lock through one timeout per
+        // queued record. Item-specific HTTP failures may try independent records
+        // within the pass budget, retaining exact mutation IDs for safe retries.
+        if (!(error instanceof SyncFailure) || error.status === 401 || error.status === 429) throw error;
         blocked.add(id);
         retryFailure ??= error;
       }

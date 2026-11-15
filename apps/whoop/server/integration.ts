@@ -1,6 +1,6 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
-import { detail } from './domain.js';
+import { makeDetails, type Detail } from './domain.js';
 import { buildApp } from './app.js';
 import { config, origin, scopes } from './config.js';
 import { db, client } from './db.js';
@@ -99,8 +99,13 @@ export async function closeIntegration() {
 export async function workoutChoices(subject: string, date?: string) {
   const rows = await db.select({ record: records }).from(records)
     .innerJoin(members, eq(records.memberId, members.id))
-    .where(and(eq(members.whoopId, subject), eq(records.kind, 'workout'), eq(records.deleted, false), date ? eq(records.localDate, date) : undefined))
-    .orderBy(desc(records.start)).limit(200);
-  return rows.map(({ record }) => ({ id: record.sourceId, date: record.localDate,
-    start: record.start.toISOString(), label: `${record.localDate} ${detail(record).sport ?? 'Workout'}` }));
+    .where(and(eq(members.whoopId, subject), eq(records.deleted, false)));
+  // Projection needs cycles and their main sleep/recovery relationships. Apply
+  // the date filter and limit after the same projection used by dashboard history.
+  return makeDetails(rows.map(({ record }) => record))
+    .filter((record): record is Detail & { sourceId: string } => record.kind === 'workout' && typeof record.sourceId === 'string' && (!date || record.date === date))
+    .sort((a, b) => b.start.localeCompare(a.start) || a.sourceId.localeCompare(b.sourceId))
+    .slice(0, 200)
+    .map((record) => ({ id: record.sourceId, date: record.date,
+      start: record.start, label: `${record.date} ${record.sport ?? 'Workout'}` }));
 }

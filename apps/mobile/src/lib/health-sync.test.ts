@@ -234,3 +234,38 @@ test('transient failure blocks only its record and retries the same mutation ID'
   assert.deepEqual(attempts[2], attempts[0]);
   assert.equal((await engine.snapshot()).pending, 0);
 });
+
+test('one connection timeout releases queued local work without retrying every record', async () => {
+  const values = new Map<string, string>(); let attempts = 0;
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const engine = createHealthSync({ userId: 'outage', uuid: randomUUID,
+    storage: { async getItem(key) { return values.get(key) ?? null; }, async setItem(key, value) { values.set(key, value); }, async removeItem(key) { values.delete(key); } },
+    request: async () => { attempts++; entered(); await wait; throw new DOMException('Request timed out', 'AbortError'); } });
+  for (let i = 0; i < 100; i++) await engine.save(water());
+  const sync = assert.rejects(engine.synchronize(), { name: 'AbortError' });
+  await started;
+  const save = engine.save(water(500));
+  const snapshot = engine.snapshot();
+  release(); await sync; await save;
+  assert.equal(attempts, 1); assert.equal((await snapshot).pending, 101);
+  await engine.clear(true); assert.equal((await engine.snapshot()).pending, 0);
+});
+
+test('repeated HTTP failures stop at the pass time budget and leave local logging usable', async (t) => {
+  const values = new Map<string, string>(); const attempts: string[] = [];
+  t.mock.timers.enable({ apis: ['Date'], now: 100000 });
+  const engine = createHealthSync({ userId: 'slow-http', uuid: randomUUID,
+    storage: { async getItem(key) { return values.get(key) ?? null; }, async setItem(key, value) { values.set(key, value); }, async removeItem(key) { values.delete(key); } },
+    request: async (_path, mutation) => { attempts.push(mutation!.id); t.mock.timers.tick(16000); throw new SyncFailure(503, 'Slow service'); } });
+  const first = await engine.save(water()); await engine.save(water(400), first);
+  for (let i = 0; i < 9; i++) await engine.save(water());
+  await assert.rejects(engine.synchronize(), /Slow service/);
+  assert.equal(attempts.length, 2);
+  await assert.rejects(engine.synchronize(), /Slow service/);
+  assert.equal(attempts.length, 4); assert.equal(new Set(attempts).size, 4);
+  const retained = JSON.parse(values.get('@3plates/health/slow-http')!).pending as Array<{ mutation: HealthMutation }>;
+  assert.deepEqual(retained.filter((item) => item.mutation.id === first).map((item) => item.mutation.expectedVersion), [0, 1]);
+  await engine.save(water(500)); assert.equal((await engine.snapshot()).pending, 12);
+});

@@ -961,3 +961,24 @@ test("shared history revalidates policy and token in its data snapshot", { timeo
     await db.delete(records).where(eq(records.sourceId, '909'));
   }
 });
+
+test('workout association choices use the same anchored dates as dashboard history', async () => {
+  const { workoutChoices } = await import('../server/integration.js');
+  await upsert(db, memberA, 'cycle', { id: 303, start: '2026-02-10T22:00:00Z', end: '2026-02-12T08:00:00Z', timezone_offset: '+00:00', score_state: 'SCORED', score: { strain: 12 } });
+  await upsert(db, memberA, 'sleep', { id: 'anchor-sleep', cycle_id: 303, start: '2026-02-10T22:00:00Z', end: '2026-02-11T07:00:00Z', timezone_offset: '+00:00', nap: false, score_state: 'SCORED', score: { sleep_performance_percentage: 95 } });
+  await upsert(db, memberA, 'workout', { id: 'midnight-workout', start: '2026-02-12T00:15:00Z', end: '2026-02-12T01:00:00Z', timezone_offset: '+00:00', sport_name: 'Cycling', score_state: 'SCORED', score: { strain: 8 } });
+  // A workout outside the cycle falls back to its raw local date.
+  await upsert(db, memberA, 'workout', { id: 'later-workout', start: '2026-02-12T12:00:00Z', end: '2026-02-12T13:00:00Z', timezone_offset: '+00:00', sport_name: 'Running', score_state: 'SCORED', score: { strain: 8 } });
+  const response = await app.inject({ url: '/api/me/dashboard?start=2026-02-11&end=2026-02-12', headers: { cookie: cookieA } });
+  assert.equal(response.statusCode, 200);
+  const details = response.json().details.filter((row: { kind: string }) => row.kind === 'workout');
+  for (const date of ['2026-02-11', '2026-02-12']) {
+    const choices = await workoutChoices('1', date);
+    assert.deepEqual(choices.map((row) => row.id), details.filter((row: { date: string }) => row.date === date).map((row: { sourceId: string }) => row.sourceId));
+    assert.equal(choices.length, 1);
+    assert.ok(choices[0].label.startsWith(date));
+    assert.equal(choices[0].date, date);
+  }
+  assert.equal((await workoutChoices('1', '2026-02-11'))[0].id, 'midnight-workout');
+  assert.deepEqual(await workoutChoices('2', '2026-02-11'), []);
+});

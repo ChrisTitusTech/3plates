@@ -264,8 +264,8 @@ test("refresh rotation is serialized across concurrent requests and revocation p
     });
   };
   assert.deepEqual(
-    await Promise.all([accessToken(memberA), accessToken(memberA)]),
-    ["rotated", "rotated"],
+    await Promise.all(Array.from({ length: 5 }, () => accessToken(memberA))),
+    Array(5).fill("rotated"),
   );
   assert.equal(calls, 1);
   globalThis.fetch = async () => new Response("", { status: 400 });
@@ -274,6 +274,37 @@ test("refresh rotation is serialized across concurrent requests and revocation p
   assert.equal(m.connected, false);
   assert.equal(m.tokens, null);
 });
+test("refresh uses the last available pool connection and accounts for provider failures", { timeout: 10000 }, async (t) => {
+  await db.update(members).set({ tokens: encrypt({ access_token: "old", refresh_token: "refresh", expires_at: 0 }, config.TOKEN_KEY) }).where(eq(members.id, memberA));
+  const held = await Promise.all(Array.from({ length: 4 }, () => client.reserve()));
+  t.after(() => { for (const connection of held) connection.release(); });
+  globalThis.fetch = async () => new Response("", { status: 503 });
+  await assert.rejects(accessToken(memberA), (error) => error instanceof ApiError && error.status === 503);
+  const [budget] = await db.select().from(budgets).where(eq(budgets.key, "minute"));
+  assert.equal(budget.count, 1);
+  globalThis.fetch = async () => Response.json({ access_token: "rotated", refresh_token: "rotated-refresh", expires_in: 3600 });
+  assert.equal(await accessToken(memberA), "rotated");
+});
+
+test("slow token refresh does not hold the shared budget lock", { timeout: 10000 }, async (t) => {
+  await db.update(members).set({ tokens: encrypt({ access_token: "old", refresh_token: "refresh", expires_at: 0 }, config.TOKEN_KEY) }).where(eq(members.id, memberA));
+  let markEntered!: () => void;
+  let releaseFetch!: () => void;
+  const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+  const release = new Promise<void>((resolve) => { releaseFetch = resolve; });
+  globalThis.fetch = async () => {
+    markEntered();
+    await release;
+    return Response.json({ access_token: "rotated", refresh_token: "rotated-refresh", expires_in: 3600 });
+  };
+  const refresh = accessToken(memberA);
+  t.after(async () => { releaseFetch(); await refresh; });
+  await entered;
+  await reserveRequest();
+  releaseFetch();
+  assert.equal(await refresh, "rotated");
+});
+
 test("pagination checkpoints survive retries and upserts do not duplicate data", async () => {
   await enqueueSync(db, memberA, "full");
   let [job] = await db

@@ -83,6 +83,22 @@ test('imperial forms round-trip weights, distance, hydration, and sleep offsets'
   assert.throws(() => formEntry('hydration', { ...form, amount: '-4' }, [], false));
 });
 
+test('goal targets convert selected units on save and edit without changing other metrics', () => {
+  for (const [metric, target, factor] of [
+    ['weight_kg', 180, 0.45359237], ['hydration_ml', 64, 29.5735295625],
+    ['calories', 2000, 1], ['protein_grams', 120, 1], ['workouts_per_week', 4, 1],
+  ] as const) {
+    for (const imperial of [true, false]) {
+      const entry = formEntry('goal', { ...newLogForm(), metric, target: String(target) }, [], imperial);
+      assert.equal(entry.kind, 'goal'); if (entry.kind !== 'goal') continue;
+      assert.equal(entry.details.target, target * (imperial ? factor : 1));
+      const edit = entryForm(entry, imperial);
+      assert.equal(edit.form.target, String(target));
+      assert.deepEqual(formEntry('goal', edit.form, [], imperial), entry);
+    }
+  }
+});
+
 test('workout totals deduplicate links only when imports or linked manual records exist', () => {
   const entry = formEntry('workout', { ...newLogForm(), title: 'Ride', durationMinutes: '30', linkedWhoopWorkoutId: 'whoop-1' }, [], false);
   const log: HealthLog = { id: randomUUID(), version: 1, entry, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };

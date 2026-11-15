@@ -23,7 +23,7 @@ import {
   users,
   workouts,
 } from '@3plates/db';
-import { and, asc, desc, eq, sql, isNull, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, sql, isNull, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -54,7 +54,7 @@ export interface UserStateStore {
   listIdentities(userId: string): Promise<Array<{ provider: string; providerSubjectId: string }>>;
   unlinkIdentity(userId: string, provider: string, beforeRemove?: (subject: string) => Promise<void>): Promise<void>;
   requestDeletion(userId: string): Promise<void>;
-  pendingDeletions(): Promise<string[]>;
+  pendingDeletions(afterId?: string): Promise<string[]>;
   deleteAccount(userId: string): Promise<void>;
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
   getUserById(userId: string): Promise<UserRecord | null>;
@@ -315,8 +315,10 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         await tx.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
       });
     },
-    async pendingDeletions() {
-      return (await db.select({ id: users.id }).from(users).where(isNotNull(users.deletionRequestedAt)).limit(100)).map((row) => row.id);
+    async pendingDeletions(afterId) {
+      return (await db.select({ id: users.id }).from(users)
+        .where(and(isNotNull(users.deletionRequestedAt), afterId ? gt(users.id, afterId) : undefined))
+        .orderBy(asc(users.id)).limit(100)).map((row) => row.id);
     },
     async deleteAccount(userId) { await db.delete(users).where(and(eq(users.id, userId), isNotNull(users.deletionRequestedAt))); },
 
@@ -896,7 +898,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
       identitiesByKey.delete(identity[0]);
     },
     async requestDeletion(userId) { deletionRequests.add(userId); },
-    async pendingDeletions() { return [...deletionRequests]; },
+    async pendingDeletions(afterId) { return [...deletionRequests].sort().filter((id) => !afterId || id > afterId).slice(0, 100); },
     async deleteAccount(userId) {
       if (!deletionRequests.has(userId)) return;
       for (const [key, id] of identitiesByKey) if (id === userId) identitiesByKey.delete(key);

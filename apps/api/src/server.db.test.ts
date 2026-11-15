@@ -854,3 +854,20 @@ dbTest('identity removal refuses sole login and revokes sessions; equal verified
     assert.equal((await store.listIdentities(session.user.id)).length, 1);
   });
 });
+
+dbTest('pending account deletions paginate past retained failures and removed rows', async () => {
+  await withDbApp(async ({ store }) => {
+    const { db, close } = createDatabaseClient(requireDatabaseUrl());
+    try {
+      const ids = Array.from({ length: 205 }, () => randomUUID()).sort();
+      await db.insert(users).values(ids.map((id) => ({ id, email: null, deletionRequestedAt: new Date() })));
+      const first = await store.pendingDeletions();
+      assert.deepEqual(first, ids.slice(0, 100));
+      await store.deleteAccount(first[0]);
+      const second = await store.pendingDeletions(first.at(-1));
+      assert.deepEqual(second, ids.slice(100, 200));
+      assert.deepEqual(await store.pendingDeletions(second.at(-1)), ids.slice(200));
+      assert.deepEqual(await store.pendingDeletions(ids.at(-1)), []);
+    } finally { await close(); }
+  });
+});

@@ -121,3 +121,21 @@ test('durable account deletion waits for WHOOP cleanup and resumes on the next s
   await restarted.ready(); assert.deepEqual(await f.store.pendingDeletions(), []);
   assert.deepEqual(await f.store.listIdentities(user.id), []); assert.equal(await f.store.getUserById(user.id), null);
 });
+
+test('deletion cleanup advances beyond a full batch of failed WHOOP accounts', async (t) => {
+  const f = fixture(); t.after(() => f.app.close());
+  const ids: string[] = [];
+  for (let i = 0; i < 101; i++) {
+    const { user } = await f.store.resolveOAuthIdentity({ provider: 'whoop', providerSubjectId: `pending-${i}`, email: null, emailVerified: false, displayName: null });
+    ids.push(user.id); await f.store.requestDeletion(user.id);
+  }
+  ids.sort();
+  // The last account has no external data and must not wait for failing accounts.
+  f.store.listIdentities = async (id) => id === ids[100] ? [] : [{ provider: 'whoop', providerSubjectId: id }];
+  let attempts = 0;
+  f.whoop.request = async () => { attempts++; return { status: 503, body: '{}', contentType: 'application/json' }; };
+  await f.app.ready();
+  assert.equal(attempts, 100);
+  assert.equal(await f.store.getUserById(ids[100]), null);
+  assert.deepEqual(await f.store.pendingDeletions(), ids.slice(0, 100));
+});

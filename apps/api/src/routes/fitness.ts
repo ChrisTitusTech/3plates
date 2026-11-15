@@ -95,15 +95,21 @@ export async function registerFitnessRoutes(app: FastifyInstance, store: UserSta
     if (deleting) return;
     deleting = true;
     try {
-      for (const userId of await store.pendingDeletions()) {
-        try {
-          const identity = (await store.listIdentities(userId)).find((value) => value.provider === 'whoop');
-          if (identity) {
-            const result = await integration().request(identity.providerSubjectId, 'delete', 'DELETE', {}, {});
-            if (result.status !== 200 && result.status !== 401) continue;
-          }
-          await store.deleteAccount(userId);
-        } catch { app.log.warn({ event: 'account_cleanup_retry' }, 'Account cleanup will retry.'); }
+      let cursor: string | undefined;
+      while (true) {
+        const batch = await store.pendingDeletions(cursor);
+        if (!batch.length) break;
+        cursor = batch[batch.length - 1];
+        for (const userId of batch) {
+          try {
+            const identity = (await store.listIdentities(userId)).find((value) => value.provider === 'whoop');
+            if (identity) {
+              const result = await integration().request(identity.providerSubjectId, 'delete', 'DELETE', {}, {});
+              if (result.status !== 200 && result.status !== 401) continue;
+            }
+            await store.deleteAccount(userId);
+          } catch { app.log.warn({ event: 'account_cleanup_retry' }, 'Account cleanup will retry.'); }
+        }
       }
     } finally { deleting = false; }
   }

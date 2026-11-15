@@ -27,6 +27,10 @@ function number(value: string | undefined, label: string) {
   if (!Number.isFinite(parsed)) throw new Error(`${label} must be a number.`);
   return parsed;
 }
+function goalFactor(metric: string, imperial: boolean) {
+  if (!imperial) return 1;
+  return metric === 'weight_kg' ? 0.45359237 : metric === 'hydration_ml' ? 29.5735295625 : 1;
+}
 function time(form: LogForm, prefix: 'start' | 'end') {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form[prefix + 'Date']) || !/^\d{2}:\d{2}$/.test(form[prefix + 'Time'])
     || !/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(form[prefix + 'Offset'])) throw new Error('Enter valid sleep dates, times, and UTC offsets.');
@@ -50,7 +54,7 @@ export function formEntry(kind: LogKind, form: LogForm, exercises: ExerciseForm[
     case 'sleep': details = { start: time(form, 'start'), end: time(form, 'end'), nap: form.nap === 'yes', quality: n('quality') }; break;
     case 'recovery': details = { energy: n('energy'), soreness: n('soreness'), stress: n('stress'), mood: n('mood'), tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean) }; break;
     case 'weight': details = { kilograms: n('weight') * (imperial ? 0.45359237 : 1) }; break;
-    case 'goal': details = { metric: form.metric, target: n('target') }; break;
+    case 'goal': details = { metric: form.metric, target: n('target') * goalFactor(form.metric, imperial) }; break;
   }
   return healthLogInputSchema.parse({ kind, date: form.date, timezone: form.timezone, notes: form.notes, details });
 }
@@ -68,6 +72,7 @@ export function entryForm(entry: HealthLogInput, imperial: boolean) {
   }
   if (entry.kind === 'hydration') form.amount = decimal(entry.details.milliliters / (imperial ? 29.5735295625 : 1));
   if (entry.kind === 'weight') form.weight = decimal(entry.details.kilograms / (imperial ? 0.45359237 : 1));
+  if (entry.kind === 'goal') form.target = decimal(entry.details.target / goalFactor(entry.details.metric, imperial));
   if (entry.kind === 'recovery') form.tags = entry.details.tags.join(', ');
   if (entry.kind === 'sleep') {
     for (const prefix of ['start', 'end'] as const) {

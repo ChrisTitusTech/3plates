@@ -105,6 +105,14 @@ export async function accessToken(
   memberId: string,
   forceOld?: string,
 ): Promise<string> {
+  const [snapshot] = await db.select().from(members).where(eq(members.id, memberId));
+  if (!snapshot?.tokens || !snapshot.connected) throw new ReconnectError();
+  const cached = decrypt<Tokens>(snapshot.tokens, config.TOKEN_KEY);
+  if (cached.expires_at > Date.now() + 60000 && (!forceOld || cached.access_token !== forceOld))
+    return cached.access_token;
+  // Reserve before holding a pool connection or member lock across the refresh.
+  // Concurrent contenders may reserve an unused request; the budget stays conservative.
+  await reserveRequest();
   let revoked = false;
   const result = await db.transaction(async (tx) => {
     const [member] = await tx
@@ -120,7 +128,6 @@ export async function accessToken(
     )
       return tokens.access_token;
     try {
-      await reserveRequest();
       tokens = await tokenRequest({
         grant_type: "refresh_token",
         refresh_token: tokens.refresh_token,

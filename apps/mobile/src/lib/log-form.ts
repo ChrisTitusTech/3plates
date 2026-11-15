@@ -36,7 +36,10 @@ function goalFactor(metric: string, imperial: boolean) {
 function time(form: LogForm, prefix: 'start' | 'end') {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form[prefix + 'Date']) || !/^\d{2}:\d{2}$/.test(form[prefix + 'Time'])
     || !/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(form[prefix + 'Offset'])) throw new Error('Enter valid sleep dates, times, and UTC offsets.');
-  const value = `${form[prefix + 'Date']}T${form[prefix + 'Time']}:00${form[prefix + 'Offset']}`;
+  const original = form[prefix + 'Original'];
+  const seconds = original?.slice(11, 16) === form[prefix + 'Time']
+    ? original.slice(16).replace(/(?:Z|[+-]\d{2}:\d{2})$/, '') : ':00';
+  const value = `${form[prefix + 'Date']}T${form[prefix + 'Time']}${seconds}${form[prefix + 'Offset']}`;
   if (!Number.isFinite(Date.parse(value))) throw new Error('Sleep time is invalid.');
   return value;
 }
@@ -79,6 +82,7 @@ export function entryForm(entry: HealthLogInput, imperial: boolean) {
   if (entry.kind === 'sleep') {
     for (const prefix of ['start', 'end'] as const) {
       const value = entry.details[prefix];
+      form[prefix + 'Original'] = value;
       form[prefix + 'Date'] = value.slice(0, 10); form[prefix + 'Time'] = value.slice(11, 16);
       form[prefix + 'Offset'] = value.endsWith('Z') ? '+00:00' : value.slice(-6);
     }

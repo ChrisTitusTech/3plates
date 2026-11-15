@@ -477,3 +477,24 @@ test("existing unrestricted share settings accurately include body measurements"
       .getByRole("checkbox", { name: "Body measurements" }),
   ).toBeChecked();
 });
+
+for (const invalid of ["reversed", "empty"]) {
+  test(`invalid ${invalid} range clears loading while an old dashboard request is pending`, async ({ page }) => {
+    await page.route("**/api/me", (route) => route.fulfill({ json: { name: "Test Member", connected: true, shareUrl: null } }));
+    await page.route("**/api/me/sync", (route) => route.fulfill({ json: { connected: true, lastSync: null, jobs: [] } }));
+    let release!: () => void; let requested = false;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/api/me/dashboard?*", async (route) => {
+      requested = true; await wait;
+      await route.fulfill({ json: sample("2026-11-01", "2026-11-14") });
+    });
+    await page.goto("/");
+    await expect.poll(() => requested).toBe(true);
+    await expect(page.getByText("Loading your history...", { exact: true })).toBeVisible();
+    await page.getByLabel("Start date", { exact: true }).fill(invalid === "empty" ? "" : "2099-01-01");
+    await expect(page.getByText(invalid === "empty" ? "Choose both a start and end date." : "The start date must be before the end date.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading your history...", { exact: true })).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled();
+    release();
+  });
+}

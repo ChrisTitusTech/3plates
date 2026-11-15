@@ -173,10 +173,12 @@ function App() {
     if (!member && !shared && !demo) return;
     const id = ++requestId.current;
     if (!start || !end) {
+      setBusy(false);
       setError("Choose both a start and end date.");
       return;
     }
     if (start > end) {
+      setBusy(false);
       setError("The start date must be before the end date.");
       return;
     }

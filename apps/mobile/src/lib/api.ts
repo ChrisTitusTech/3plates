@@ -354,8 +354,8 @@ function makeMutationId() {
   return `m-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function readPendingMutations(): Promise<PendingMutation[]> {
-  const rawValue = await storage.getItem(await accountStorageKey(storageKeys.pendingMutations));
+async function readPendingMutations(key?: string): Promise<PendingMutation[]> {
+  const rawValue = await storage.getItem(key ?? await accountStorageKey(storageKeys.pendingMutations));
   if (!rawValue) {
     return [];
   }
@@ -368,8 +368,8 @@ async function readPendingMutations(): Promise<PendingMutation[]> {
   }
 }
 
-async function writePendingMutations(mutations: PendingMutation[]) {
-  await storage.setItem(await accountStorageKey(storageKeys.pendingMutations), JSON.stringify(mutations));
+async function writePendingMutations(key: string, mutations: PendingMutation[]) {
+  await storage.setItem(key, JSON.stringify(mutations));
 }
 
 function coalescePendingMutations(mutations: PendingMutation[]) {
@@ -390,13 +390,15 @@ function coalescePendingMutations(mutations: PendingMutation[]) {
 
 async function queuePendingMutation(mutation: PendingMutation, token: string) {
   await assertCurrentSession(token);
-  const existing = coalescePendingMutations(await readPendingMutations());
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  const existing = coalescePendingMutations(await readPendingMutations(key));
   const nextMutations = mutation.type === 'updateProgress' || mutation.type === 'updatePreferences'
     ? existing.filter((candidate) => candidate.type !== mutation.type)
     : existing;
 
   await assertCurrentSession(token);
-  await writePendingMutations([...nextMutations, mutation]);
+  await writePendingMutations(key, [...nextMutations, mutation]);
 }
 
 async function removePendingMutationsByType(type: PendingMutation['type'], token: string) {
@@ -1069,7 +1071,9 @@ async function flushPendingMutationsSerial() {
     };
   }
 
-  const queue = coalescePendingMutations(await readPendingMutations());
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  const queue = coalescePendingMutations(await readPendingMutations(key));
   if (queue.length === 0) {
     return {
       flushed: 0,
@@ -1104,7 +1108,7 @@ async function flushPendingMutationsSerial() {
   }
 
   await assertCurrentSession(token);
-  await writePendingMutations(remaining);
+  await writePendingMutations(key, remaining);
 
   return {
     flushed,

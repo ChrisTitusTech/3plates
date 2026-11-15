@@ -782,3 +782,26 @@ test('short dashboard ranges include a full seven-day rolling window without wid
   assert.ok(Math.abs(body.days[0].strainAverage - 50 / 7) < 0.001);
   assert.equal(body.summary.strain.count, 1); assert.equal(body.previous.strain.count, 1);
 });
+
+test("reconciliation uses the database clock even when application time is behind", async (t) => {
+  await db.update(records).set({ fetchedAt: new Date("2020-01-01") }).where(eq(records.memberId, memberA));
+  await enqueueSync(db, memberA, "full");
+  const [job] = await db.select().from(jobs).where(and(eq(jobs.memberId, memberA), eq(jobs.kind, "cycle")));
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2020-01-02") });
+  await processJob(job, async () => ({ records: [cycle(101)], next_token: null }));
+  const [row] = await db.select().from(records).where(eq(records.memberId, memberA));
+  assert.equal(row.deleted, false);
+  assert.ok(row.fetchedAt.getTime() >= job.startedAt.getTime());
+});
+
+test("test environment pins validated database and fake credentials before dotenv loads", () => {
+  const result = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import './tests/env.ts';
+    import { populate } from 'dotenv';
+    populate(process.env, { WHOOP_DATABASE_URL: 'postgres://unused/production', WHOOP_CLIENT_SECRET: 'deployment-secret' });
+    const { config } = await import('./server/config.ts');
+    if (config.DATABASE_URL !== process.env.DATABASE_URL || config.ClientSecret !== 'test-secret') process.exit(1);
+    console.log('test configuration pinned');
+  `], { encoding: "utf8" });
+  assert.match(result, /test configuration pinned/);
+});

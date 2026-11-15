@@ -831,3 +831,39 @@ test('successful sign-in repairs malformed profiles while preserving unidentifie
     assert.equal(JSON.parse((await storage.getItem('@3plates/pending-mutations/user/unverified'))!)[0].id, 'orphan');
   }
 });
+
+test('enqueue and flush keep their original queue key when the session switches after the last token check', async (t) => {
+  t.after(__resetApiTestAdapters);
+  const { createHash } = await import('node:crypto');
+  for (const operation of ['enqueue', 'flush']) {
+    const backing = createMemoryStorage();
+    const aliceKey = '@3plates/pending-mutations/user/user-1';
+    const bobKey = '@3plates/pending-mutations/user/bob';
+    let armed = false; let switchOnCheck = false;
+    const storage = { ...backing, async getItem(key: string) {
+      const value = await backing.getItem(key);
+      if (armed && key === aliceKey && operation === 'enqueue') switchOnCheck = true;
+      if (switchOnCheck && key === '@3plates/session-token') {
+        armed = false; switchOnCheck = false;
+        await backing.setItem('@3plates/session-token', 'bob');
+        await backing.setItem('@3plates/cache/me', JSON.stringify({ value: { ...createBaseUser(), id: 'bob' }, sessionHash: createHash('sha256').update('bob').digest('hex') }));
+      }
+      return value;
+    } };
+    const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+      registerDevice: async () => { if (operation === 'flush') switchOnCheck = true; throw new Error('Network request failed'); } });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('alice'); await fetchMe(); await getPendingMutationCount();
+    const device: NotificationDevice = { platform: 'ios', pushToken: 'alice-push-token' };
+    const queued = { id: 'alice-change', type: 'registerDevice', payload: device, createdAt: new Date().toISOString() };
+    const bobQueue = JSON.stringify([{ ...queued, id: 'bob-change', payload: { ...device, pushToken: 'bob-push-token' } }]);
+    await backing.setItem(bobKey, bobQueue);
+    armed = true;
+    if (operation === 'flush') { await backing.setItem(aliceKey, JSON.stringify([queued])); await flushPendingMutations(); }
+    else await registerDevice(device);
+    assert.equal(await getSessionToken(), 'bob');
+    assert.equal(await backing.getItem(bobKey), bobQueue);
+    const aliceQueue = JSON.parse((await backing.getItem(aliceKey))!);
+    assert.equal(aliceQueue.length, 1); assert.equal(aliceQueue[0].payload.pushToken, 'alice-push-token');
+  }
+});

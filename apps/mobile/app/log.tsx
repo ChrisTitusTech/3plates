@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { calendarDateSchema, type HealthLog } from '@3plates/contract';
 import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
@@ -17,10 +17,14 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   const { ui, colors } = useFitnessStyles();
   const { account, snapshot, message, busy, refresh, setMessage } = fitness;
   const [kind, setKind] = useState<LogKind>('workout');
-  const [form, setForm] = useState(newLogForm);
-  const [exercises, setExercises] = useState<ExerciseForm[]>([]);
+  const draftRevision = useRef(0);
+  const [form, writeForm] = useState(newLogForm);
+  const [exercises, writeExercises] = useState<ExerciseForm[]>([]);
+  const setForm: typeof writeForm = (value) => { draftRevision.current++; writeForm(value); };
+  const setExercises: typeof writeExercises = (value) => { draftRevision.current++; writeExercises(value); };
   const [editing, setEditing] = useState<string | undefined>();
   const [editingVersion, setEditingVersion] = useState<number | undefined>();
+  const editingTarget = useRef<{ id: string; version: number } | null>(null);
   const [imperial, setImperial] = useState(false);
   const [unitsReady, setUnitsReady] = useState(false);
   const [unitNotice, setUnitNotice] = useState('');
@@ -52,16 +56,25 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   function edit(record: HealthLog) {
     if (!record.entry) return;
     const loaded = entryForm(record.entry, imperial);
+    editingTarget.current = { id: record.id, version: record.version };
     setKind(record.entry.kind); setForm(loaded.form); setExercises(loaded.exercises); setEditing(record.id); setEditingVersion(record.version);
     setMessage('Editing the selected entry in the form above.');
   }
-  function reset() { setEditing(undefined); setEditingVersion(undefined); setForm(newLogForm()); setExercises([]); }
+  function reset() { editingTarget.current = null; setEditing(undefined); setEditingVersion(undefined); setForm(newLogForm()); setExercises([]); }
   async function save() {
     if (!account) return;
+    const revision = draftRevision.current;
     setSaving(true);
     try {
       await account.engine.save(formEntry(kind, form, exercises, imperial), editing, editingVersion);
-      reset(); await refresh(false); setMessage('Saved on this device. Synchronizing...'); await refresh();
+      if (draftRevision.current === revision) reset();
+      else if (editing && editingVersion !== undefined && editingTarget.current?.id === editing && editingTarget.current.version === editingVersion) {
+        // This save advanced the same entry being edited. Preserve newer typing
+        // while still rejecting any additional updates from another device.
+        editingTarget.current = { id: editing, version: editingVersion + 1 };
+        setEditingVersion(editingVersion + 1);
+      }
+      await refresh(false); setMessage('Saved on this device. Synchronizing...'); await refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to save.'); }
     finally { setSaving(false); }
   }

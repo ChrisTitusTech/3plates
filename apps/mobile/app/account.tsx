@@ -31,40 +31,52 @@ export default function AccountScreen() {
   const [shareEnd, setShareEnd] = useState(localDay());
   const [shareDays, setShareDays] = useState('7');
   const owner = account?.user.id;
+  const loadSequence = useRef(0);
   const activeOwner = useRef(owner);
   activeOwner.current = owner;
   useEffect(() => { setConfirm(''); setDeleteText(''); confirmedOwner.current = undefined; }, [owner]);
   async function load() {
     if (!owner) return;
-    const identities = await fitnessRequest<{ providers: AuthProvider[] }>('/users/me/identities', 'GET', undefined, owner);
-    if (activeOwner.current !== owner) return;
-    setProviders(identities.providers);
-    setMember(null); setSync(null); setWhoopMessage('Loading WHOOP connection...'); setAvailable([]);
-    setLoadedOwner(owner);
-    const response = await fetch(apiBaseUrl + '/auth/providers');
-    if (!response.ok) throw new Error('Unable to load sign-in options.');
-    const options = await response.json();
-    if (activeOwner.current !== owner) return;
-    setAvailable(options.providers);
-    if (identities.providers.includes('whoop')) {
-      try {
-      const [profile, status] = await Promise.all([
-        fitnessRequest<Member>('/users/me/whoop/profile', 'GET', undefined, owner),
-        fitnessRequest<Sync>('/users/me/whoop/sync', 'GET', undefined, owner),
-      ]);
-      if (activeOwner.current !== owner) return;
-      setMember(profile); setSync(status);
-      setWhoopMessage('');
-      if (profile.sharePolicy) {
-        setShareKinds(profile.sharePolicy.kinds);
-        setShareStart(profile.sharePolicy.start ?? ''); setShareEnd(profile.sharePolicy.end ?? '');
-      }
-      } catch {
-        if (activeOwner.current === owner) setWhoopMessage('WHOOP is temporarily unavailable. Your other account controls remain available. Refresh status to retry.');
-      }
-    } else { setMember(null); setSync(null); }
+    const sequence = ++loadSequence.current;
+    const current = () => activeOwner.current === owner && loadSequence.current === sequence;
+    try {
+      const identities = await fitnessRequest<{ providers: AuthProvider[] }>('/users/me/identities', 'GET', undefined, owner);
+      if (!current()) return;
+      setProviders(identities.providers);
+      setMember(null); setSync(null); setWhoopMessage('Loading WHOOP connection...'); setAvailable([]);
+      setLoadedOwner(owner);
+      const response = await fetch(apiBaseUrl + '/auth/providers');
+      if (!response.ok) throw new Error('Unable to load sign-in options.');
+      const options = await response.json();
+      if (!current()) return;
+      setAvailable(options.providers);
+      if (identities.providers.includes('whoop')) {
+        try {
+          const [profile, status] = await Promise.all([
+            fitnessRequest<Member>('/users/me/whoop/profile', 'GET', undefined, owner),
+            fitnessRequest<Sync>('/users/me/whoop/sync', 'GET', undefined, owner),
+          ]);
+          if (!current()) return;
+          setMember(profile); setSync(status);
+          setWhoopMessage('');
+          if (profile.sharePolicy) {
+            setShareKinds(profile.sharePolicy.kinds);
+            setShareStart(profile.sharePolicy.start ?? ''); setShareEnd(profile.sharePolicy.end ?? '');
+          }
+        } catch {
+          if (current()) setWhoopMessage('WHOOP is temporarily unavailable. Your other account controls remain available. Refresh status to retry.');
+        }
+      } else { setMember(null); setSync(null); }
+      if (current()) setMessage('Account settings loaded.');
+    } catch (error) {
+      if (current()) setMessage(error instanceof Error ? error.message : 'Please retry.');
+      throw error;
+    }
   }
-  useEffect(() => { if (owner) void load().then(() => setMessage('Account settings loaded.')).catch((e) => setMessage(e.message)); }, [owner]);
+  useEffect(() => {
+    if (owner) void load().catch(() => undefined);
+    return () => { loadSequence.current++; };
+  }, [owner]);
   async function action(run: () => Promise<void>, success: string) {
     setBusy(true); setMessage('Working...');
     try { await run(); setMessage(success); setConfirm(''); }

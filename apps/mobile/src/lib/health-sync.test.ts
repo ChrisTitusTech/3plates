@@ -164,3 +164,20 @@ test('sleep defaults use calendar endpoints and their own daylight-saving offset
     if (sleep.kind === 'sleep') assert.equal(Date.parse(sleep.details.end) - Date.parse(sleep.details.start), 10 * 3600000);
   } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
 });
+
+test('notes-only sleep edits preserve seconds and fractions while changed times use minute precision', () => {
+  const entry: HealthLogInput = { kind: 'sleep', date: '2026-11-14', timezone: 'UTC', notes: '',
+    details: { start: '2026-11-14T22:00:15.123Z', end: '2026-11-14T22:00:45.678Z', nap: true, quality: 5 } };
+  const { form } = entryForm(entry, false);
+  form.notes = 'Updated note';
+  const saved = formEntry('sleep', form, [], false);
+  assert.equal(saved.kind, 'sleep');
+  if (saved.kind !== 'sleep') throw new Error('Expected sleep');
+  assert.equal(Date.parse(saved.details.start), Date.parse(entry.details.start));
+  assert.equal(Date.parse(saved.details.end), Date.parse(entry.details.end));
+  form.endTime = '22:01';
+  const changed = formEntry('sleep', form, [], false);
+  if (changed.kind !== 'sleep') throw new Error('Expected sleep');
+  assert.equal(changed.details.end, '2026-11-14T22:01:00+00:00');
+  assert.equal(Date.parse(changed.details.start), Date.parse(entry.details.start));
+});

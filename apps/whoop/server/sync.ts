@@ -67,7 +67,7 @@ export async function upsert(
     .values({ ...row, memberId })
     .onConflictDoUpdate({
       target: [records.memberId, records.kind, records.sourceId],
-      set: { ...row, fetchedAt: new Date(), deleted: false },
+      set: { ...row, fetchedAt: sql`now()`, deleted: false },
     });
 }
 const pageSchema = z.object({
@@ -189,7 +189,7 @@ async function processEvent(
     } else {
       await tx
         .update(records)
-        .set({ deleted: true, fetchedAt: new Date() })
+        .set({ deleted: true, fetchedAt: sql`now()` })
         .where(
           and(
             eq(records.memberId, job.memberId),
@@ -202,7 +202,7 @@ async function processEvent(
       if (kind === "sleep")
         await tx
           .update(records)
-          .set({ deleted: true, fetchedAt: new Date() })
+          .set({ deleted: true, fetchedAt: sql`now()` })
           .where(
             and(
               eq(records.memberId, job.memberId),

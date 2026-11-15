@@ -11,7 +11,11 @@ async function setup(page: Page, signedIn = true) {
   let deletions = 0;
   let activeUser = user;
   const preferences = new Map<string, Preferences>();
-  const logs = new Map<string, HealthLog>();
+  const logsByOwner = new Map<string, Map<string, HealthLog>>();
+  const ownerLogs = () => {
+    if (!logsByOwner.has(activeUser.id)) logsByOwner.set(activeUser.id, new Map());
+    return logsByOwner.get(activeUser.id)!;
+  };
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   if (signedIn) await page.addInitScript(({ user, sessionHash }) => {
@@ -39,6 +43,7 @@ async function setup(page: Page, signedIn = true) {
       case '/users/me/whoop/workouts': return send({ workouts: [] });
       case '/users/me/whoop/dashboard': dashboardReads++; return send(sample(url.searchParams.get('start')!, url.searchParams.get('end')!));
       case '/users/me/logs': {
+        const logs = ownerLogs();
         if (request.method() === 'GET') return send({ logs: [...logs.values()], nextCursor: null });
         const mutation = request.postDataJSON() as HealthMutation;
         const current = logs.get(mutation.id);
@@ -50,7 +55,7 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, preferences, deletions: () => deletions, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
+  return { get logs() { return ownerLogs(); }, errors, preferences, deletions: () => deletions, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
     async switchAccount(preserveCachedOwner = false) {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
       await page.evaluate(({ next, preserveCachedOwner, sessionHash }) => {
@@ -164,9 +169,16 @@ test('an open form cannot overwrite an edit that arrives from another device', a
 
 test("switching accounts clears the previous account\'s open form", async ({ page }) => {
   const f = await setup(page); await page.goto('/log');
+  await page.getByLabel('Workout title').fill('Private saved workout');
+  await page.getByLabel('Duration (minutes)').fill('30');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  await expect(page.getByText('Private saved workout - 30 min', { exact: true })).toBeVisible();
   await page.getByLabel('Workout title').fill('Private unsaved workout');
   await f.switchAccount();
   await expect(page.getByLabel('Workout title')).toHaveValue('');
+  await expect(page.getByText('Private saved workout - 30 min', { exact: true })).not.toBeVisible();
+  expect(f.logs.size).toBe(0);
   expect(f.errors).toEqual([]);
 });
 
@@ -395,4 +407,83 @@ test('weight chart preserves calendar spacing and gaps', async ({ page }) => {
   const xs = await chart.locator('circle').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('cx'))));
   expect((xs[2] - xs[1]) / (xs[1] - xs[0])).toBeCloseTo(28);
   await expect(chart.locator('polyline')).toHaveCount(2);
+});
+
+test('an older account load cannot replace newer WHOOP status and sharing fields', async ({ page }) => {
+  const f = await setup(page);
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  await page.route('**/users/me/whoop/profile', async (route) => {
+    const first = ++reads === 1;
+    if (first) await wait;
+    await route.fulfill({ json: { connected: !first, shareUrl: null,
+      sharePolicy: { kinds: ['cycle'], start: first ? '2020-01-01' : '2026-01-01', end: '2026-11-14' } } });
+  });
+  await page.goto('/account');
+  await expect.poll(() => reads).toBe(1);
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(page.getByLabel('Share from (YYYY-MM-DD)')).toHaveValue('2026-01-01');
+  const oldResponse = page.waitForResponse((response) => response.url().endsWith('/users/me/whoop/profile'));
+  release(); await oldResponse;
+  // Let response parsing and React updates settle before checking the persisted fields.
+  await page.getByLabel('Share through (YYYY-MM-DD)').fill('2026-11-15');
+  await expect(page.getByLabel('Share from (YYYY-MM-DD)')).toHaveValue('2026-01-01');
+  await expect(page.getByRole('button', { name: 'Sync recent history', exact: true })).toBeEnabled();
+  expect(f.errors).toEqual([]);
+});
+
+test('completing a queued save preserves edits made to the next draft', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await page.getByRole('button', { name: 'hydration', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('400');
+  let release!: () => void; let requested = false;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/users/me/logs?*', async (route) => {
+    requested = true; await wait; await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect.poll(() => requested).toBe(true);
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Saving...', exact: true })).toBeVisible();
+  await page.getByLabel('Water (mL)').fill('800');
+  await page.getByLabel('Notes (optional)').fill('Next drink');
+  release();
+  await expect(page.getByRole('button', { name: 'Save entry', exact: true })).toBeEnabled();
+  await expect(page.getByText('400 mL', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  await expect(page.getByLabel('Water (mL)')).toHaveValue('800');
+  await expect(page.getByLabel('Notes (optional)')).toHaveValue('Next drink');
+  expect([...f.logs.values()][0].entry?.details).toEqual({ milliliters: 400 });
+  expect(f.errors).toEqual([]);
+});
+
+
+test('typing during an existing entry save keeps a draft that can be saved again', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await page.getByRole('button', { name: 'hydration', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('400');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  await expect(page.getByRole('button', { name: 'Save entry', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Edit hydration entry', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('500');
+  let release!: () => void; let requested = false;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/users/me/logs?*', async (route) => { requested = true; await wait; await route.fallback(); });
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect.poll(() => requested).toBe(true);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Saving...', exact: true })).toBeVisible();
+  await page.getByLabel('Water (mL)').fill('600');
+  release();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Water (mL)')).toHaveValue('600');
+  await expect(page.getByRole('button', { name: 'Sync now', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => [...f.logs.values()][0].version).toBe(3);
+  expect([...f.logs.values()][0].entry?.details).toEqual({ milliliters: 600 });
+  await expect(page.getByText(/changed while you were editing/)).not.toBeVisible();
+  expect(f.errors).toEqual([]);
 });

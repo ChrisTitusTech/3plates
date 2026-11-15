@@ -49,13 +49,13 @@ async function setup(page: Page, signedIn = true) {
     }
   });
   return { logs, errors, preferences, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
-    async switchAccount() {
+    async switchAccount(preserveCachedOwner = false) {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
-      await page.evaluate((next) => {
+      await page.evaluate(({ next, preserveCachedOwner }) => {
         localStorage.setItem('@3plates/session-token', 'second-session');
-        localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: next, updatedAt: new Date().toISOString() }));
+        if (!preserveCachedOwner) localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: next, updatedAt: new Date().toISOString() }));
         window.dispatchEvent(new StorageEvent('storage', { key: '@3plates/session-token' }));
-      }, activeUser);
+      }, { next: activeUser, preserveCachedOwner });
     }, setOffline: (value: boolean) => { offline = value; } };
 }
 
@@ -329,5 +329,27 @@ test('cached dark appearance is usable before an unreachable API responds', asyn
     await expect(page.locator('[data-testid="fitness-page"]:visible')).toHaveCSS('background-color', 'rgb(14, 23, 31)', { timeout: 1500 });
     await expect(page.getByRole('radio', { name: 'Theme: Light', exact: true })).toBeEnabled({ timeout: 1500 });
   } finally { release(); }
+  expect(f.errors).toEqual([]);
+});
+
+test('reconnect during an account switch cannot hydrate or edit the previous owner preferences', async ({ page }) => {
+  const f = await setup(page); await page.emulateMedia({ colorScheme: 'light' });
+  f.preferences.set(user.id, { theme: 'dark', units: 'imperial', reminderTime: '08:30' });
+  await page.goto('/today');
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  let release!: () => void; let requests = 0;
+  const stalled = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/users/me', async (route) => { requests++; await stalled; await route.fallback(); });
+  try {
+    await f.switchAccount(true);
+    await expect.poll(() => requests).toBeGreaterThanOrEqual(2);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect.poll(() => requests).toBeGreaterThanOrEqual(3);
+    await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeDisabled();
+    await expect(page.getByRole('radio', { name: 'Theme: Follow system', exact: true })).toHaveAttribute('aria-checked', 'true');
+  } finally { release(); }
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
+  await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
+  await expect.poll(() => f.preferences.get('00000000-0000-4000-8000-000000000002')).toEqual({ theme: 'dark', units: 'metric', reminderTime: '07:00' });
   expect(f.errors).toEqual([]);
 });

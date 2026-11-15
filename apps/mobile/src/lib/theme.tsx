@@ -19,18 +19,24 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   const [message, setMessage] = useState('');
   const revision = useRef(0);
   const mounted = useRef(true);
+  const ownerValidated = useRef(true);
   async function load(hydrate = true) {
     const current = ++revision.current;
     const active = () => mounted.current && revision.current === current;
     setBusy(true);
     try {
       if (!await getSessionToken()) { if (active()) setPreferences(null); return; }
-      if (hydrate) {
+      if (hydrate && ownerValidated.current) {
         const cached = await getCachedPreferences();
         if (active() && cached) { setPreferences(cached); setBusy(false); }
       }
-      await fetchMe();
+      const account = await fetchMe();
       if (!active()) return;
+      if (!ownerValidated.current && account.source !== 'network') {
+        setMessage('Connect to verify this account before loading its appearance.');
+        return;
+      }
+      ownerValidated.current = true;
       // Offline queues remain authoritative until a later connection can flush them.
       await syncPendingPreferences().catch(() => undefined);
       if (!active()) return;
@@ -42,14 +48,14 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     mounted.current = true;
     // A new session must prove its owner before using the previous account cache.
-    const session = subscribeSession(() => { revision.current++; setPreferences(null); setMessage(''); void load(false); });
+    const session = subscribeSession(() => { ownerValidated.current = false; revision.current++; setPreferences(null); setMessage(''); void load(false); });
     const changes = subscribePreferences((value) => { revision.current++; setPreferences(value); setBusy(false); });
     const foreground = AppState.addEventListener('change', (state) => { if (state === 'active') void load(); });
     const online = () => { void load(); };
     // Native connectivity may recover without an AppState change. Retry only
     // queued preferences while active; an empty queue performs no network call.
     const retryPending = setInterval(() => {
-      if (AppState.currentState === 'active') void syncPendingPreferences().catch(() => undefined);
+      if (ownerValidated.current && AppState.currentState === 'active') void syncPendingPreferences().catch(() => undefined);
     }, 30000);
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('online', online);
     void load();

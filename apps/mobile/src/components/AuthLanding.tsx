@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { useTheme, type ThemeColors } from '../lib/theme';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AuthBackground } from './AuthBackground';
@@ -11,6 +13,8 @@ type AuthLandingProps = {
 };
 
 export function AuthLanding({ busy = false, buttonLabel, onPress, actions, error }: AuthLandingProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <AuthBackground>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
@@ -21,7 +25,7 @@ export function AuthLanding({ busy = false, buttonLabel, onPress, actions, error
 
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Welcome back</Text>
-          {error && <Text accessibilityRole="alert" style={{ color: '#a52c36' }}>{error}</Text>}
+          {error && <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text>}
           {(actions ?? [{ label: buttonLabel, onPress }]).map((action) => <Pressable
             key={action.label}
             style={[styles.button, busy ? styles.buttonDisabled : null]}
@@ -38,7 +42,7 @@ export function AuthLanding({ busy = false, buttonLabel, onPress, actions, error
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   scroll: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -69,7 +73,7 @@ const styles = StyleSheet.create({
   },
   panel: {
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    backgroundColor: colors.surface,
     padding: 20,
     gap: 18,
     shadowColor: '#000000',
@@ -79,7 +83,7 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   panelTitle: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 22,
     fontWeight: '900',
   },
@@ -88,12 +92,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#17202a',
+    backgroundColor: colors.strong,
     paddingHorizontal: 18,
     paddingVertical: 14,
   },
   buttonText: {
-    color: '#ffffff',
+    color: colors.onStrong,
     fontSize: 16,
     fontWeight: '800',
   },

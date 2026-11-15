@@ -1,8 +1,9 @@
 import { Text, View } from 'react-native';
 import type { Dashboard } from '@3plates/whoop/types';
-import { ui } from './FitnessUI';
+import { useFitnessStyles } from './FitnessUI';
 
 export function WhoopDetail({ detail }: { detail: Dashboard['details'][number] }) {
+  const { ui } = useFitnessStyles();
   return <View style={{ gap: 5 }}>
     <Text style={ui.heading}>{detail.date} / {detail.sport ?? detail.kind}{detail.nap ? ' (nap)' : ''}</Text>
     <Text style={ui.muted}>WHOOP / {detail.state} / {detail.start}{detail.end ? ` to ${detail.end}` : ''}</Text>

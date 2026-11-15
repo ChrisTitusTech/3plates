@@ -1,13 +1,14 @@
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { Button, Card, FitnessPage, ui } from '../src/components/FitnessUI';
+import { Button, Card, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
 import { useWhoop } from '../src/lib/use-whoop';
 import { entrySummary, localDay } from '../src/lib/log-form';
 import { workoutCount } from '../src/lib/workout-history';
 
 export default function TodayScreen() {
+  const { ui } = useFitnessStyles();
   const { account, snapshot, message, busy, refresh } = useFitness();
   const today = localDay();
   const [revision, setRevision] = useState(0);

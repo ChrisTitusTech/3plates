@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { calendarDateSchema, type HealthLog } from '@3plates/contract';
-import { Button, Card, Field, FitnessPage, ui } from '../src/components/FitnessUI';
+import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
 import { fetchPreferences } from '../src/lib/api';
 import { fitnessRequest } from '../src/lib/fitness-client';
 import { entryForm, entrySummary, formEntry, logKinds, newLogForm, type ExerciseForm, type LogKind } from '../src/lib/log-form';
 
 export default function LogScreen() {
+  const { ui } = useFitnessStyles();
   const fitness = useFitness();
   if (!fitness.account) return <FitnessPage title="Daily log"><Text style={ui.notice}>{fitness.message}</Text></FitnessPage>;
   return <LogFormScreen key={fitness.account.user.id} fitness={fitness} />;
 }
 function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) {
+  const { ui, colors } = useFitnessStyles();
   const { account, snapshot, message, busy, refresh, setMessage } = fitness;
   const [kind, setKind] = useState<LogKind>('workout');
   const [form, setForm] = useState(newLogForm);
@@ -124,7 +126,7 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
     </Card>
     <Card title="Your entries">
       {!snapshot.logs.length && <Text style={ui.muted}>No entries yet. Your first log can be saved even while offline after signing in.</Text>}
-      {snapshot.logs.slice(0, visible).map((record) => <View key={record.id} style={{ gap: 8, borderBottomWidth: 1, borderColor: '#d6e2e6', paddingVertical: 12 }}>
+      {snapshot.logs.slice(0, visible).map((record) => <View key={record.id} style={{ gap: 8, borderBottomWidth: 1, borderColor: colors.border, paddingVertical: 12 }}>
         <Text style={ui.heading}>{record.entry!.date} / {record.entry!.kind}</Text>
         <Text style={ui.text}>{entrySummary(record.entry!)}</Text>
         {!!record.entry!.notes && <Text style={ui.muted}>{record.entry!.notes}</Text>}

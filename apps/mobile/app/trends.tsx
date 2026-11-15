@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { calendarDateSchema } from '@3plates/contract';
 import { aggregateAnalytics, calendarYear } from '@3plates/whoop/analytics';
 import { compareYears, correlations, type Metric } from '@3plates/whoop/explore';
-import { Button, Card, colors, Field, FitnessPage, ui } from '../src/components/FitnessUI';
+import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { MetricChart } from '../src/components/MetricChart';
 import { WhoopDetail } from '../src/components/WhoopDetail';
 import { useFitness } from '../src/lib/use-fitness';
@@ -14,6 +14,7 @@ const metrics: Metric[] = ['strain', 'sleep', 'recovery', 'hours', 'hrv', 'rhr']
 const labels: Record<Metric, string> = { strain: 'Strain', sleep: 'Sleep performance (%)', recovery: 'Recovery (%)', hours: 'Sleep (hours)', hrv: 'HRV (ms)', rhr: 'Resting heart rate (bpm)' };
 const value = (n: number | null | undefined) => n == null ? 'Unavailable' : n.toFixed(1);
 export default function TrendsScreen() {
+  const { ui, colors } = useFitnessStyles();
   const { account, snapshot } = useFitness();
   const [start, setStart] = useState(localDay(new Date(Date.now() - 29 * 86400000)));
   const [end, setEnd] = useState(localDay());

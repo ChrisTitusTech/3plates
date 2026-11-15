@@ -3,7 +3,7 @@ import { Link } from 'expo-router';
 import { Text, View } from 'react-native';
 import { calendarDateSchema } from '@3plates/contract';
 import { exploreWorkouts } from '@3plates/whoop/explore';
-import { Button, Card, Field, FitnessPage, ui } from '../src/components/FitnessUI';
+import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { WhoopDetail } from '../src/components/WhoopDetail';
 import { MetricChart } from '../src/components/MetricChart';
 import { useFitness } from '../src/lib/use-fitness';
@@ -12,6 +12,7 @@ import { entrySummary, localDay } from '../src/lib/log-form';
 import { workoutCount } from '../src/lib/workout-history';
 
 export default function TrainingScreen() {
+  const { ui } = useFitnessStyles();
   const { account, snapshot } = useFitness();
   const [start, setStart] = useState(localDay(new Date(Date.now() - 89 * 86400000)));
   const [end, setEnd] = useState(localDay());

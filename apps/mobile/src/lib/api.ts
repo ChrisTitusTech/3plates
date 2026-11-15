@@ -360,16 +360,17 @@ function coalescePendingMutations(mutations: PendingMutation[]) {
 async function queuePendingMutation(mutation: PendingMutation, token: string) {
   await assertCurrentSession(token);
   const existing = coalescePendingMutations(await readPendingMutations());
-  const nextMutations = mutation.type === 'updateProgress'
-    ? existing.filter((candidate) => candidate.type !== 'updateProgress')
+  const nextMutations = mutation.type === 'updateProgress' || mutation.type === 'updatePreferences'
+    ? existing.filter((candidate) => candidate.type !== mutation.type)
     : existing;
 
   await assertCurrentSession(token);
   await writePendingMutations([...nextMutations, mutation]);
 }
 
-async function removePendingMutationsByType(type: PendingMutation['type']) {
+async function removePendingMutationsByType(type: PendingMutation['type'], token?: string) {
   const existing = await readPendingMutations();
+  if (token) await assertCurrentSession(token);
   await writePendingMutations(existing.filter((mutation) => mutation.type !== type));
 }
 
@@ -418,6 +419,22 @@ export async function getSessionToken() {
 
 let sessionGeneration = 0;
 const sessionListeners = new Set<() => void>();
+const preferenceListeners = new Set<(preferences: Preferences) => void>();
+let preferenceWriteRevision = 0;
+let preferenceWork: Promise<unknown> = Promise.resolve();
+function serializePreferences<T>(action: () => Promise<T>) {
+  const next = preferenceWork.then(action, action);
+  preferenceWork = next.catch(() => undefined);
+  return next;
+}
+export function subscribePreferences(listener: (preferences: Preferences) => void) {
+  preferenceListeners.add(listener);
+  return () => { preferenceListeners.delete(listener); };
+}
+async function notifyPreferences(preferences: Preferences, token: string) {
+  await assertCurrentSession(token);
+  for (const listener of preferenceListeners) listener(preferences);
+}
 export const getSessionGeneration = () => sessionGeneration;
 export function subscribeSession(listener: () => void) {
   sessionListeners.add(listener);
@@ -792,6 +809,12 @@ export async function deleteManualWorkout(workoutId: string) {
 
 export async function fetchPreferences(): Promise<CachedReadResult<Preferences>> {
   const token = await requireSessionToken();
+  const revision = preferenceWriteRevision;
+  const pending = (await readPendingMutations()).filter((mutation) => mutation.type === 'updatePreferences').at(-1);
+  if (pending?.type === 'updatePreferences') {
+    await assertCurrentSession(token);
+    return { data: pending.payload, source: 'cache' };
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -805,6 +828,11 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
       throw toApiRequestError(response.status, response.body);
     }
 
+    if (revision !== preferenceWriteRevision) {
+      await assertCurrentSession(token);
+      const cached = await readCache<Preferences>(storageKeys.preferences);
+      return { data: cached ?? response.body, source: cached ? 'cache' : 'network' };
+    }
     await writeCache(storageKeys.preferences, response.body, token);
 
     return {
@@ -883,24 +911,55 @@ export async function fetchWorkoutsByMode(
 
 export async function updatePreferences(preferences: Preferences) {
   const token = await requireSessionToken();
+  return serializePreferences(() => persistPreferences(preferences, token));
+}
+
+// Synchronize only appearance/preferences here; opening the app must not flush
+// unrelated progress or device-registration work as a side effect of theming.
+export async function syncPendingPreferences() {
+  const token = await requireSessionToken();
+  return serializePreferences(async () => {
+    await assertCurrentSession(token);
+    const pending = (await readPendingMutations()).filter((mutation) => mutation.type === 'updatePreferences').at(-1);
+    if (pending?.type !== 'updatePreferences') return;
+    const owner = await getCachedUser();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
+      if (!owner || response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+      return await persistPreferences(pending.payload, token);
+    } finally { clearTimeout(timeout); }
+  });
+}
+
+async function persistPreferences(preferences: Preferences, token: string) {
+  await assertCurrentSession(token);
+  preferenceWriteRevision++;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.updatePreferences({
       extraHeaders: buildAuthHeaders(token),
       body: preferences,
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
       throw toApiRequestError(response.status, response.body);
     }
 
+    await removePendingMutationsByType('updatePreferences', token);
     await writeCache(storageKeys.preferences, preferences, token);
+    await notifyPreferences(preferences, token);
 
     return {
       queued: false,
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
@@ -911,10 +970,13 @@ export async function updatePreferences(preferences: Preferences) {
       payload: preferences,
     }, token);
     await writeCache(storageKeys.preferences, preferences, token);
+    await notifyPreferences(preferences, token);
 
     return {
       queued: true,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

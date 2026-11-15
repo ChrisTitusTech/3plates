@@ -23,7 +23,12 @@ for WHOOP integration and offline manual logging.
 - Postgres + Drizzle for persistence.
 - Google, Apple, and optional WHOOP OAuth with explicit account linking, server-managed sessions, and secure native token storage.
 - Offline manual workouts, nutrition, hydration, sleep, recovery journals, body weight, and goals.
+- Light, dark, and system appearance across fitness screens, charts, and settings.
 - Expo Notifications for the first push path.
+
+Use the Appearance controls on any fitness screen to choose Light, Dark, or
+Follow system. Choices use the existing account preference, persist offline,
+and synchronize when connectivity returns. Settings uses the same saved theme.
 
 ## Local development
 

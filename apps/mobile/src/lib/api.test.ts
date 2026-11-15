@@ -22,6 +22,8 @@ import {
   registerDevice,
   resolveApiBaseUrl,
   setSessionToken,
+  subscribePreferences,
+  syncPendingPreferences,
   signOutAndClearSession,
   updateProgress,
   updatePreferences,
@@ -702,4 +704,41 @@ test('temporary API outages preserve cached measurement preferences', async (t) 
   await setSessionToken('cached-preferences-token'); await fetchMe(); await fetchPreferences();
   for (status of [502, 503, 429]) assert.deepEqual(await fetchPreferences(), { data: preferences, source: 'cache' });
   status = 401; await assert.rejects(fetchPreferences(), (error: unknown) => (error as { status: number }).status === 401);
+});
+
+test('queued appearance remains authoritative through outages and updates subscribers', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 503;
+  let saved: Preferences = { theme: 'system', units: 'imperial', reminderTime: '08:30' };
+  const changes: Preferences[] = [];
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => ({ status: 200, body: saved }),
+    updatePreferences: async ({ body }: { body: Preferences }) => { if (status === 200) saved = body; return { status, body: status === 200 ? body : null }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  t.after(subscribePreferences((value) => changes.push(value)));
+  await setSessionToken('theme-test-token'); await fetchMe(); await fetchPreferences();
+  const dark = { ...saved, theme: 'dark' as const };
+  assert.deepEqual(await updatePreferences(dark), { queued: true });
+  assert.deepEqual(changes, [dark]);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'cache' });
+  await syncPendingPreferences(); assert.equal(await getPendingMutationCount(), 1);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'cache' });
+  status = 200; await syncPendingPreferences(); assert.equal(await getPendingMutationCount(), 0);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'network' });
+});
+
+test('a delayed preference read cannot replace a newly saved appearance', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser();
+  const initial: Preferences = { theme: 'light', units: 'metric', reminderTime: '07:00' };
+  let release!: () => void; let started!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { started = resolve; });
+  let delay = false;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => { if (delay) { started(); await waiting; } return { status: 200, body: initial }; },
+    updatePreferences: async ({ body }: { body: Preferences }) => ({ status: 200, body }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('theme-read-race'); await fetchMe(); await fetchPreferences();
+  delay = true; const stale = fetchPreferences(); await requested;
+  const dark = { ...initial, theme: 'dark' as const }; await updatePreferences(dark); release();
+  assert.deepEqual(await stale, { data: dark, source: 'cache' });
 });

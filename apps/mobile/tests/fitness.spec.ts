@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { sample } from '../../whoop/web/demo';
-import type { HealthLog, HealthMutation } from '@3plates/contract';
+import type { HealthLog, HealthMutation, Preferences } from '@3plates/contract';
 const user = { id: '00000000-0000-4000-8000-000000000001', email: 'synthetic@example.test', displayName: 'Synthetic Athlete' };
 async function setup(page: Page, signedIn = true) {
   let offline = false;
@@ -8,6 +8,7 @@ async function setup(page: Page, signedIn = true) {
   let apiUnavailable = false;
   let dashboardReads = 0;
   let activeUser = user;
+  const preferences = new Map<string, Preferences>();
   const logs = new Map<string, HealthLog>();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -26,7 +27,10 @@ async function setup(page: Page, signedIn = true) {
     switch (url.pathname) {
       case '/auth/providers': return send({ providers: ['google', 'apple', 'whoop'] });
       case '/users/me': return send(activeUser);
-      case '/users/me/preferences': return send({ theme: 'system', units: 'metric', reminderTime: '07:00' });
+      case '/users/me/preferences': {
+        if (request.method() === 'PUT') preferences.set(activeUser.id, request.postDataJSON());
+        return send(preferences.get(activeUser.id) ?? { theme: 'system', units: 'metric', reminderTime: '07:00' });
+      }
       case '/users/me/identities': return send({ providers: ['whoop'], whoopEnabled: true });
       case '/users/me/whoop/profile': return send({ name: user.displayName, connected: true, shareUrl: null });
       case '/users/me/whoop/sync': return send({ connected: true, lastSync: new Date().toISOString(), jobs: [] });
@@ -247,4 +251,65 @@ test('account outages retain pending edits until confirmed discard and sign-out'
   await expect(page).toHaveURL(/\/sign-in$/);
   expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
   expect(f.logs.size).toBe(0); expect(f.errors).toEqual([]);
+});
+
+test('appearance follows system changes and explicit choices persist across routes and reloads', async ({ page }, info) => {
+  const f = await setup(page); await page.emulateMedia({ colorScheme: 'dark' }); await page.goto('/today');
+  const surface = () => page.locator('[data-testid="fitness-page"]:visible');
+  await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
+  await expect(page.getByRole('radio', { name: 'Theme: Follow system', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
+  await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
+  await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
+  await page.getByRole('link', { name: 'Log', exact: true }).click();
+  await expect(page.getByLabel('Workout title')).toHaveCSS('background-color', 'rgb(23, 38, 47)');
+  await expect(page.getByLabel('Workout title')).toHaveCSS('color', 'rgb(237, 245, 248)');
+  await page.reload(); await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('link', { name: 'Trends', exact: true }).click();
+  await expect(page.locator('svg:visible text').first()).toHaveAttribute('fill', '#b2c4ce');
+  await page.screenshot({ path: `test-results/theme-dark-${info.project.name}.png`, fullPage: true });
+  await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
+  await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
+  await page.screenshot({ path: `test-results/theme-light-${info.project.name}.png`, fullPage: true });
+  await page.getByRole('radio', { name: 'Theme: Follow system', exact: true }).click();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
+  expect(f.errors).toEqual([]);
+});
+
+test('offline appearance survives restart, synchronizes, and stays scoped to its account', async ({ page }) => {
+  const f = await setup(page); await page.emulateMedia({ colorScheme: 'light' }); await page.goto('/today');
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
+  f.setApiUnavailable(true);
+  await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  f.setApiUnavailable(false); await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await f.switchAccount();
+  await expect(page.getByRole('radio', { name: 'Theme: Follow system', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('[data-testid="fitness-page"]:visible')).toHaveCSS('background-color', 'rgb(244, 247, 249)');
+  expect(f.errors).toEqual([]);
+});
+
+test('saved Settings theme updates the fitness screens and preserves other preferences', async ({ page }) => {
+  const f = await setup(page); await page.goto('/preferences');
+  await expect(page.getByRole('button', { name: 'Save preferences', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'dark', exact: true }).click();
+  await page.getByRole('button', { name: 'imperial', exact: true }).click();
+  await page.getByLabel('Reminder time').fill('08:30');
+  await page.getByRole('button', { name: 'Save preferences', exact: true }).click();
+  await expect(page.getByText('Preferences saved to backend.')).toBeVisible();
+  await expect(page.getByLabel('Reminder time')).toHaveCSS('background-color', 'rgb(23, 38, 47)');
+  await page.goto('/log');
+  await expect(page.getByRole('radio', { name: 'Theme: Dark', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
+  await page.goto('/preferences');
+  await expect(page.getByRole('button', { name: 'imperial', exact: true })).toHaveCSS('background-color', 'rgb(20, 43, 56)');
+  await expect(page.getByLabel('Reminder time')).toHaveValue('08:30');
+  expect(f.errors).toEqual([]);
 });

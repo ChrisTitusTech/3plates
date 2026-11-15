@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { useTheme, type ThemeColors } from '../lib/theme';
 import { Link, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -8,6 +10,8 @@ type ScreenHeaderProps = {
 };
 
 export function ScreenHeader({ title }: ScreenHeaderProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
 
   return (
@@ -41,7 +45,7 @@ export function ScreenHeader({ title }: ScreenHeaderProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   headerRow: {
     minHeight: 72,
     flexDirection: 'row',
@@ -64,21 +68,21 @@ const styles = StyleSheet.create({
     minWidth: 72,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cfd6df',
-    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   navButtonText: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 14,
     fontWeight: '800',
   },
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#17202a',
+    color: colors.ink,
   },
 });

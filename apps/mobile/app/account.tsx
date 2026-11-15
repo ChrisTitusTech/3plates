@@ -4,7 +4,7 @@ import * as ExpoLinking from 'expo-linking';
 import { Linking, Text, View } from 'react-native';
 import { calendarDateSchema, type AuthProvider } from '@3plates/contract';
 import type { Member, Sync } from '@3plates/whoop/types';
-import { Button, Card, Field, FitnessPage, ui } from '../src/components/FitnessUI';
+import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
 import { apiBaseUrl, clearSession, signOutAndClearSession, startAuthLink } from '../src/lib/api';
 import { clearFitnessCache, clearWhoopCache, exportFitnessFile, fitnessRequest } from '../src/lib/fitness-client';
@@ -12,6 +12,7 @@ import { localDay } from '../src/lib/log-form';
 
 const name = (provider: string) => provider === 'whoop' ? 'WHOOP' : provider === 'google' ? 'Google' : 'Apple';
 export default function AccountScreen() {
+  const { ui } = useFitnessStyles();
   const { account, snapshot, refresh } = useFitness();
   const router = useRouter();
   const [providers, setProviders] = useState<AuthProvider[]>([]);

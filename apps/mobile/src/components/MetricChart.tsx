@@ -1,10 +1,11 @@
 import { Text, View } from 'react-native';
 import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
-import { colors, ui } from './FitnessUI';
+import { useFitnessStyles } from './FitnessUI';
 
 export function MetricChart({ label, points, scatter = false }: {
   label: string; points: Array<{ label: string; value: number | null; x?: number }>; scatter?: boolean;
 }) {
+  const { ui, colors } = useFitnessStyles();
   const available = points.filter((point) => point.value !== null && Number.isFinite(point.value));
   if (!available.length) return <Text style={ui.muted}>{label}: no scored observations.</Text>;
   const values = available.map((point) => point.value!);

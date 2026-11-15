@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import type { HealthLog } from '@3plates/contract';
+import { calendarDateSchema, type HealthLog } from '@3plates/contract';
 import { Button, Card, Field, FitnessPage, ui } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
 import { fetchPreferences } from '../src/lib/api';
@@ -8,11 +8,17 @@ import { fitnessRequest } from '../src/lib/fitness-client';
 import { entryForm, entrySummary, formEntry, logKinds, newLogForm, type ExerciseForm, type LogKind } from '../src/lib/log-form';
 
 export default function LogScreen() {
-  const { account, snapshot, message, busy, refresh, setMessage } = useFitness();
+  const fitness = useFitness();
+  if (!fitness.account) return <FitnessPage title="Daily log"><Text style={ui.notice}>{fitness.message}</Text></FitnessPage>;
+  return <LogFormScreen key={fitness.account.user.id} fitness={fitness} />;
+}
+function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) {
+  const { account, snapshot, message, busy, refresh, setMessage } = fitness;
   const [kind, setKind] = useState<LogKind>('workout');
   const [form, setForm] = useState(newLogForm);
   const [exercises, setExercises] = useState<ExerciseForm[]>([]);
   const [editing, setEditing] = useState<string | undefined>();
+  const [editingVersion, setEditingVersion] = useState<number | undefined>();
   const [imperial, setImperial] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -21,23 +27,30 @@ export default function LogScreen() {
   const [visible, setVisible] = useState(20);
   useEffect(() => {
     void fetchPreferences().then((result) => setImperial(result.data.units === 'imperial')).catch(() => undefined);
-    void fitnessRequest<{ workouts: typeof choices }>('/users/me/whoop/workouts').then((result) => setChoices(result.workouts)).catch(() => undefined);
   }, []);
+  useEffect(() => {
+    let active = true; setChoices([]);
+    if (calendarDateSchema.safeParse(form.date).success) {
+      void fitnessRequest<{ workouts: typeof choices }>(`/users/me/whoop/workouts?date=${form.date}`, 'GET', undefined, account?.user.id)
+        .then((result) => { if (active) setChoices(result.workouts); }).catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [account?.user.id, form.date]);
   const field = (key: string, label: string, numeric = false, multiline = false) => <Field key={key}
     label={label} value={form[key] ?? ''} numeric={numeric} multiline={multiline}
     onChange={(value) => setForm((current) => ({ ...current, [key]: value }))} />;
   function edit(record: HealthLog) {
     if (!record.entry) return;
     const loaded = entryForm(record.entry, imperial);
-    setKind(record.entry.kind); setForm(loaded.form); setExercises(loaded.exercises); setEditing(record.id);
+    setKind(record.entry.kind); setForm(loaded.form); setExercises(loaded.exercises); setEditing(record.id); setEditingVersion(record.version);
     setMessage('Editing the selected entry in the form above.');
   }
-  function reset() { setEditing(undefined); setForm(newLogForm()); setExercises([]); }
+  function reset() { setEditing(undefined); setEditingVersion(undefined); setForm(newLogForm()); setExercises([]); }
   async function save() {
     if (!account) return;
     setSaving(true);
     try {
-      await account.engine.save(formEntry(kind, form, exercises, imperial), editing);
+      await account.engine.save(formEntry(kind, form, exercises, imperial), editing, editingVersion);
       reset(); await refresh(false); setMessage('Saved on this device. Synchronizing...'); await refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to save.'); }
     finally { setSaving(false); }
@@ -79,7 +92,7 @@ export default function LogScreen() {
         <Button title="Add exercise" onPress={() => setExercises((current) => [...current, { name: '', sets: [{ reps: '', weight: '0' }] }])} />
         <Text style={ui.text}>Associate with a WHOOP workout to avoid counting it twice.</Text>
         <Button title={form.linkedWhoopWorkoutId ? 'Remove WHOOP association' : 'No WHOOP association'} onPress={() => setForm((current) => ({ ...current, linkedWhoopWorkoutId: '' }))} />
-        {choices.slice(0, 30).map((choice) => <Button key={choice.id} title={(form.linkedWhoopWorkoutId === choice.id ? 'Linked: ' : 'Link: ') + choice.label}
+        {choices.map((choice) => <Button key={choice.id} title={(form.linkedWhoopWorkoutId === choice.id ? 'Linked: ' : 'Link: ') + choice.label}
           onPress={() => setForm((current) => ({ ...current, linkedWhoopWorkoutId: choice.id }))} />)}
       </>}
       {kind === 'nutrition' && <>{field('meal', 'Meal or food')}{field('calories', 'Calories (kcal)', true)}

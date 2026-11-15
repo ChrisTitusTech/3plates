@@ -1,4 +1,5 @@
 import { Link } from 'expo-router';
+import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { Button, Card, FitnessPage, ui } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
@@ -9,7 +10,8 @@ import { workoutCount } from '../src/lib/workout-history';
 export default function TodayScreen() {
   const { account, snapshot, message, busy, refresh } = useFitness();
   const today = localDay();
-  const whoop = useWhoop(account?.user.id, today, today);
+  const [revision, setRevision] = useState(0);
+  const whoop = useWhoop(account?.user.id, today, today, revision);
   const entries = snapshot.logs.filter((log) => log.entry?.date === today).map((log) => log.entry!);
   const nutrition = entries.filter((entry) => entry.kind === 'nutrition');
   const calories = nutrition.reduce((total, entry) => total + entry.details.calories, 0);
@@ -20,7 +22,7 @@ export default function TodayScreen() {
   return <FitnessPage title={account?.user.displayName ? `Today, ${account.user.displayName}` : 'Today'}>
     <Text style={ui.muted}>{today}</Text>
     <Text accessibilityLiveRegion="polite" style={ui.notice}>{message} {snapshot.pending ? `${snapshot.pending} changes waiting to sync.` : ''}</Text>
-    <Button title="Refresh and sync" disabled={busy} onPress={() => { void refresh(); }} />
+    <Button title="Refresh and sync" disabled={busy} onPress={() => { setRevision((value) => value + 1); void refresh(); }} />
     <Card title="Your day">
       <View style={ui.row}>
         <Text style={ui.text}>{calories.toFixed(0)} kcal logged</Text><Text style={ui.text}>{protein.toFixed(0)} g protein</Text>

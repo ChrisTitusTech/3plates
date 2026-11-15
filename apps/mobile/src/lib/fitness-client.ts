@@ -35,7 +35,11 @@ export async function fitnessRequest<T>(path: string, method = 'GET', body?: unk
     try { actual = await checkedOwner; } catch (error) { checkedOwner = null; throw error; }
     if (actual !== expectedOwner) throw new SyncFailure(401, 'Queued entries belong to a different account.');
   }
-  return (await fetchWithTimeout(path, token, method, body)).json() as Promise<T>;
+  const result = await (await fetchWithTimeout(path, token, method, body)).json() as T;
+  if (await getSessionToken() !== token || (expectedOwner && (await getCachedUser())?.id !== expectedOwner)) {
+    throw new SyncFailure(401, 'Your active account changed.');
+  }
+  return result;
 }
 export async function currentFitnessAccount() {
   const { data: user } = await fetchMe();

@@ -4,6 +4,8 @@ import type { HealthLog, HealthMutation } from '@3plates/contract';
 const user = { id: '00000000-0000-4000-8000-000000000001', email: 'synthetic@example.test', displayName: 'Synthetic Athlete' };
 async function setup(page: Page, signedIn = true) {
   let offline = false;
+  let dashboardReads = 0;
+  let activeUser = user;
   const logs = new Map<string, HealthLog>();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -19,13 +21,13 @@ async function setup(page: Page, signedIn = true) {
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
     switch (url.pathname) {
       case '/auth/providers': return send({ providers: ['google', 'apple', 'whoop'] });
-      case '/users/me': return send(user);
+      case '/users/me': return send(activeUser);
       case '/users/me/preferences': return send({ theme: 'system', units: 'metric', reminderTime: '07:00' });
       case '/users/me/identities': return send({ providers: ['whoop'], whoopEnabled: true });
       case '/users/me/whoop/profile': return send({ name: user.displayName, connected: true, shareUrl: null });
       case '/users/me/whoop/sync': return send({ connected: true, lastSync: new Date().toISOString(), jobs: [] });
       case '/users/me/whoop/workouts': return send({ workouts: [] });
-      case '/users/me/whoop/dashboard': return send(sample(url.searchParams.get('start')!, url.searchParams.get('end')!));
+      case '/users/me/whoop/dashboard': dashboardReads++; return send(sample(url.searchParams.get('start')!, url.searchParams.get('end')!));
       case '/users/me/logs': {
         if (request.method() === 'GET') return send({ logs: [...logs.values()], nextCursor: null });
         const mutation = request.postDataJSON() as HealthMutation;
@@ -38,7 +40,15 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, setOffline: (value: boolean) => { offline = value; } };
+  return { logs, errors, dashboardReads: () => dashboardReads,
+    async switchAccount() {
+      activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
+      await page.evaluate((next) => {
+        localStorage.setItem('@3plates/session-token', 'second-session');
+        localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: next, updatedAt: new Date().toISOString() }));
+        window.dispatchEvent(new StorageEvent('storage', { key: '@3plates/session-token' }));
+      }, activeUser);
+    }, setOffline: (value: boolean) => { offline = value; } };
 }
 
 test('sign-in offers Google, Apple, and WHOOP', async ({ page }) => {
@@ -72,6 +82,9 @@ test('offline hydration survives reload, syncs, edits, and deletes', async ({ pa
 test('unified navigation renders WHOOP charts, account controls, and structured workout input', async ({ page }, info) => {
   const f = await setup(page); await page.goto('/today');
   await expect(page.getByRole('heading', { name: /Today, Synthetic/ })).toBeVisible();
+  await expect.poll(f.dashboardReads).toBe(1);
+  await page.getByRole('button', { name: 'Refresh and sync', exact: true }).click();
+  await expect.poll(f.dashboardReads).toBe(2);
   await page.getByRole('link', { name: 'Trends', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'WHOOP overview', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Lifetime', exact: true })).toBeVisible();
@@ -116,4 +129,33 @@ test('nutrition, sleep, recovery, weight, and goals save through the actual form
   await page.getByRole('button', { name: 'goal', exact: true }).click();
   await page.getByLabel('Target in the selected units').fill('4'); await save('goal');
   expect(f.logs.size).toBe(5); expect(f.errors).toEqual([]);
+});
+
+
+test('an open form cannot overwrite an edit that arrives from another device', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await expect(page.getByRole('button', { name: 'Save entry', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'hydration', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('250');
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect.poll(() => f.logs.size).toBe(1);
+  await page.getByRole('button', { name: 'Edit hydration entry' }).click();
+  await page.getByLabel('Water (mL)').fill('400');
+  const saved = [...f.logs.values()][0];
+  if (saved.entry?.kind !== 'hydration') throw new Error('Missing hydration fixture');
+  f.logs.set(saved.id, { ...saved, version: 2, entry: { ...saved.entry, details: { milliliters: 900 } } });
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect(page.getByText('900 mL', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByText(/changed while you were editing/)).toBeVisible();
+  await expect(page.getByLabel('Water (mL)')).toHaveValue('400');
+  expect(f.logs.get(saved.id)?.version).toBe(2); expect(f.errors).toEqual([]);
+});
+
+test("switching accounts clears the previous account\'s open form", async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await page.getByLabel('Workout title').fill('Private unsaved workout');
+  await f.switchAccount();
+  await expect(page.getByLabel('Workout title')).toHaveValue('');
+  expect(f.errors).toEqual([]);
 });

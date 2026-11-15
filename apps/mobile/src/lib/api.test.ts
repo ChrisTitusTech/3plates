@@ -664,3 +664,20 @@ test('account caches stay separate and a late response cannot overwrite the acti
   await assert.rejects(late, /active account changed/);
   assert.equal(JSON.parse((await storage.getItem('@3plates/cache/me'))!).value.id, 'bob');
 });
+
+test('upgrading moves legacy offline changes into their original account before an account switch', async (t) => {
+  const storage = createMemoryStorage(); const alice = createBaseUser(); const bob = { ...alice, id: 'bob' };
+  await storage.setItem('@3plates/cache/me', JSON.stringify({ value: alice, updatedAt: new Date().toISOString() }));
+  await storage.setItem('@3plates/pending-mutations', JSON.stringify([{ id: 'old-progress', type: 'updateProgress', createdAt: new Date().toISOString(), payload: createProgress() }]));
+  await storage.setItem('@3plates/cache/progress', JSON.stringify({ value: createProgress(), updatedAt: new Date().toISOString() }));
+  let owner = bob; let writes = 0;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: owner }), updateProgress: async () => { writes++; return { status: 200, body: createProgress() }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('bob-token'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 0); assert.equal(writes, 0);
+  assert.equal(await storage.getItem('@3plates/pending-mutations'), null);
+  assert.equal(JSON.parse((await storage.getItem(`@3plates/pending-mutations/user/${alice.id}`))!).length, 1);
+  owner = alice; await setSessionToken('alice-token'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 1);
+  const flushed = await flushPendingMutations(); assert.equal(flushed.flushed, 1); assert.equal(writes, 1);
+});

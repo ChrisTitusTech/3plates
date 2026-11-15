@@ -216,6 +216,10 @@ async function assertCurrentSession(token: string) {
 
 async function writeCache<T>(key: string, value: T, token?: string) {
   if (token) await assertCurrentSession(token);
+  if (key === storageKeys.me) {
+    const previous = await readCache<User>(storageKeys.me);
+    if (previous) await migrateLegacyCache(previous.id);
+  }
   const destination = await accountStorageKey(key);
   if (token) await assertCurrentSession(token);
   const envelope: CacheEnvelope<T> = {
@@ -229,7 +233,36 @@ async function writeCache<T>(key: string, value: T, token?: string) {
 async function accountStorageKey(key: string) {
   if (key === storageKeys.me || key.startsWith(storageKeys.workoutsPrefix)) return key;
   const user = await readCache<User>(storageKeys.me);
+  if (user) await migrateLegacyCache(user.id);
   return user ? `${key}/user/${user.id}` : key;
+}
+
+let migration: Promise<unknown> = Promise.resolve();
+const migratedUsers = new Set<string>();
+function migrateLegacyCache(userId: string) {
+  const run = migration.catch(() => undefined).then(async () => {
+    if (migratedUsers.has(userId)) return;
+    for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
+      const legacy = await storage.getItem(key);
+      if (!legacy) continue;
+      const destination = `${key}/user/${userId}`;
+      const existing = await storage.getItem(destination);
+      let value = existing ?? legacy;
+      if (key === storageKeys.pendingMutations && existing) {
+        const oldQueue = JSON.parse(legacy) as PendingMutation[];
+        const newQueue = JSON.parse(existing) as PendingMutation[];
+        if (!Array.isArray(oldQueue) || !Array.isArray(newQueue)) throw new Error('Offline changes need storage recovery. They have not been discarded.');
+        value = JSON.stringify([...oldQueue.filter((item) => !newQueue.some((other) => other.id === item.id)), ...newQueue]);
+      }
+      // Copy before removal. An interrupted migration can safely repeat; receipt
+      // IDs in a pending queue are retained, including across account switches.
+      await storage.setItem(destination, value);
+      await storage.removeItem(key);
+    }
+    migratedUsers.add(userId);
+  });
+  migration = run;
+  return run;
 }
 
 async function readCache<T>(key: string): Promise<T | null> {
@@ -383,12 +416,29 @@ export async function getSessionToken() {
   return readSessionToken();
 }
 
+let sessionGeneration = 0;
+const sessionListeners = new Set<() => void>();
+export const getSessionGeneration = () => sessionGeneration;
+export function subscribeSession(listener: () => void) {
+  sessionListeners.add(listener);
+  return () => { sessionListeners.delete(listener); };
+}
+function sessionChanged() {
+  sessionGeneration++;
+  for (const listener of sessionListeners) listener();
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('storage', (event) => {
+  if (event.key === storageKeys.sessionToken || event.key === null) sessionChanged();
+});
+
 export async function setSessionToken(token: string | null) {
   await writeSessionToken(token);
+  sessionChanged();
 }
 
 export async function clearSession() {
   await writeSessionToken(null);
+  sessionChanged();
   for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
     await storage.removeItem(await accountStorageKey(key));
   }
@@ -905,10 +955,18 @@ export async function flushPendingMutations() {
     };
   }
 
+  const owner = await getCachedUser();
+  if (owner) {
+    const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token) });
+    if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+    await assertCurrentSession(token);
+  }
+
   const remaining: PendingMutation[] = [];
   let flushed = 0;
 
   for (const mutation of queue) {
+    await assertCurrentSession(token);
     try {
       await executePendingMutation(mutation, token);
       flushed += 1;
@@ -922,6 +980,7 @@ export async function flushPendingMutations() {
     }
   }
 
+  await assertCurrentSession(token);
   await writePendingMutations(remaining);
 
   return {
@@ -940,6 +999,7 @@ export function __setApiTestAdapters(input: {
 }) {
   if (input.storage) {
     storage = input.storage;
+    migratedUsers.clear(); migration = Promise.resolve();
   }
 
   if (input.client) {
@@ -949,5 +1009,6 @@ export function __setApiTestAdapters(input: {
 
 export function __resetApiTestAdapters() {
   storage = defaultStorage;
+  migratedUsers.clear(); migration = Promise.resolve();
   contractClient = apiClient;
 }

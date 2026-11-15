@@ -20,6 +20,7 @@ export default function AccountScreen() {
   const [sync, setSync] = useState<Sync | null>(null);
   const [message, setMessage] = useState('Loading account settings...');
   const [busy, setBusy] = useState(false);
+  const [loadedOwner, setLoadedOwner] = useState<string>();
   const [confirm, setConfirm] = useState('');
   const [deleteText, setDeleteText] = useState('');
   const [shareKinds, setShareKinds] = useState(['cycle', 'sleep', 'recovery', 'workout']);
@@ -45,6 +46,7 @@ export default function AccountScreen() {
         setShareStart(profile.sharePolicy.start ?? ''); setShareEnd(profile.sharePolicy.end ?? '');
       }
     } else { setMember(null); setSync(null); }
+    setLoadedOwner(owner);
   }
   useEffect(() => { if (owner) void load().then(() => setMessage('Account settings loaded.')).catch((e) => setMessage(e.message)); }, [owner]);
   async function action(run: () => Promise<void>, success: string) {
@@ -65,6 +67,8 @@ export default function AccountScreen() {
     if (owner && discard) await clearFitnessCache(owner, true);
     await signOutAndClearSession(); router.replace('/sign-in');
   }
+  if (!owner || loadedOwner !== owner) return <FitnessPage title="Account"><Text style={ui.notice}>{message}</Text>
+    <Button title="Retry loading account" disabled={busy || !owner} onPress={() => { void action(load, 'Account settings loaded.'); }} /></FitnessPage>;
   return <FitnessPage title="Account">
     <Text accessibilityLiveRegion="polite" style={ui.notice}>{message}</Text>
     <Text style={ui.text}>{account?.user.displayName ?? 'Your account'}{account?.user.email ? ` / ${account.user.email}` : ''}</Text>

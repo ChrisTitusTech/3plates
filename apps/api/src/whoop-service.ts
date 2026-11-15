@@ -8,7 +8,7 @@ export interface WhoopService {
   request(subject: string, operation: WhoopOperation, method: 'GET' | 'POST' | 'DELETE',
     query?: Record<string, string>, body?: unknown): Promise<{ status: number; body: string; contentType: string }>;
   ownsWorkout(subject: string, sourceId: string): Promise<boolean>;
-  workouts(subject: string): Promise<Array<{ id: string; date: string; start: string; label: string }>>;
+  workouts(subject: string, date?: string): Promise<Array<{ id: string; date: string; start: string; label: string }>>;
   close(): Promise<void>;
 }
 
@@ -34,7 +34,7 @@ export function createWhoopService(): WhoopService | undefined {
     },
     async request(...args) { return (await module()).memberRequest(...args); },
     async ownsWorkout(...args) { return (await module()).ownsWorkout(...args); },
-    async workouts(subject) { return (await module()).workoutChoices(subject); },
+    async workouts(subject, date) { return (await module()).workoutChoices(subject, date); },
     async close() { await (await module()).closeIntegration(); },
   };
 }

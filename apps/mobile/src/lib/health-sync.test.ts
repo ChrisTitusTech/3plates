@@ -106,3 +106,13 @@ test('all paginated records, including remote deletion markers, replace cached v
   assert.equal((await engine.snapshot()).logs.length, 2);
   assert.equal((await engine.snapshot()).logs.some((log) => log.id === id), false);
 });
+
+test('a form keeps its original version when background sync learns about another device edit', async () => {
+  const f = fixture(); const engine = f.engine(); const id = await engine.save(water()); await engine.synchronize();
+  const openedVersion = (await engine.snapshot()).logs[0].version;
+  f.records.set(id, { ...f.records.get(id)!, version: 2, entry: water(900) });
+  await engine.synchronize();
+  await assert.rejects(engine.save(water(400), id, openedVersion), /changed while you were editing/);
+  assert.deepEqual((await engine.snapshot()).logs[0].entry, water(900));
+  assert.equal((await engine.snapshot()).pending, 0);
+});

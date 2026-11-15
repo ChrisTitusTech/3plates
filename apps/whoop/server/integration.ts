@@ -92,10 +92,10 @@ export async function closeIntegration() {
   await client.end({ timeout: 5 });
 }
 
-export async function workoutChoices(subject: string) {
+export async function workoutChoices(subject: string, date?: string) {
   const rows = await db.select({ record: records }).from(records)
     .innerJoin(members, eq(records.memberId, members.id))
-    .where(and(eq(members.whoopId, subject), eq(records.kind, 'workout'), eq(records.deleted, false)))
+    .where(and(eq(members.whoopId, subject), eq(records.kind, 'workout'), eq(records.deleted, false), date ? eq(records.localDate, date) : undefined))
     .orderBy(desc(records.start)).limit(200);
   return rows.map(({ record }) => ({ id: record.sourceId, date: record.localDate,
     start: record.start.toISOString(), label: `${record.localDate} ${detail(record).sport ?? 'Workout'}` }));

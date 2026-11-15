@@ -61,11 +61,14 @@ export function createHealthSync(options: {
         pending: state.pending.length, conflicts: state.pending.filter((item) => item.error),
       };
     }),
-    save: (entry: HealthLogInput, id = options.uuid()) => exclusive(async () => {
+    save: (entry: HealthLogInput, id = options.uuid(), expectedVersion?: number) => exclusive(async () => {
       const value = healthLogInputSchema.parse(entry);
       const state = await read();
       if (state.pending.some((item) => item.mutation.id === id && item.error)) throw new Error('Resolve the sync conflict before editing it.');
       const current = state.records[id];
+      if (expectedVersion !== undefined && expectedVersion !== (current?.version ?? 0)) {
+        throw new Error('This entry changed while you were editing. Your form is preserved; reload the entry before saving.');
+      }
       const now = new Date().toISOString();
       const mutation: HealthMutation = { mutationId: options.uuid(), id, expectedVersion: current?.version ?? 0, entry: value };
       state.pending.push({ mutation });

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { authProviderSchema, healthLogQuerySchema, healthMutationSchema } from '@3plates/contract';
+import { authProviderSchema, calendarDateSchema, healthLogQuerySchema, healthMutationSchema } from '@3plates/contract';
 import { z } from 'zod';
 import type { HealthStore } from '../health-store.js';
 import type { UserStateStore } from '../user-state-store.js';
@@ -38,7 +38,10 @@ export async function registerFitnessRoutes(app: FastifyInstance, store: UserSta
       }
     });
   });
-  app.get('/users/me/whoop/workouts', async (request) => ({ workouts: await integration().workouts(await subject(owner(request))) }));
+  app.get('/users/me/whoop/workouts', async (request) => {
+    const { date } = z.object({ date: calendarDateSchema.optional() }).parse(request.query);
+    return { workouts: await integration().workouts(await subject(owner(request)), date) };
+  });
   app.get('/users/me/identities', async (request) => ({
     providers: [...new Set((await store.listIdentities(owner(request))).map((identity) => identity.provider))],
     whoopEnabled: !!whoop,

@@ -676,4 +676,6 @@ test("integrated member resolver isolates owners and public headers cannot imper
   assert.equal(await ownsWorkout('2', 'owned-workout'), false);
   assert.equal((await workoutChoices('1'))[0].id, 'owned-workout');
   assert.deepEqual(await workoutChoices('2'), []);
+  assert.equal((await workoutChoices('1', '2026-01-02'))[0].id, 'owned-workout');
+  assert.deepEqual(await workoutChoices('1', '2026-01-03'), []);
 });

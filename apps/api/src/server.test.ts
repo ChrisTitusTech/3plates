@@ -8,7 +8,7 @@ import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-import { assertApiError, createFakeProvider, createTestAuthApp, signIn } from './test-support.js';
+import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
@@ -33,7 +33,9 @@ function createMissingUserStateApp() {
     requestDeletion: async () => {}, pendingDeletions: async () => [], deleteAccount: async () => {},
     getOrCreateUser: async () => sessionUser,
     getUserById: async () => null,
+    getAuthenticationGeneration: async () => 0,
     resolveOAuthIdentity: async () => ({
+      authGeneration: 0,
       user: sessionUser,
       isNewUser: false,
       effectiveLevel: 1,
@@ -1392,3 +1394,10 @@ test('oversized bodies are rejected before schema validation', async () => {
     await app.close();
   }
 });
+
+for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const) {
+  test(`memory unlink rejects ${phase} authorization and permits fresh remaining-provider login`, async (t) => {
+    const context = createAuthenticatedApp(); t.after(() => context.app.close());
+    await assertUnlinkInvalidatesAuthentication(context, phase);
+  });
+}

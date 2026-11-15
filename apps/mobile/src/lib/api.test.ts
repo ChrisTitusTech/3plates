@@ -7,6 +7,7 @@ import {
   __resetApiTestAdapters,
   __setApiTestAdapters,
   clearSession,
+  expireSession,
   completeAuthCallback,
   createManualWorkout,
   deleteManualWorkout,
@@ -909,4 +910,29 @@ test('a new sign-in waits for old local session cleanup to finish', async (t) =>
   const signIn = setSessionToken('bob').then(() => fetchMe());
   release(); await clear; await signIn;
   assert.equal(await getSessionToken(), 'bob'); assert.equal((await getCachedUser())?.id, 'user-1');
+});
+
+test('session expiry preserves account-owned offline changes for same-account reauthentication', async (t) => {
+  const storage = createMemoryStorage(); const alice = createBaseUser(); let owner = alice; let offline = true;
+  let writes = 0;
+  const preferences: Preferences = { theme: 'dark', units: 'imperial', reminderTime: '08:00' };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: owner }),
+    updateProgress: async () => { if (offline) throw new Error('Network request failed'); writes++; return { status: 200, body: createProgress() }; },
+    updatePreferences: async () => { if (offline) return { status: 503, body: null }; writes++; return { status: 200, body: preferences }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice-before-expiry'); await fetchMe();
+  await updateProgress(createProgress()); await updatePreferences(preferences);
+  assert.equal(await getPendingMutationCount(), 2);
+  const expiredGeneration = getSessionGeneration();
+  await expireSession(expiredGeneration);
+  assert.equal(await getSessionToken(), null); assert.equal(await getCachedUser(), null);
+  owner = { ...alice, id: 'bob' }; await setSessionToken('bob-token'); await fetchMe(); offline = false;
+  assert.equal(await getPendingMutationCount(), 0); await flushPendingMutations(); await syncPendingPreferences();
+  assert.equal(writes, 0);
+  owner = alice; await setSessionToken('alice-after-expiry'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 2);
+  assert.equal(await expireSession(expiredGeneration), false);
+  assert.equal(await getSessionToken(), 'alice-after-expiry');
+  await flushPendingMutations(); await syncPendingPreferences();
+  assert.equal(await getPendingMutationCount(), 0); assert.equal(writes, 2);
 });

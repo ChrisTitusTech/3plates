@@ -114,3 +114,47 @@ export function assertApiError(body: unknown, code: string, message: string) {
     },
   });
 }
+
+// Exercise the same revocation interleavings against both repository adapters.
+export async function assertUnlinkInvalidatesAuthentication(
+  context: ReturnType<typeof createTestAuthApp>,
+  phase: 'pending-link' | 'consumed-link' | 'resolved-login',
+) {
+  const { app, store, authRepository, appleProfile } = context;
+  const session = await signIn(app, 'google');
+  await store.resolveOAuthIdentity({ ...appleProfile, linkedUserId: session.user.id });
+  const start = await app.inject({ method: 'POST', url: phase === 'resolved-login' ? '/auth/start' : '/auth/link',
+    headers: { authorization: `Bearer ${session.sessionToken}` }, payload: { provider: 'apple' } });
+  assert.equal(start.statusCode, 200);
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const resolveIdentity = store.resolveOAuthIdentity.bind(store);
+  const createSession = authRepository.createSession.bind(authRepository);
+  if (phase === 'consumed-link') store.resolveOAuthIdentity = async (input) => {
+    entered(); await waiting; return resolveIdentity(input);
+  };
+  if (phase === 'resolved-login') authRepository.createSession = async (...args) => {
+    entered(); await waiting; return createSession(...args);
+  };
+  const callback = () => app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${start.json().state}` });
+  try {
+    const pending = phase === 'pending-link' ? null : callback();
+    if (pending) await started;
+    await store.unlinkIdentity(session.user.id, 'apple');
+    release();
+    const result = await (pending ?? callback());
+    assert.ok(result.statusCode >= 400 && result.statusCode < 500, result.body);
+    assert.deepEqual((await store.listIdentities(session.user.id)).map((identity) => identity.provider), ['google']);
+    assert.equal(await store.getAuthenticationGeneration(session.user.id), 1);
+    const revoked = await app.inject({ method: 'GET', url: '/users/me', headers: { authorization: `Bearer ${session.sessionToken}` } });
+    assert.equal(revoked.statusCode, 401);
+  } finally {
+    release(); store.resolveOAuthIdentity = resolveIdentity; authRepository.createSession = createSession;
+  }
+  const fresh = await signIn(app, 'google');
+  assert.equal(fresh.user.id, session.user.id);
+  const me = await app.inject({ method: 'GET', url: '/users/me', headers: { authorization: `Bearer ${fresh.sessionToken}` } });
+  assert.equal(me.statusCode, 200);
+}

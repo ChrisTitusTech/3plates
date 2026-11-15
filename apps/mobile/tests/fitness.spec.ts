@@ -504,3 +504,34 @@ test('switching to an account without a sharing policy resets its sharing form',
   await expect(page.getByLabel('Expire in days (1-365)')).toHaveValue('7');
   expect(f.errors).toEqual([]);
 });
+
+test('focused Today refreshes a completed WHOOP import without a manual refresh', async ({ page }) => {
+  const f = await setup(page); let complete = false; let reads = 0;
+  await page.clock.install();
+  await page.route('**/users/me/whoop/dashboard?**', async (route) => {
+    const url = new URL(route.request().url()); reads++;
+    const data = sample(url.searchParams.get('start')!, url.searchParams.get('end')!);
+    await route.fulfill({ json: { ...data, lastSync: complete ? new Date().toISOString() : null }, headers: { 'access-control-allow-origin': '*' } });
+  });
+  await page.goto('/today');
+  await expect(page.getByText(/WHOOP last synchronized: initial import in progress/)).toBeVisible();
+  complete = true; await page.clock.fastForward(31000);
+  await expect.poll(() => reads).toBeGreaterThan(1);
+  await expect(page.getByText(/WHOOP last synchronized:/)).toBeVisible();
+  await expect(page.getByText(/initial import in progress/)).toHaveCount(0);
+  expect(f.errors).toEqual([]);
+});
+
+for (const path of ['/training', '/trends']) test(`${path} shows account failure and retry before rendering history`, async ({ page }) => {
+  const f = await setup(page);
+  await page.addInitScript(() => localStorage.removeItem('@3plates/cache/me'));
+  f.setApiUnavailable(true); await page.goto(path);
+  await expect(page.getByRole('button', { name: 'Retry loading account' })).toBeEnabled();
+  await expect(page.getByText('Unexpected API response.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: path === '/training' ? 'History range' : 'Manual history', exact: true })).toHaveCount(0);
+  f.setApiUnavailable(false); await page.getByRole('button', { name: 'Retry loading account' }).click();
+  await expect(page.getByRole('heading', { name: path === '/training' ? 'History range' : 'Manual history', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry loading account' })).toHaveCount(0);
+  if (path === '/trends') await expect(page.getByRole('img', { name: /Recovery.*observations.*Minimum.*maximum/ }).first()).toBeVisible();
+  expect(f.errors).toEqual([]);
+});

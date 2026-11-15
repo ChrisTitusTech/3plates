@@ -13,6 +13,7 @@ import {
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: text('email'),
+  authGeneration: integer('auth_generation').notNull().default(0),
   deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
   displayName: text('display_name'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -46,6 +47,7 @@ export const oauthTransactions = pgTable(
     state: text('state').notNull().unique(),
     provider: text('provider').notNull(),
     purpose: text('purpose').notNull(),
+    authGeneration: integer('auth_generation'),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     redirectTo: text('redirect_to'),
     codeVerifier: text('code_verifier').notNull(),
@@ -65,6 +67,7 @@ export const authSessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
+    authGeneration: integer('auth_generation').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),

@@ -15,7 +15,7 @@ const labels: Record<Metric, string> = { strain: 'Strain', sleep: 'Sleep perform
 const value = (n: number | null | undefined) => n == null ? 'Unavailable' : n.toFixed(1);
 export default function TrendsScreen() {
   const { ui, colors } = useFitnessStyles();
-  const { account, snapshot } = useFitness();
+  const { account, snapshot, message, busy, refresh } = useFitness();
   const [start, setStart] = useState(localDay(new Date(Date.now() - 29 * 86400000)));
   const [end, setEnd] = useState(localDay());
   const [range, setRange] = useState({ start, end });
@@ -49,6 +49,8 @@ export default function TrendsScreen() {
     }
     setError(''); setRange({ start, end }); setDetailLimit(15); setRevision((n) => n + 1);
   }
+  if (!account) return <FitnessPage title="Trends"><Text accessibilityLiveRegion="polite" style={ui.notice}>{message}</Text>
+    <Button title="Retry loading account" disabled={busy} onPress={() => { void refresh(); }} /></FitnessPage>;
   return <FitnessPage title="Trends">
     <Card title="Date range"><View style={ui.row}><Field label="Start (YYYY-MM-DD)" value={start} onChange={setStart} />
       <Field label="End (YYYY-MM-DD)" value={end} onChange={setEnd} /></View>

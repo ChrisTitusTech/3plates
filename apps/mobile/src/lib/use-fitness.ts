@@ -3,7 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { AppState } from 'react-native';
 import type { User } from '@3plates/contract';
 import { currentFitnessAccount } from './fitness-client';
-import { clearSession, getSessionGeneration, getSessionToken, subscribeSession } from './api';
+import { expireSession, getSessionGeneration, getSessionToken, subscribeSession } from './api';
 import { SyncFailure, type HealthSync } from './health-sync';
 
 export function useFitness() {
@@ -37,10 +37,9 @@ export function useFitness() {
     } catch (error) {
       if (!current()) return;
       if ([401, 404].includes((error as { status?: number }).status ?? 0)) {
-        // Keep the per-user health queue for reauthentication, but remove the
-        // invalid session so Sign In cannot bounce back into this screen.
-        await clearSession();
-        if (focused.current) { setAccount(null); setSnapshot({ logs: [], pending: 0, conflicts: [] }); router.replace('/sign-in'); }
+        // Expire credentials while retaining all account-owned offline changes.
+        const expired = await expireSession(generation);
+        if (expired && focused.current) { setAccount(null); setSnapshot({ logs: [], pending: 0, conflicts: [] }); router.replace('/sign-in'); }
       }
       if (focused.current) setMessage(error instanceof Error ? error.message : 'Unable to load your account.');
     } finally {

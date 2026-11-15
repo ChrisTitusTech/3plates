@@ -21,7 +21,7 @@ export function MetricChart({ label, points, scatter = false }: {
     if (point.value === null || !Number.isFinite(point.value)) { if (segments.at(-1)!.length) segments.push([]); return; }
     const { x, y } = xy(point, index); segments.at(-1)!.push(`${x},${y}`);
   });
-  return <View style={{ gap: 6 }} accessibilityLabel={`${label}. ${available.length} observations. Minimum ${min.toFixed(1)}, maximum ${max.toFixed(1)}.`}>
+  return <View accessible accessibilityRole="image" style={{ gap: 6 }} accessibilityLabel={`${label}. ${available.length} observations. Minimum ${min.toFixed(1)}, maximum ${max.toFixed(1)}.`}>
     <Text style={ui.heading}>{label}</Text>
     <Svg viewBox="0 0 700 210" width="100%" height={210} accessible={false}>
       <Line x1={45} y1={175} x2={665} y2={175} stroke={colors.border} />

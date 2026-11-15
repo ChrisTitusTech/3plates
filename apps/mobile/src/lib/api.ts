@@ -502,6 +502,17 @@ export function setSessionToken(token: string | null) {
   });
 }
 
+export function expireSession(expectedGeneration = getSessionGeneration()) {
+  return sessionTransition(async () => {
+    if (getSessionGeneration() !== expectedGeneration) return false;
+    await migratePreviousProfile();
+    if (getSessionGeneration() !== expectedGeneration) return false;
+    await writeSessionToken(null);
+    sessionChanged();
+    return true;
+  });
+}
+
 export function clearSession(expectedGeneration = getSessionGeneration()) {
   return sessionTransition(async () => {
     assertSessionGeneration(expectedGeneration);

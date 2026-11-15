@@ -132,3 +132,34 @@ tests pass; the 5 unchanged web deployment tests retain their prior evidence
 syntax/ShellCheck/shfmt, and web/Android/iOS exports pass. Independent Codex
 review of the batch completed with no actionable regressions. CI and remote
 reviews must still complete on the published commit before merge.
+
+
+The latest review batch versions account authentication. Unlinking cancels pending
+OAuth links and invalidates callbacks that already resolved an identity; session
+creation and rotation validate that version while holding the same account lock.
+The additive 0009 migration is documented in the operations guide. Memory and
+PostgreSQL regressions cover pending links, consumed callbacks, late session
+creation, and fresh sign-in through the remaining provider.
+
+WHOOP refreshes on focus, foreground, and every 30 seconds while focused. Training
+and Trends expose initial account failures with retry instead of empty history.
+Chart summaries are accessibility elements. Session expiry removes credentials
+while preserving account-owned queued progress/preferences; reauthentication can
+replay them, and a delayed expiry cannot sign out a newer session. Explicit
+sign-out/discard keeps its existing cleanup behavior.
+
+
+Validation for this batch: `pnpm test` passes 6 contract, 69 API (including
+PostgreSQL), and 49 mobile tests without skips. All 52 unified desktop/phone
+browser tests pass. Together with the unchanged WHOOP unit/database/legacy
+browser/operations and web-deployment evidence, this is 271 tests. Workspace
+typechecks, API build, production web/Android/iOS exports, migration generation
+(no drift), and the migrated database/API smoke test pass. The smoke test was
+rerun after starting the local API; the browser suite was rerun against a stable
+export after an overlapping export caused 404s and an error-message assertion
+was corrected. Real-device VoiceOver/TalkBack acceptance remains a release gate.
+
+The independent Codex review of this batch completed with no actionable
+regressions; its targeted tests and typechecks also passed. `pnpm audit` reports
+no known vulnerabilities. CI and remote review must pass on the published head
+before merge; the production database and deployed applications are unchanged.

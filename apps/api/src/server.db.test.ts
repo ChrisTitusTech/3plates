@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { createTestAuthApp, signIn } from './test-support.js';
+import { assertUnlinkInvalidatesAuthentication, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -896,3 +896,9 @@ dbTest('concurrent session rotation consumes its source exactly once', async () 
     assert.equal(valid.filter(Boolean).length, 1);
   });
 });
+
+for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const) {
+  dbTest(`DB unlink rejects ${phase} authorization and permits fresh remaining-provider login`, async () => {
+    await withDbApp((context) => assertUnlinkInvalidatesAuthentication(context, phase));
+  });
+}

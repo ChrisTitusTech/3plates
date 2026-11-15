@@ -15,7 +15,8 @@ import type { NotificationDevice, Preferences } from '@3plates/contract';
 
 import {
   ApiRequestError,
-  clearSession,
+  expireSession,
+  getSessionGeneration,
   fetchPreferences,
   flushPendingMutations,
   getPendingMutationCount,
@@ -60,10 +61,9 @@ export default function PreferencesScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleInvalidAuth = async (loadError: unknown) => {
+  const handleInvalidAuth = async (loadError: unknown, generation: number) => {
     if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-      await clearSession();
-      router.replace('/sign-in');
+      if (await expireSession(generation)) router.replace('/sign-in');
       return true;
     }
 
@@ -71,6 +71,7 @@ export default function PreferencesScreen() {
   };
 
   const loadPreferences = async () => {
+    const generation = getSessionGeneration();
     setStatus('loading');
     setMessage(null);
     setError(null);
@@ -92,7 +93,7 @@ export default function PreferencesScreen() {
         setMessage('Showing cached preferences while offline.');
       }
     } catch (loadError) {
-      if (await handleInvalidAuth(loadError)) {
+      if (await handleInvalidAuth(loadError, generation)) {
         return;
       }
 
@@ -108,6 +109,7 @@ export default function PreferencesScreen() {
   }, [sessionReady]);
 
   const withBusy = async (action: () => Promise<void>) => {
+    const generation = getSessionGeneration();
     setBusy(true);
     setMessage(null);
     setError(null);
@@ -116,7 +118,7 @@ export default function PreferencesScreen() {
       await action();
       setPendingCount(await getPendingMutationCount());
     } catch (actionError) {
-      if (await handleInvalidAuth(actionError)) {
+      if (await handleInvalidAuth(actionError, generation)) {
         return;
       }
 

@@ -6,7 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
+import { ApiRequestError, expireSession, getSessionGeneration, fetchWorkoutsByMode } from '../src/lib/api';
 import {
   createManualWorkoutForm,
   deleteManualWorkoutEntry,
@@ -69,6 +69,7 @@ export default function WorkoutsScreen() {
   }, [manualForm, manualType]);
 
   const loadWorkouts = async (nextMode: WorkoutMode, page = 1) => {
+    const generation = getSessionGeneration();
     setStatus('loading');
     setError(null);
     setMessage(null);
@@ -88,8 +89,7 @@ export default function WorkoutsScreen() {
       }
     } catch (loadError) {
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-        await clearSession();
-        router.replace('/sign-in');
+        if (await expireSession(generation)) router.replace('/sign-in');
         return;
       }
 

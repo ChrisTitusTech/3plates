@@ -13,7 +13,7 @@ import { workoutCount } from '../src/lib/workout-history';
 
 export default function TrainingScreen() {
   const { ui } = useFitnessStyles();
-  const { account, snapshot } = useFitness();
+  const { account, snapshot, message, busy, refresh } = useFitness();
   const [start, setStart] = useState(localDay(new Date(Date.now() - 89 * 86400000)));
   const [end, setEnd] = useState(localDay());
   const [range, setRange] = useState({ start, end });
@@ -37,6 +37,8 @@ export default function TrainingScreen() {
     && (filters.maxMinutes === undefined || log.entry.details.durationMinutes <= filters.maxMinutes));
   const sports = [...new Set([...(whoop.data?.details.filter((d) => d.kind === 'workout').map((d) => d.sport ?? '') ?? []),
     ...manual.map((log) => log.entry?.kind === 'workout' ? log.entry.details.sport : '')])].filter(Boolean).sort();
+  if (!account) return <FitnessPage title="Workouts"><Text accessibilityLiveRegion="polite" style={ui.notice}>{message}</Text>
+    <Button title="Retry loading account" disabled={busy} onPress={() => { void refresh(); }} /></FitnessPage>;
   return <FitnessPage title="Workouts">
     <View style={ui.row}><Link href="/log" style={ui.heading}>Log a workout</Link><Link href="/workouts" style={ui.heading}>Workout programs</Link>
       <Link href="/progress" style={ui.heading}>Previous workout entries</Link></View>

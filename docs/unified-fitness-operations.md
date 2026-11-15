@@ -275,3 +275,19 @@ worker. Restart/readiness failures enter the existing sharing-policy-safe rollba
 Monitoring bounds database and alert-hook calls within its service deadline and
 records delivery status only after the hook succeeds. These review changes are
 not yet deployed to the VPS; the previously recorded live release is unchanged.
+
+
+### Authentication revocation migration (PR #44)
+
+Migration `0009_outstanding_secret_warriors.sql` adds authentication generations
+on accounts, sessions, and pending OAuth link transactions. Apply `pnpm db:migrate`
+before starting the updated API. Existing accounts and sessions start at zero;
+pending link callbacks created by older code must be restarted. Unlinking a
+provider advances the account generation, cancels pending links, and revokes
+sessions. Session issuance and refresh serialize with unlinking on the account
+row, so callbacks already in progress cannot restore revoked access.
+
+Keep this migration when rolling back application artifacts. Older API versions
+do not enforce authentication generations and restore the unlink race; prefer a
+forward fix or maintenance mode if authentication must be rolled back. This
+migration has only been applied to the local test database in this review pass.

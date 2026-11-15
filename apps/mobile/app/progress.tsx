@@ -12,7 +12,7 @@ import {
 import type { Progress } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { ApiRequestError, clearSession, fetchProgress, updateProgress } from '../src/lib/api';
+import { ApiRequestError, expireSession, getSessionGeneration, fetchProgress, updateProgress } from '../src/lib/api';
 import {
   deleteManualWorkoutEntry,
   formatManualWorkoutLine,
@@ -152,6 +152,7 @@ export default function ProgressScreen() {
   }, [manualEntries, selectedDateKey]);
 
   const loadProgress = async () => {
+    const generation = getSessionGeneration();
     setStatus('loading');
     setError(null);
 
@@ -173,8 +174,7 @@ export default function ProgressScreen() {
       setStatus('ready');
     } catch (loadError) {
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-        await clearSession();
-        router.replace('/sign-in');
+        if (await expireSession(generation)) router.replace('/sign-in');
         return;
       }
 

@@ -1,4 +1,4 @@
-import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions } from '@3plates/db';
+import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions, users } from '@3plates/db';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
   createHash,
@@ -48,6 +48,8 @@ export interface AuthRepository {
   createOAuthTransaction(input: OAuthTransaction): Promise<void>;
   consumeOAuthTransaction(state: string): Promise<OAuthTransaction | null>;
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
+  rotateSession(token: string, nextHash: string, expiresAt: Date): Promise<string | null>;
+  revokeUserSessions(userId: string): Promise<void>;
   getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date } | null>;
   revokeSessionByToken(token: string): Promise<void>;
   createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
@@ -177,6 +179,24 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       });
     },
 
+    async rotateSession(token, nextHash, expiresAt) {
+      return db.transaction(async (tx) => {
+        const [candidate] = await tx.select({ userId: authSessions.userId }).from(authSessions).where(eq(authSessions.tokenHash, hashToken(token)));
+        if (!candidate) return null;
+        const [user] = await tx.select().from(users).where(eq(users.id, candidate.userId)).for('update');
+        if (!user || user.deletionRequestedAt) return null;
+        const [consumed] = await tx.update(authSessions).set({ revokedAt: new Date() })
+          .where(and(eq(authSessions.tokenHash, hashToken(token)), isNull(authSessions.revokedAt), gt(authSessions.expiresAt, new Date())))
+          .returning({ userId: authSessions.userId });
+        if (!consumed) return null;
+        await tx.insert(authSessions).values({ userId: consumed.userId, tokenHash: nextHash, expiresAt });
+        return consumed.userId;
+      });
+    },
+    async revokeUserSessions(userId) {
+      await db.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
+    },
+
     async getSessionByToken(token) {
       const tokenHash = hashToken(token);
       const [session] = await db
@@ -284,6 +304,17 @@ export function createMemoryAuthRepository(): AuthRepository {
 
     async createSession(userId, tokenHash, expiresAt) {
       sessions.set(tokenHash, { userId, expiresAt, revokedAt: null });
+    },
+
+    async rotateSession(token, nextHash, expiresAt) {
+      const session = sessions.get(hashToken(token));
+      if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
+      session.revokedAt = new Date();
+      sessions.set(nextHash, { userId: session.userId, expiresAt, revokedAt: null });
+      return session.userId;
+    },
+    async revokeUserSessions(userId) {
+      for (const session of sessions.values()) if (session.userId === userId) session.revokedAt = new Date();
     },
 
     async getSessionByToken(token) {
@@ -534,6 +565,7 @@ export function createAuthService(input: {
   providers: Partial<Record<AuthProviderName, OAuthProviderAdapter>>;
 }): AuthService {
   const { authRepository, providers, userStateStore } = input;
+  userStateStore.onSessionsRevoked?.((userId) => authRepository.revokeUserSessions(userId));
   const sessionTtlMilliseconds = env.AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 
   async function issueSession(userId: string) {
@@ -652,25 +684,17 @@ export function createAuthService(input: {
     },
 
     async refreshSession(token) {
-      const session = await authRepository.getSessionByToken(token);
-      if (!session) {
-        return null;
-      }
-
-      if (session.expiresAt.getTime() <= Date.now()) {
-        await authRepository.revokeSessionByToken(token);
-        return null;
-      }
-
-      await authRepository.revokeSessionByToken(token);
-
-      const user = await userStateStore.getUserById(session.userId);
+      const sessionToken = buildSessionToken();
+      const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
+      const userId = await authRepository.rotateSession(token, hashToken(sessionToken), expiresAt);
+      if (!userId) return null;
+      const user = await userStateStore.getUserById(userId);
       if (!user) {
+        await authRepository.revokeSessionByToken(sessionToken);
         throw missingUserStateError('Session belongs to a deleted user.');
       }
       const effectiveLevel = await userStateStore.getUserEffectiveLevel(user.id);
-
-      const refreshedSession = await issueSession(user.id);
+      const refreshedSession = { sessionToken, expiresAt };
 
       return {
         sessionToken: refreshedSession.sessionToken,

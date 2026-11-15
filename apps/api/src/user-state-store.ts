@@ -51,6 +51,7 @@ export type AuthBootstrapResult = {
 };
 
 export interface UserStateStore {
+  onSessionsRevoked?(handler: (userId: string) => Promise<void>): void;
   listIdentities(userId: string): Promise<Array<{ provider: string; providerSubjectId: string }>>;
   unlinkIdentity(userId: string, provider: string, beforeRemove?: (subject: string) => Promise<void>): Promise<void>;
   requestDeletion(userId: string): Promise<void>;
@@ -831,6 +832,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   const usersByEmail = new Map<string, MemoryUser>();
   const usersById = new Map<string, MemoryUser>();
   const deletionRequests = new Set<string>();
+  let revokeSessions: ((userId: string) => Promise<void>) | undefined;
   const identitiesByKey = new Map<string, string>();
   const progressByUserId = new Map<string, ProgressRecord>();
   const manualWorkoutsByUserId = new Map<string, ManualWorkoutRecord[]>();
@@ -854,6 +856,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   }
 
   return {
+    onSessionsRevoked(handler) { revokeSessions = handler; },
     async getOrCreateUser(input) {
       const identity = userIdentitySchema.parse(input);
       const existingUser = usersByEmail.get(identity.email);
@@ -896,6 +899,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
       if (!entries.some(([key]) => !key.startsWith(provider + ':'))) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
       if (beforeRemove) await beforeRemove(identity[0].slice(provider.length + 1));
       identitiesByKey.delete(identity[0]);
+      await revokeSessions?.(userId);
     },
     async requestDeletion(userId) { deletionRequests.add(userId); },
     async pendingDeletions(afterId) { return [...deletionRequests].sort().filter((id) => !afterId || id > afterId).slice(0, 100); },

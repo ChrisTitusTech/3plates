@@ -25,7 +25,7 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   const [unitsReady, setUnitsReady] = useState(false);
   const [unitNotice, setUnitNotice] = useState('');
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; version: number } | null>(null);
   const [confirmConflict, setConfirmConflict] = useState<string | null>(null);
   const [choices, setChoices] = useState<Array<{ id: string; label: string }>>([]);
   const [visible, setVisible] = useState(20);
@@ -131,9 +131,9 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
         <Text style={ui.text}>{entrySummary(record.entry!)}</Text>
         {!!record.entry!.notes && <Text style={ui.muted}>{record.entry!.notes}</Text>}
         <View style={ui.row}><Button title={`Edit ${record.entry!.kind} entry`} onPress={() => edit(record)} />
-          <Button title={confirmDelete === record.id ? 'Confirm delete entry' : 'Delete entry'} danger onPress={() => {
-            if (confirmDelete !== record.id) { setConfirmDelete(record.id); return; }
-            void account?.engine.remove(record.id).then(() => refresh()).catch((error) => setMessage(error.message));
+          <Button title={confirmDelete?.id === record.id ? 'Confirm delete entry' : 'Delete entry'} danger onPress={() => {
+            if (confirmDelete?.id !== record.id) { setConfirmDelete({ id: record.id, version: record.version }); return; }
+            void account?.engine.remove(record.id, confirmDelete.version).then(() => refresh()).catch((error) => { setConfirmDelete(null); setMessage(error.message); });
           }} /></View>
       </View>)}
       {snapshot.logs.length > visible && <Button title="Show more entries" onPress={() => setVisible((count) => count + 20)} />}

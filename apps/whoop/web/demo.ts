@@ -5,6 +5,8 @@ import { bucket, daily, summarize, type Detail } from "../server/domain";
 import { analyticsPayload, lifetimeStats } from "../server/analytics";
 import type { Dashboard } from "./types";
 export function sample(start: string, end: string): Dashboard {
+  const span = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+  if (!Number.isFinite(span) || span < 1 || span > 20000) throw new Error("Select a valid date range of at most 20,000 days.");
   const details: Detail[] = [];
   const first = "2023-01-01";
   const latest = today();
@@ -99,14 +101,15 @@ export function sample(start: string, end: string): Dashboard {
       },
     });
   }
-  const span = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+
   const previousStart = new Date(Date.parse(start) - span * 86400000)
     .toISOString()
     .slice(0, 10);
   const previousEnd = new Date(Date.parse(start) - 86400000)
     .toISOString()
     .slice(0, 10);
-  const days = daily(details, previousStart, end);
+  const warmupStart = new Date(Date.parse(previousStart) - 6 * 86400000).toISOString().slice(0, 10);
+  const days = daily(details, warmupStart, end);
   const current = days.filter((d) => d.date >= start);
   return {
     analytics: analyticsPayload(details, start, end),
@@ -123,7 +126,7 @@ export function sample(start: string, end: string): Dashboard {
     latest,
     lastSync: null,
     summary: summarize(current),
-    previous: summarize(days.filter((d) => d.date < start)),
+    previous: summarize(days.filter((d) => d.date >= previousStart && d.date < start)),
     previousStart,
     previousEnd,
     days: current,

@@ -288,3 +288,15 @@ test("request log paths redact share tokens and query credentials", () => {
     "/callback",
   );
 });
+
+test('Z and numeric UTC offsets give identical local sleep hours', () => {
+  for (const timezone_offset of ['Z', '+00:00']) {
+    const sleep = detail(normalize('sleep', { id: 'utc-night', start: '2026-01-01T23:00:00Z', end: '2026-01-02T07:00:00Z', timezone_offset, score_state: 'SCORED', score: {} }));
+    assert.equal(sleep.metrics.bedtime_hour, 23); assert.equal(sleep.metrics.wake_hour, 7);
+  }
+});
+
+test('demo generation rejects oversized ranges before constructing projections', async () => {
+  const { sample } = await import('../web/demo.js');
+  assert.throws(() => sample('6000-01-01', '9999-12-31'), /20,000 days/);
+});

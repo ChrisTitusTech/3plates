@@ -24,7 +24,7 @@ function fixture() {
     google: createFakeProvider('google', profile('google')), apple: createFakeProvider('apple', profile('apple')), whoop: whoop.provider,
   } });
   const app = createServer({ store, healthStore: health, whoop, authService });
-  return { app, store, health, calls, whoop };
+  return { app, store, health, calls, whoop, authService };
 }
 
 test('same verified emails do not merge accounts; WHOOP routes derive ownership from the session', async (t) => {
@@ -113,12 +113,12 @@ test('durable account deletion waits for WHOOP cleanup and resumes on the next s
   const identity = { provider: 'whoop' as const, providerSubjectId: 'whoop-subject', email: null, emailVerified: false, displayName: 'Delete me' };
   const { user } = await f.store.resolveOAuthIdentity(identity); await f.store.requestDeletion(user.id);
   f.whoop.request = async () => ({ status: 503, body: '{}', contentType: 'application/json' });
-  await f.app.ready(); assert.deepEqual(await f.store.pendingDeletions(), [user.id]);
+  await f.app.ready(); await new Promise((resolve) => setImmediate(resolve)); assert.deepEqual(await f.store.pendingDeletions(), [user.id]);
   await f.app.close();
   f.whoop.request = async () => ({ status: 200, body: '{}', contentType: 'application/json' });
   const authService = createAuthService({ userStateStore: f.store, authRepository: createMemoryAuthRepository(), providers: { whoop: f.whoop.provider } });
   const restarted = createServer({ store: f.store, healthStore: f.health, whoop: f.whoop, authService }); t.after(() => restarted.close());
-  await restarted.ready(); assert.deepEqual(await f.store.pendingDeletions(), []);
+  await restarted.ready(); await new Promise((resolve) => setImmediate(resolve)); assert.deepEqual(await f.store.pendingDeletions(), []);
   assert.deepEqual(await f.store.listIdentities(user.id), []); assert.equal(await f.store.getUserById(user.id), null);
 });
 
@@ -134,8 +134,28 @@ test('deletion cleanup advances beyond a full batch of failed WHOOP accounts', a
   f.store.listIdentities = async (id) => id === ids[100] ? [] : [{ provider: 'whoop', providerSubjectId: id }];
   let attempts = 0;
   f.whoop.request = async () => { attempts++; return { status: 503, body: '{}', contentType: 'application/json' }; };
-  await f.app.ready();
+  await f.app.ready(); await new Promise((resolve) => setImmediate(resolve));
   assert.equal(attempts, 100);
   assert.equal(await f.store.getUserById(ids[100]), null);
   assert.deepEqual(await f.store.pendingDeletions(), ids.slice(0, 100));
+});
+
+test('identity removal revokes a concurrently refreshed memory session', async (t) => {
+  const f = fixture(); t.after(() => f.app.close());
+  const session = await signIn(f.app, 'google');
+  await f.store.resolveOAuthIdentity({ provider: 'apple', providerSubjectId: 'linked', email: null, emailVerified: false, displayName: null, linkedUserId: session.user.id });
+  const [refreshed] = await Promise.all([f.authService.refreshSession(session.sessionToken), f.store.unlinkIdentity(session.user.id, 'apple')]);
+  assert.equal(await f.authService.resolveRequestUser(session.sessionToken), null);
+  if (refreshed) assert.equal(await f.authService.resolveRequestUser(refreshed.sessionToken), null);
+});
+
+test('a slow deletion cleanup does not delay API readiness', async (t) => {
+  const f = fixture(); t.after(() => f.app.close());
+  const { user } = await f.store.resolveOAuthIdentity({ provider: 'whoop', providerSubjectId: 'slow-delete', email: null, emailVerified: false, displayName: null });
+  await f.store.requestDeletion(user.id);
+  let release!: () => void; const waiting = new Promise<void>((resolve) => { release = resolve; });
+  t.after(() => release());
+  f.whoop.request = async () => { await waiting; return { status: 503, body: '{}', contentType: 'application/json' }; };
+  try { assert.equal((await f.app.inject('/health')).statusCode, 200); }
+  finally { release(); }
 });

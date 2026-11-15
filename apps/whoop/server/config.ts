@@ -18,7 +18,7 @@ export const config = z
     ClientSecret: process.env.WHOOP_CLIENT_SECRET ?? process.env.ClientSecret,
     DATABASE_URL: process.env.WHOOP_DATABASE_URL ?? process.env.DATABASE_URL,
     TOKEN_KEY: process.env.WHOOP_TOKEN_KEY ?? process.env.TOKEN_KEY,
-    PUBLIC_URL: process.env.WHOOP_PUBLIC_URL ?? process.env.PUBLIC_URL,
+    PUBLIC_URL: process.env.WHOOP_PUBLIC_URL || process.env.PUBLIC_URL || undefined,
   });
 export const origin = new URL(config.PUBLIC_URL).origin;
 export const scopes =

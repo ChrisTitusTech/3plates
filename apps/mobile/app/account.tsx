@@ -6,7 +6,7 @@ import { calendarDateSchema, type AuthProvider } from '@3plates/contract';
 import type { Member, Sync } from '@3plates/whoop/types';
 import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
 import { useFitness } from '../src/lib/use-fitness';
-import { apiBaseUrl, clearSession, signOutAndClearSession, startAuthLink } from '../src/lib/api';
+import { apiBaseUrl, clearSession, getSessionGeneration, signOutAndClearSession, startAuthLink } from '../src/lib/api';
 import { clearFitnessCache, clearWhoopCache, exportFitnessFile, fitnessRequest } from '../src/lib/fitness-client';
 import { localDay } from '../src/lib/log-form';
 
@@ -25,6 +25,7 @@ export default function AccountScreen() {
   const [loadedOwner, setLoadedOwner] = useState<string>();
   const [confirm, setConfirm] = useState('');
   const [deleteText, setDeleteText] = useState('');
+  const confirmedOwner = useRef<string | undefined>(undefined);
   const [shareKinds, setShareKinds] = useState(['cycle', 'sleep', 'recovery', 'workout']);
   const [shareStart, setShareStart] = useState(localDay(new Date(Date.now() - 29 * 86400000)));
   const [shareEnd, setShareEnd] = useState(localDay());
@@ -32,6 +33,7 @@ export default function AccountScreen() {
   const owner = account?.user.id;
   const activeOwner = useRef(owner);
   activeOwner.current = owner;
+  useEffect(() => { setConfirm(''); setDeleteText(''); confirmedOwner.current = undefined; }, [owner]);
   async function load() {
     if (!owner) return;
     const identities = await fitnessRequest<{ providers: AuthProvider[] }>('/users/me/identities', 'GET', undefined, owner);
@@ -70,7 +72,8 @@ export default function AccountScreen() {
     finally { setBusy(false); }
   }
   function guarded(key: string, run: () => Promise<void>, success: string) {
-    if (confirm !== key) { setConfirm(key); return; }
+    if (!owner || activeOwner.current !== owner) return;
+    if (confirm !== key || confirmedOwner.current !== owner) { confirmedOwner.current = owner; setConfirm(key); return; }
     void action(run, success);
   }
   async function link(provider: AuthProvider) {
@@ -100,8 +103,11 @@ export default function AccountScreen() {
           {providers.includes(provider) && <Button danger disabled={busy || providers.length <= 1 || snapshot.pending > 0}
             title={confirm === provider ? `Confirm removal of ${name(provider)}` : `Remove ${name(provider)}`}
             onPress={() => guarded(provider, async () => {
+              const generation = getSessionGeneration();
               await fitnessRequest(`/users/me/identities/${provider}`, 'DELETE', undefined, owner);
-              if (owner) await clearFitnessCache(owner); await clearSession(); router.replace('/sign-in');
+              if (owner) await clearFitnessCache(owner);
+              if (getSessionGeneration() !== generation) return;
+              await clearSession(); router.replace('/sign-in');
             }, 'Sign-in method removed. Sign in again with a remaining method.')} />}
         </View>
       </View>)}
@@ -157,8 +163,11 @@ export default function AccountScreen() {
       <Field label="Type DELETE to confirm account deletion" value={deleteText} onChange={setDeleteText} />
       <Button danger title={confirm === 'delete' ? 'Confirm permanent account deletion' : 'Delete my account'} disabled={busy || deleteText !== 'DELETE'}
         onPress={() => guarded('delete', async () => {
+          const generation = getSessionGeneration();
           await fitnessRequest('/users/me', 'DELETE', { confirmation: 'DELETE' }, owner);
-          if (owner) await clearFitnessCache(owner, true); await clearSession(); router.replace('/sign-in');
+          if (owner) await clearFitnessCache(owner, true);
+          if (getSessionGeneration() !== generation) return;
+          await clearSession(); router.replace('/sign-in');
         }, 'Account deletion requested.')} />
     </Card>
   </FitnessPage>;

@@ -67,7 +67,7 @@ test('concurrent local saves serialize, identities are isolated, and 401 retains
   assert.equal((await alice.snapshot()).pending, 15); assert.equal((await bob.snapshot()).logs.length, 0);
   f.setFailure(401); await assert.rejects(alice.synchronize());
   assert.equal((await alice.snapshot()).pending, 15); assert.equal((await alice.snapshot()).conflicts.length, 0);
-  await bob.save(water()); await alice.clear();
+  await bob.save(water()); await alice.clear(true);
   assert.equal((await bob.snapshot()).pending, 1); assert.equal((await alice.snapshot()).logs.length, 0);
 });
 
@@ -131,4 +131,36 @@ test('a form keeps its original version when background sync learns about anothe
   await assert.rejects(engine.save(water(400), id, openedVersion), /changed while you were editing/);
   assert.deepEqual((await engine.snapshot()).logs[0].entry, water(900));
   assert.equal((await engine.snapshot()).pending, 0);
+});
+
+test('deletion rejects edits newer than the confirmed version', async () => {
+  const f = fixture(); const engine = f.engine();
+  const id = await engine.save(water()); await engine.synchronize();
+  const version = (await engine.snapshot()).logs[0].version;
+  await engine.save(water(900), id);
+  await assert.rejects(engine.remove(id, version), /changed since you confirmed/);
+  assert.deepEqual((await engine.snapshot()).logs[0].entry, water(900));
+});
+
+test('conditional clear checks pending data inside the same exclusive operation', async () => {
+  const f = fixture(); const engine = f.engine();
+  const save = engine.save(water());
+  const clear = engine.clear();
+  await save;
+  await assert.rejects(clear, /Sync your pending entries/);
+  assert.equal((await engine.snapshot()).pending, 1);
+  await engine.clear(true);
+  assert.equal((await engine.snapshot()).pending, 0);
+});
+
+test('sleep defaults use calendar endpoints and their own daylight-saving offsets', () => {
+  const original = process.env.TZ; process.env.TZ = 'America/Chicago';
+  try {
+    const form = newLogForm(new Date('2026-11-01T23:30:00-06:00'));
+    assert.equal(form.startDate, '2026-10-31'); assert.equal(form.endDate, '2026-11-01');
+    assert.equal(form.startOffset, '-05:00'); assert.equal(form.endOffset, '-06:00');
+    const sleep = formEntry('sleep', form, [], false);
+    assert.equal(sleep.kind, 'sleep');
+    if (sleep.kind === 'sleep') assert.equal(Date.parse(sleep.details.end) - Date.parse(sleep.details.start), 10 * 3600000);
+  } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
 });

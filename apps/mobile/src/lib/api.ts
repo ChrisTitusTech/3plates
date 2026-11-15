@@ -144,6 +144,7 @@ async function writeSessionToken(token: string | null) {
 type CacheEnvelope<T> = {
   value: T;
   updatedAt: string;
+  sessionHash?: string;
 };
 
 type PendingMutation =
@@ -214,17 +215,41 @@ async function assertCurrentSession(token: string) {
   if (await getSessionToken() !== token) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
 }
 
+async function sessionHash(token: string) {
+  // Bind cached identity without copying the native secure-store credential into AsyncStorage.
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  const crypto = await import('expo-crypto');
+  return crypto.digestStringAsync(crypto.CryptoDigestAlgorithm.SHA256, token);
+}
+
+async function migratePreviousProfile() {
+  const raw = await storage.getItem(storageKeys.me);
+  if (!raw) return;
+  let previous: User | null = null;
+  try { previous = JSON.parse(raw)?.value ?? null; } catch { /* Invalid profile is a recoverable cache miss. */ }
+  if (typeof previous?.id === 'string' && previous.id) {
+    await migrateLegacyCache(previous.id);
+  } else {
+    // Preserve orphaned offline data without assigning it to a newly signed-in user.
+    migratedUsers.delete('unverified');
+    await migrateLegacyCache('unverified');
+  }
+}
+
 async function writeCache<T>(key: string, value: T, token?: string) {
   if (token) await assertCurrentSession(token);
   if (key === storageKeys.me) {
-    const previous = await readCache<User>(storageKeys.me);
-    if (previous) await migrateLegacyCache(previous.id);
+    await migratePreviousProfile();
   }
   const destination = await accountStorageKey(key);
   if (token) await assertCurrentSession(token);
   const envelope: CacheEnvelope<T> = {
     value,
     updatedAt: new Date().toISOString(),
+    ...(key === storageKeys.me && token ? { sessionHash: await sessionHash(token) } : {}),
   };
 
   await storage.setItem(destination, JSON.stringify(envelope));
@@ -233,6 +258,7 @@ async function writeCache<T>(key: string, value: T, token?: string) {
 async function accountStorageKey(key: string) {
   if (key === storageKeys.me || key.startsWith(storageKeys.workoutsPrefix)) return key;
   const user = await readCache<User>(storageKeys.me);
+  if (!user && await storage.getItem(storageKeys.me)) throw new ApiRequestError(401, 'Verify your active account before using cached data.', 'invalid_auth');
   if (user) await migrateLegacyCache(user.id);
   return user ? `${key}/user/${user.id}` : key;
 }
@@ -277,6 +303,11 @@ async function readCache<T>(key: string): Promise<T | null> {
       return null;
     }
 
+    if (key === storageKeys.me) {
+      const token = await getSessionToken();
+      if (!token || parsed.sessionHash !== await sessionHash(token)) return null;
+      await assertCurrentSession(token);
+    }
     return parsed.value;
   } catch {
     return null;
@@ -368,10 +399,13 @@ async function queuePendingMutation(mutation: PendingMutation, token: string) {
   await writePendingMutations([...nextMutations, mutation]);
 }
 
-async function removePendingMutationsByType(type: PendingMutation['type'], token?: string) {
-  const existing = await readPendingMutations();
-  if (token) await assertCurrentSession(token);
-  await writePendingMutations(existing.filter((mutation) => mutation.type !== type));
+async function removePendingMutationsByType(type: PendingMutation['type'], token: string) {
+  await assertCurrentSession(token);
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  const existing = JSON.parse(await storage.getItem(key) ?? '[]') as PendingMutation[];
+  await assertCurrentSession(token);
+  await storage.setItem(key, JSON.stringify(existing.filter((mutation) => mutation.type !== type)));
 }
 
 async function executePendingMutation(mutation: PendingMutation, token: string) {
@@ -449,15 +483,17 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 });
 
 export async function setSessionToken(token: string | null) {
+  await migratePreviousProfile();
   await writeSessionToken(token);
   sessionChanged();
 }
 
 export async function clearSession() {
+  const owner = await getCachedUser();
   await writeSessionToken(null);
   sessionChanged();
   for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
-    await storage.removeItem(await accountStorageKey(key));
+    await storage.removeItem(owner ? `${key}/user/${owner.id}` : key);
   }
   await storage.removeItem(storageKeys.me);
   await storage.removeItem(storageKeys.progress);
@@ -701,7 +737,7 @@ export async function updateProgress(progress: Progress) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await removePendingMutationsByType('updateProgress');
+    await removePendingMutationsByType('updateProgress', token);
     await writeCache(storageKeys.progress, progress, token);
 
     return {
@@ -982,6 +1018,7 @@ async function persistPreferences(preferences: Preferences, token: string) {
       queued: true,
     };
   } finally {
+    preferenceWriteRevision++;
     clearTimeout(timeout);
   }
 }
@@ -1020,7 +1057,10 @@ export async function registerDevice(device: NotificationDevice) {
   }
 }
 
-export async function flushPendingMutations() {
+export function flushPendingMutations() {
+  return serializePreferences(flushPendingMutationsSerial);
+}
+async function flushPendingMutationsSerial() {
   const token = await getSessionToken();
   if (!token) {
     return {
@@ -1053,7 +1093,8 @@ export async function flushPendingMutations() {
       await executePendingMutation(mutation, token);
       flushed += 1;
     } catch (error) {
-      if (isNetworkFailure(error)) {
+      if (error instanceof ApiRequestError && error.status === 401) throw error;
+      if (isNetworkFailure(error) || (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500))) {
         remaining.push(mutation);
         continue;
       }

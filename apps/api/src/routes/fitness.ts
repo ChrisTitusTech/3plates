@@ -124,6 +124,6 @@ export async function registerFitnessRoutes(app: FastifyInstance, store: UserSta
   const runCleanup = () => cleanup ??= processDeletions().finally(() => { cleanup = undefined; });
   const timer = setInterval(() => { void runCleanup().catch(() => app.log.warn({ event: 'account_cleanup_unavailable' })); }, 60000);
   timer.unref();
-  app.addHook('onReady', runCleanup);
+  app.addHook('onReady', async () => { void runCleanup().catch(() => app.log.warn({ event: 'account_cleanup_unavailable' })); });
   app.addHook('onClose', async () => { clearInterval(timer); await cleanup; await health.close(); if (whoop) await whoop.close(); });
 }

@@ -98,22 +98,19 @@ async function dashboard(
   const span = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
   if (span < 1 || span > 20000)
     throw fail(400, "Select a valid date range of at most 20,000 days.");
-  const contextVersion =
-    member.dataRevision +
-    "-" +
-    hash(member.id + JSON.stringify(policy ?? null));
-  const saved = await cachedHistory(
-    member.id + ":" + hash(JSON.stringify(policy ?? null)),
-    member.dataRevision,
-    () =>
-      db
-        .select()
-        .from(records)
-        .where(
-          and(eq(records.memberId, member.id), eq(records.deleted, false)),
-        ),
-    policy,
-  );
+  // Keep the revision and record loader on one MVCC snapshot.
+  const { saved, revision } = await db.transaction(async (tx) => {
+    const [currentMember] = await tx.select().from(members).where(eq(members.id, member.id));
+    if (!currentMember) throw fail(401, "This account is no longer available.");
+    const saved = await cachedHistory(
+      member.id + ":" + hash(JSON.stringify(policy ?? null)),
+      currentMember.dataRevision,
+      () => tx.select().from(records).where(and(eq(records.memberId, member.id), eq(records.deleted, false))),
+      policy,
+    );
+    return { saved, revision: currentMember.dataRevision };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  const contextVersion = revision + "-" + hash(member.id + JSON.stringify(policy ?? null));
   const { details, history } = saved;
   const previousEnd = new Date(Date.parse(start) - 86400000)
     .toISOString()
@@ -121,9 +118,10 @@ async function dashboard(
   const previousStart = new Date(Date.parse(start) - span * 86400000)
     .toISOString()
     .slice(0, 10);
-  const days = daily(history, previousStart, end);
+  const warmupStart = new Date(Date.parse(previousStart) - 6 * 86400000).toISOString().slice(0, 10);
+  const days = daily(history, warmupStart, end);
   const current = days.filter((d) => d.date >= start);
-  const previous = days.filter((d) => d.date < start);
+  const previous = days.filter((d) => d.date >= previousStart && d.date < start);
   const chart = bucket(current);
   return {
     contextVersion,

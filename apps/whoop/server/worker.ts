@@ -1,12 +1,26 @@
+import postgres from "postgres";
+import { config } from "./config.js";
 import { eq, lt } from "drizzle-orm";
 import { setTimeout } from "node:timers/promises";
 import { client, db } from "./db.js";
 import { heartbeat, jobs, oauthStates, sessions, webhooks } from "./schema.js";
 import { claimJob, processJob, retryJob, schedule } from "./sync.js";
-const connection = await client.reserve();
+let lockHeld = false;
+const lockClient = postgres(config.DATABASE_URL, {
+  max: 1, idle_timeout: 0, max_lifetime: 0,
+  connection: { application_name: "gallant-worker-lock" },
+  onclose() {
+    if (lockHeld) {
+      console.error("WHOOP singleton lock connection lost; exiting");
+      process.exit(1);
+    }
+  },
+});
+const connection = await lockClient.reserve();
 const [lock] =
   await connection`select pg_try_advisory_lock(834702) as acquired`;
-if (!lock.acquired) throw new Error("Another WHOOP worker is already running");
+if (!lock.acquired) { await lockClient.end({ timeout: 1 }); throw new Error("Another WHOOP worker is already running"); }
+lockHeld = true;
 await db
   .update(jobs)
   .set({ status: "pending" })
@@ -56,7 +70,9 @@ try {
   try {
     await connection`select pg_advisory_unlock(834702)`;
   } finally {
+    lockHeld = false;
     connection.release();
+    await lockClient.end({ timeout: 5 });
     // An expired reserved connection can leave Postgres.js teardown pending.
     // The current job has finished; bound pool cleanup rather than waiting for SIGKILL.
     await client.end({ timeout: 5 });

@@ -161,7 +161,7 @@ export function detail(record: StoredRecord, date = record.localDate): Detail {
         ? null
         : need.need_from_sleep_debt_milli / 3600000;
     const offset = /^([+-])(\d{2}):(\d{2})$/.exec(r.timezone_offset ?? "");
-    const minutes = offset
+    const minutes = r.timezone_offset === "Z" ? 0 : offset
       ? (Number(offset[2]) * 60 + Number(offset[3])) *
         (offset[1] === "-" ? -1 : 1)
       : null;

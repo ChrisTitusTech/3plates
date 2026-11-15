@@ -199,10 +199,12 @@ export async function requestWhoop(
         });
     }
     if ([401, 403].includes(response.status)) {
-      await db
-        .update(members)
-        .set({ connected: false, tokens: null, shareToken: null })
-        .where(and(eq(members.id, memberId), eq(members.connected, true)));
+      await db.transaction(async (tx) => {
+        const [current] = await tx.select().from(members).where(eq(members.id, memberId)).for("update");
+        if (!current?.tokens || decrypt<Tokens>(current.tokens, config.TOKEN_KEY).access_token !== token) return;
+        await tx.update(members).set({ connected: false, tokens: null, shareToken: null })
+          .where(and(eq(members.id, memberId), eq(members.connected, true)));
+      });
       throw new ReconnectError();
     }
     if (!response.ok) throw new ApiError(response.status, reset);

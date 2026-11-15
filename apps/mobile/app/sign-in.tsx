@@ -19,13 +19,16 @@ export default function SignInScreen() {
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<AuthProvider[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    fetch(apiBaseUrl + '/auth/providers').then((response) => {
+  async function loadProviders() {
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(apiBaseUrl + '/auth/providers');
       if (!response.ok) throw new Error('Unable to load sign-in providers.');
-      return response.json();
-    }).then((body) => setProviders(body.providers))
-      .catch(() => setError('Cannot reach the sign-in server. Check your connection and reopen this screen.'));
-  }, []);
+      setProviders((await response.json()).providers);
+    } catch { setError('Cannot reach the sign-in server. Check your connection and retry.'); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => { void loadProviders(); }, []);
   async function signIn(provider: AuthProvider) {
     setBusy(true); setError(null);
     try { const started = await startAuth(provider, mobileRedirectUrl); await Linking.openURL(started.next); }
@@ -104,6 +107,6 @@ export default function SignInScreen() {
 
   return <AuthLanding busy={busy} buttonLabel="Loading sign-in options" onPress={() => {}}
     error={error ?? (providers.length === 0 ? 'Waiting for available sign-in providers.' : null)}
-    actions={providers.map((provider) => ({ label: `Continue with ${provider === 'whoop' ? 'WHOOP' : provider === 'google' ? 'Google' : 'Apple'}`,
+    actions={providers.length === 0 ? [{ label: 'Retry sign-in options', onPress: () => { void loadProviders(); } }] : providers.map((provider) => ({ label: `Continue with ${provider === 'whoop' ? 'WHOOP' : provider === 'google' ? 'Google' : 'Apple'}`,
       onPress: () => { void signIn(provider); } }))} />;
 }

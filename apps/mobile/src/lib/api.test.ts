@@ -18,6 +18,7 @@ import {
   flushPendingMutations,
   getPendingMutationCount,
   getSessionToken,
+  getCachedUser,
   productionApiUrl,
   registerDevice,
   resolveApiBaseUrl,
@@ -741,4 +742,92 @@ test('a delayed preference read cannot replace a newly saved appearance', async 
   delay = true; const stale = fetchPreferences(); await requested;
   const dark = { ...initial, theme: 'dark' as const }; await updatePreferences(dark); release();
   assert.deepEqual(await stale, { data: dark, source: 'cache' });
+});
+
+test('a new session cannot use a previous token-bound profile during an outage', async (t) => {
+  const storage = createMemoryStorage(); let status = 200;
+  const client = createClientOverrides({ me: async () => ({ status, body: status === 200 ? createBaseUser() : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  await setSessionToken('bob');
+  assert.equal(await getCachedUser(), null);
+  for (status of [503, 429]) await assert.rejects(fetchMe());
+  await setSessionToken('alice');
+  assert.equal((await fetchMe()).data.id, createBaseUser().id);
+});
+
+test('a late progress response cannot remove the newly active account queue', async (t) => {
+  const storage = createMemoryStorage(); let user = createBaseUser();
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let delay = true;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    updateProgress: async () => { if (delay) { entered(); await wait; return { status: 200, body: createProgress() }; } throw new Error('Network request failed'); } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const late = updateProgress(createProgress()); await started;
+  user = { ...user, id: 'bob' }; await setSessionToken('bob'); await fetchMe(); delay = false;
+  await updateProgress(createProgress());
+  release(); await assert.rejects(late, /active account changed/);
+  assert.equal(await getPendingMutationCount(), 1);
+});
+
+test('a preference queued during a flush remains pending after that flush', async (t) => {
+  const storage = createMemoryStorage(); let flushing = false;
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { if (!flushing) throw new Error('Network request failed'); entered(); await wait; return { status: 200, body: createProgress() }; },
+    updatePreferences: async () => ({ status: 503, body: null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('flush-race'); await fetchMe(); await updateProgress(createProgress());
+  flushing = true; const flush = flushPendingMutations(); await started;
+  const preference = updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '08:00' });
+  await new Promise((resolve) => setImmediate(resolve));
+  release(); await flush; await preference;
+  const queue = JSON.parse((await storage.getItem('@3plates/pending-mutations/user/user-1'))!);
+  assert.equal(queue.length, 1); assert.equal(queue[0].type, 'updatePreferences'); assert.equal(queue[0].payload.theme, 'dark');
+});
+
+test('generic retry retains preference mutations on 429 and 5xx responses', async (t) => {
+  const storage = createMemoryStorage(); let status = 503;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }), updatePreferences: async () => ({ status, body: null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('retry-preferences'); await fetchMe();
+  await updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '07:00' });
+  for (status of [503, 429]) { await flushPendingMutations(); assert.equal(await getPendingMutationCount(), 1); }
+});
+
+test('a read begun during a preference write cannot overwrite the completed write', async (t) => {
+  const storage = createMemoryStorage(); const initial: Preferences = { theme: 'light', units: 'metric', reminderTime: '07:00' };
+  let finishWrite!: () => void; let beginWrite!: () => void; let finishRead!: () => void; let beginRead!: () => void;
+  const writing = new Promise<void>((resolve) => { beginWrite = resolve; });
+  const writeWait = new Promise<void>((resolve) => { finishWrite = resolve; });
+  const reading = new Promise<void>((resolve) => { beginRead = resolve; });
+  const readWait = new Promise<void>((resolve) => { finishRead = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    preferences: async () => { beginRead(); await readWait; return { status: 200, body: initial }; },
+    updatePreferences: async ({ body }: { body: Preferences }) => { beginWrite(); await writeWait; return { status: 200, body }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('write-then-read'); await fetchMe();
+  const dark = { ...initial, theme: 'dark' as const }; const write = updatePreferences(dark); await writing;
+  const stale = fetchPreferences(); await reading; finishWrite(); await write; finishRead();
+  assert.deepEqual(await stale, { data: dark, source: 'cache' });
+});
+
+test('successful sign-in repairs malformed profiles while preserving unidentified offline data', async (t) => {
+  t.after(__resetApiTestAdapters);
+  for (const raw of ['{broken', 'null', '{}']) {
+    const storage = createMemoryStorage();
+    await storage.setItem('@3plates/cache/me', raw);
+    await storage.setItem('@3plates/pending-mutations', JSON.stringify([{ id: 'orphan', type: 'updateProgress', payload: createProgress() }]));
+    __setApiTestAdapters({ storage, client: createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }) }) as never });
+    await setSessionToken('recovered-session');
+    assert.equal(await getSessionToken(), 'recovered-session');
+    assert.equal((await fetchMe()).data.id, createBaseUser().id);
+    assert.equal(await getPendingMutationCount(), 0);
+    assert.equal(JSON.parse((await storage.getItem('@3plates/pending-mutations/user/unverified'))!)[0].id, 'orphan');
+  }
 });

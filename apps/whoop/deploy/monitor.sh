@@ -16,7 +16,7 @@ if [[ -f /etc/gallant-backup-offsite.env ]]; then
 		issues+=("No off-server backup within 36 hours")
 	fi
 fi
-if failures=$(docker exec gallant-postgres psql -U gallant -d gallant -Atqc "SELECT count(*) FROM members m WHERE connected AND (last_sync IS NULL OR last_sync < now() - interval '48 hours' OR EXISTS (SELECT 1 FROM jobs j WHERE j.member_id=m.id AND status='failed'))"); then
+if failures=$(timeout --kill-after=2s 10s docker exec gallant-postgres psql -U gallant -d gallant -Atqc "SELECT count(*) FROM members m WHERE connected AND (last_sync IS NULL OR last_sync < now() - interval '48 hours' OR EXISTS (SELECT 1 FROM jobs j WHERE j.member_id=m.id AND status='failed'))"); then
 	[[ "$failures" == 0 ]] || issues+=("Connected accounts have failed imports or stale synchronization")
 else
 	issues+=("Unable to check synchronization health")
@@ -24,15 +24,14 @@ fi
 message="Healthy"
 if (("${#issues[@]}")); then message=$(printf '%s\n' "${issues[@]}"); fi
 previous=$(cat /var/lib/gallant-ops/status 2>/dev/null || true)
-printf '%s\n' "$message" >/var/lib/gallant-ops/status
 if [[ "$message" != "$previous" ]]; then
 	printf '%s\n' "$message"
 	# Optional root-owned delivery hook accepts a generic status on stdin, never member data.
 	if [[ -x /etc/gallant-alert ]] && [[ $(stat -c '%u' /etc/gallant-alert) == 0 ]] && [[ -z $(find /etc/gallant-alert -perm /022 -print) ]]; then
-		if ! printf '%s\n' "$message" | /etc/gallant-alert; then
-			printf '%s\n' "$previous" >/var/lib/gallant-ops/status
+		if ! printf '%s\n' "$message" | timeout --kill-after=2s 20s /etc/gallant-alert; then
 			exit 1
 		fi
 	fi
 fi
+printf '%s\n' "$message" >/var/lib/gallant-ops/status
 (("${#issues[@]}" == 0))

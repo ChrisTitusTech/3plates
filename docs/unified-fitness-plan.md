@@ -73,3 +73,23 @@ before discarding pending edits. The focused independent Codex review of
 `8bd8b6f` found no actionable regressions. The current automated suites total
 178 passing tests. An earlier nested review attempt was interrupted and is not
 counted as passing evidence; the subsequent direct reviews completed.
+
+2026-11-15 PR #44 review hardening: fixed oversized workout uploads, goal unit
+conversion, refresh pool exhaustion, and deletion pagination. The subsequent
+review batch protects account-scoped confirmations and profile caches, serializes
+preference retries, preserves queued edits during failures/cleanup, makes auth
+session rotation atomic with unlinking, and protects refreshed WHOOP credentials
+from late failures. Worker lock loss now terminates the worker; deployment and
+monitoring scripts exercise rollback, new-worker readiness, and alert retry paths.
+Smaller fixes cover UTC/DST interpretation, rolling averages, consistent history
+snapshots, weight-chart date spacing, bounded demo ranges, and sign-in retries.
+
+Local validation: 6 contract, 61 API, 43 mobile, 25 WHOOP unit, 23 WHOOP database,
+38 unified browser, 26 legacy dashboard browser, 7 WHOOP operations, and 5 web
+deployment tests pass. Workspace typechecks, WHOOP lint/build, API build, shell
+checks, and web/Android/iOS exports pass. The first independent review found a
+malformed-profile recovery regression; its fix preserves unidentified offline
+edits separately and has dedicated regression coverage. The focused follow-up
+review completed with no actionable findings. Remote checks and reviews
+must pass on the published head before merge. Real-device acceptance remains the
+next stage under the user's requested sequence.

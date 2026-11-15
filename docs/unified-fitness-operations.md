@@ -259,3 +259,19 @@ environment change was needed. The SSH connection was closed after deployment.
   sync/full backfill, token rotation, and no duplicate worker.
 - Verified backups, restore drill, publication authorization, and post-release
   website/API/forum/worker checks over a serial VPS connection.
+
+# PR #44 cache and operations hardening
+
+Profile caches now carry a SHA-256 binding to their session token; the raw native
+credential remains in secure storage. An older cache without that binding needs
+one successful online profile load before offline account access is available.
+Legacy edits are migrated under the previous profile owner. If that profile is
+malformed, unidentified legacy edits are retained under the `user/unverified`
+cache namespace for recovery instead of being assigned to a new account.
+
+The reviewed WHOOP activation script checks both web and worker artifacts, stops
+the old worker, removes its heartbeat, and then requires readiness from the new
+worker. Restart/readiness failures enter the existing sharing-policy-safe rollback.
+Monitoring bounds database and alert-hook calls within its service deadline and
+records delivery status only after the hook succeeds. These review changes are
+not yet deployed to the VPS; the previously recorded live release is unchanged.

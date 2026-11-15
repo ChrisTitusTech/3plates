@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { createDatabaseClient, notificationDevices, progressEvents, users, workouts } from '@3plates/db';
@@ -869,5 +869,30 @@ dbTest('pending account deletions paginate past retained failures and removed ro
       assert.deepEqual(await store.pendingDeletions(second.at(-1)), ids.slice(200));
       assert.deepEqual(await store.pendingDeletions(ids.at(-1)), []);
     } finally { await close(); }
+  });
+});
+
+dbTest('session rotation and identity removal cannot leave a usable replacement session', async () => {
+  await withDbApp(async ({ app, store, authRepository }) => {
+    const session = await signIn(app, 'google');
+    await store.resolveOAuthIdentity({ provider: 'apple', providerSubjectId: 'unlink-race', email: null, emailVerified: false, displayName: null, linkedUserId: session.user.id });
+    const replacement = randomUUID();
+    await Promise.all([
+      authRepository.rotateSession(session.sessionToken, createHash('sha256').update(replacement).digest('hex'), new Date(Date.now() + 60000)),
+      store.unlinkIdentity(session.user.id, 'apple'),
+    ]);
+    assert.equal(await authRepository.getSessionByToken(session.sessionToken), null);
+    assert.equal(await authRepository.getSessionByToken(replacement), null);
+  });
+});
+
+dbTest('concurrent session rotation consumes its source exactly once', async () => {
+  await withDbApp(async ({ app, authRepository }) => {
+    const session = await signIn(app, 'google');
+    const tokens = [randomUUID(), randomUUID()];
+    const rotated = await Promise.all(tokens.map((token) => authRepository.rotateSession(session.sessionToken, createHash('sha256').update(token).digest('hex'), new Date(Date.now() + 60000))));
+    assert.equal(rotated.filter(Boolean).length, 1);
+    const valid = await Promise.all(tokens.map((token) => authRepository.getSessionByToken(token)));
+    assert.equal(valid.filter(Boolean).length, 1);
   });
 });

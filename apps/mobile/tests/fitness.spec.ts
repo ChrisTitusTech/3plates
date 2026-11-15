@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
 import { sample } from '../../whoop/web/demo';
 import type { HealthLog, HealthMutation, Preferences } from '@3plates/contract';
@@ -7,15 +8,16 @@ async function setup(page: Page, signedIn = true) {
   let whoopUnavailable = false;
   let apiUnavailable = false;
   let dashboardReads = 0;
+  let deletions = 0;
   let activeUser = user;
   const preferences = new Map<string, Preferences>();
   const logs = new Map<string, HealthLog>();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  if (signedIn) await page.addInitScript((user) => {
+  if (signedIn) await page.addInitScript(({ user, sessionHash }) => {
     localStorage.setItem('@3plates/session-token', 'synthetic-session');
-    localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: user, updatedAt: new Date().toISOString() }));
-  }, user);
+    localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: user, updatedAt: new Date().toISOString(), sessionHash }));
+  }, { user, sessionHash: createHash('sha256').update('synthetic-session').digest('hex') });
   await page.route('**/*', async (route) => {
     const request = route.request(); const url = new URL(request.url());
     if (url.origin === 'http://127.0.0.1:4173') return route.continue();
@@ -26,7 +28,7 @@ async function setup(page: Page, signedIn = true) {
     if (whoopUnavailable && url.pathname.startsWith('/users/me/whoop/')) return send({ error: 'WHOOP is unavailable' }, 503);
     switch (url.pathname) {
       case '/auth/providers': return send({ providers: ['google', 'apple', 'whoop'] });
-      case '/users/me': return send(activeUser);
+      case '/users/me': if (request.method() === 'DELETE') { deletions++; return send({ deletionRequested: true }, 202); } return send(activeUser);
       case '/users/me/preferences': {
         if (request.method() === 'PUT') preferences.set(activeUser.id, request.postDataJSON());
         return send(preferences.get(activeUser.id) ?? { theme: 'system', units: 'metric', reminderTime: '07:00' });
@@ -48,14 +50,14 @@ async function setup(page: Page, signedIn = true) {
       default: return send({ error: 'Unexpected test request: ' + url.pathname }, 404);
     }
   });
-  return { logs, errors, preferences, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
+  return { logs, errors, preferences, deletions: () => deletions, setApiUnavailable: (value: boolean) => { apiUnavailable = value; }, setWhoopUnavailable: (value: boolean) => { whoopUnavailable = value; }, dashboardReads: () => dashboardReads,
     async switchAccount(preserveCachedOwner = false) {
       activeUser = { ...user, id: '00000000-0000-4000-8000-000000000002', displayName: 'Second Athlete' };
-      await page.evaluate(({ next, preserveCachedOwner }) => {
+      await page.evaluate(({ next, preserveCachedOwner, sessionHash }) => {
         localStorage.setItem('@3plates/session-token', 'second-session');
-        if (!preserveCachedOwner) localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: next, updatedAt: new Date().toISOString() }));
+        if (!preserveCachedOwner) localStorage.setItem('@3plates/cache/me', JSON.stringify({ value: next, updatedAt: new Date().toISOString(), sessionHash }));
         window.dispatchEvent(new StorageEvent('storage', { key: '@3plates/session-token' }));
-      }, { next: activeUser, preserveCachedOwner });
+      }, { next: activeUser, preserveCachedOwner, sessionHash: createHash('sha256').update('second-session').digest('hex') });
     }, setOffline: (value: boolean) => { offline = value; } };
 }
 
@@ -352,4 +354,45 @@ test('reconnect during an account switch cannot hydrate or edit the previous own
   await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
   await expect.poll(() => f.preferences.get('00000000-0000-4000-8000-000000000002')).toEqual({ theme: 'dark', units: 'metric', reminderTime: '07:00' });
   expect(f.errors).toEqual([]);
+});
+
+test('account deletion confirmation cannot carry into a switched account', async ({ page }) => {
+  const f = await setup(page); await page.goto('/account');
+  await page.getByLabel('Type DELETE to confirm account deletion').fill('DELETE');
+  await page.getByRole('button', { name: 'Delete my account', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirm permanent account deletion', exact: true })).toBeEnabled();
+  await f.switchAccount();
+  await expect(page.getByText(/Second Athlete/)).toBeVisible();
+  await expect(page.getByLabel('Type DELETE to confirm account deletion')).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Delete my account', exact: true })).toBeDisabled();
+  await page.getByLabel('Type DELETE to confirm account deletion').fill('DELETE');
+  await page.getByRole('button', { name: 'Delete my account', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirm permanent account deletion', exact: true })).toBeEnabled();
+  expect(f.deletions()).toBe(0);
+});
+
+test('provider discovery can retry after connectivity returns', async ({ page }) => {
+  const f = await setup(page, false); f.setApiUnavailable(true); await page.goto('/sign-in');
+  await expect(page.getByText(/Cannot reach the sign-in server/)).toBeVisible();
+  f.setApiUnavailable(false);
+  await page.getByRole('button', { name: 'Retry sign-in options', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Continue with WHOOP', exact: true })).toBeVisible();
+});
+
+test('weight chart preserves calendar spacing and gaps', async ({ page }) => {
+  const f = await setup(page);
+  for (const [day, kilograms] of [[1, 80], [2, 79], [30, 78]]) {
+    const id = `00000000-0000-4000-8000-${String(day).padStart(12, "0")}`;
+    f.logs.set(id, { id, version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      entry: { kind: 'weight', date: `2026-01-${String(day).padStart(2, '0')}`, timezone: 'UTC', notes: '', details: { kilograms } } });
+  }
+  await page.goto('/trends');
+  await page.getByLabel('Start (YYYY-MM-DD)').fill('2026-01-01');
+  await page.getByLabel('End (YYYY-MM-DD)').fill('2026-01-30');
+  await page.getByRole('button', { name: 'Apply dates and refresh', exact: true }).click();
+  const chart = page.getByLabel(/Body weight \(kg\)\. 3 observations/);
+  await expect(chart.locator('circle')).toHaveCount(3);
+  const xs = await chart.locator('circle').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('cx'))));
+  expect((xs[2] - xs[1]) / (xs[1] - xs[0])).toBeCloseTo(28);
+  await expect(chart.locator('polyline')).toHaveCount(2);
 });

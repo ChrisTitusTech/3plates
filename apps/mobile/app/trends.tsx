@@ -38,7 +38,11 @@ export default function TrendsScreen() {
   const comparison = data && validYear && /^\d{4}$/.test(otherYear) ? compareYears(data.exploration, Number(year), Number(otherYear), metric) : [];
   const correlation = data ? correlations(data.exploration.filter((d) => d.date >= range.start && d.date <= range.end), xMetric, metric, lag) : null;
   const manual = snapshot.logs.filter((log) => log.entry && log.entry.date >= range.start && log.entry.date <= range.end);
-  const weights = manual.filter((log) => log.entry?.kind === 'weight').reverse();
+  const weights = new Map(manual.filter((log) => log.entry?.kind === 'weight').reverse().map((log) => [log.entry!.date, log.entry?.kind === 'weight' ? log.entry.details.kilograms : null]));
+  const weightPoints = Array.from({ length: Math.floor((Date.parse(range.end) - Date.parse(range.start)) / 86400000) + 1 }, (_, day) => {
+    const label = new Date(Date.parse(range.start) + day * 86400000).toISOString().slice(0, 10);
+    return { label, value: weights.get(label) ?? null };
+  });
   function applyRange() {
     if (!calendarDateSchema.safeParse(start).success || !calendarDateSchema.safeParse(end).success || start > end || Date.parse(end) - Date.parse(start) > 3660 * 86400000) {
       setError('Choose valid dates in order, up to ten years apart.'); return;
@@ -52,7 +56,7 @@ export default function TrendsScreen() {
     </Card>
     <Card title="Manual history">
       <Text style={ui.muted}>{manual.length} entries in this range. Manual observations are kept separate from WHOOP scores.</Text>
-      <MetricChart label="Body weight (kg)" points={weights.map((log) => ({ label: log.entry!.date, value: log.entry?.kind === 'weight' ? log.entry.details.kilograms : null }))} />
+      <MetricChart label="Body weight (kg)" points={weightPoints} />
       {manual.filter((log) => log.entry?.kind === 'recovery' || log.entry?.kind === 'sleep').slice(0, 10).map((log) =>
         <Text key={log.id} style={ui.text}>{log.entry!.date}: {entrySummary(log.entry!)} {log.entry!.notes}</Text>)}
     </Card>

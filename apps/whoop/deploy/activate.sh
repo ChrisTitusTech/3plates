@@ -10,7 +10,7 @@ case "$release" in
 	exit 2
 	;;
 esac
-[[ -f "$release/dist/server/server/main.js" && -f "$release/dist/web/index.html" ]]
+[[ -f "$release/dist/server/server/main.js" && -f "$release/dist/server/server/worker.js" && -f "$release/dist/web/index.html" ]]
 [[ -f /etc/gallant-dashboard.env && -f /etc/gallant-postgres.env ]]
 if ! id gallant >/dev/null 2>&1; then useradd --system --home-dir /opt/gallant-dashboard --shell /usr/sbin/nologin gallant; fi
 cd "$release"
@@ -29,17 +29,21 @@ mv -Tf /opt/gallant-dashboard/current.next /opt/gallant-dashboard/current
 install -m 644 deploy/gallant-web.service deploy/gallant-worker.service deploy/gallant-backup.service deploy/gallant-backup.timer deploy/gallant-monitor.service deploy/gallant-monitor.timer deploy/gallant-restore-check.service deploy/gallant-restore-check.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable gallant-web gallant-worker gallant-backup.timer
-systemctl restart gallant-web gallant-worker
-systemctl start gallant-backup.timer
-systemctl enable --now gallant-monitor.timer gallant-restore-check.timer
 ready=false
-for _attempt in {1..30}; do
-	if curl -fsS --max-time 5 http://127.0.0.1:3100/ready >/dev/null; then
-		ready=true
-		break
-	fi
-	sleep 2
-done
+# Remove the old worker heartbeat only after it can no longer write one.
+if systemctl stop gallant-worker &&
+	docker exec gallant-postgres psql -v ON_ERROR_STOP=1 -U gallant -d gallant -c "DELETE FROM heartbeat WHERE name = 'worker'" &&
+	systemctl restart gallant-web gallant-worker; then
+	systemctl start gallant-backup.timer
+	systemctl enable --now gallant-monitor.timer gallant-restore-check.timer
+	for _attempt in {1..30}; do
+		if curl -fsS --max-time 5 http://127.0.0.1:3100/ready >/dev/null; then
+			ready=true
+			break
+		fi
+		sleep 2
+	done
+fi
 if [[ $ready != true ]]; then
 	printf 'Release failed readiness; restoring previous application release.\n' >&2
 	if [[ -n $previous && -d $previous ]]; then

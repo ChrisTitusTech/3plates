@@ -2,26 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
 import { apiBaseUrl, fetchMe, getCachedUser, getSessionToken, registerSignOutCleanup } from './api';
 import { createHealthSync, SyncFailure, type HealthSync } from './health-sync';
+import { fetchFitnessText } from './fitness-http';
 import type { Dashboard } from '@3plates/whoop/types';
 
 const engines = new Map<string, HealthSync>();
 let checkedToken: string | null = null;
 let checkedOwner: Promise<string> | null = null;
-async function fetchWithTimeout(path: string, token: string, method: string, body?: unknown) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const response = await fetch(apiBaseUrl + path, { method, signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => null);
-      throw new SyncFailure(response.status, typeof error?.error === 'string' ? error.error : error?.error?.message ?? 'Request failed. Please retry.');
-    }
-    return response;
-  } finally { clearTimeout(timeout); }
-}
 export async function fitnessRequest<T>(path: string, method = 'GET', body?: unknown, expectedOwner?: string): Promise<T> {
   const token = await getSessionToken();
   if (!token) throw new SyncFailure(401, 'Sign in to continue.');
@@ -29,13 +15,13 @@ export async function fitnessRequest<T>(path: string, method = 'GET', body?: unk
     if ((await getCachedUser())?.id !== expectedOwner) throw new SyncFailure(401, 'Your active account changed.');
     if (checkedToken !== token || !checkedOwner) {
       checkedToken = token;
-      checkedOwner = fetchWithTimeout('/users/me', token, 'GET').then(async (response) => (await response.json()).id as string);
+      checkedOwner = fetchFitnessText(apiBaseUrl + '/users/me', token, 'GET').then((text) => JSON.parse(text).id as string);
     }
     let actual: string;
     try { actual = await checkedOwner; } catch (error) { checkedOwner = null; throw error; }
     if (actual !== expectedOwner) throw new SyncFailure(401, 'Queued entries belong to a different account.');
   }
-  const result = await (await fetchWithTimeout(path, token, method, body)).json() as T;
+  const result = JSON.parse(await fetchFitnessText(apiBaseUrl + path, token, method, body)) as T;
   if (await getSessionToken() !== token || (expectedOwner && (await getCachedUser())?.id !== expectedOwner)) {
     throw new SyncFailure(401, 'Your active account changed.');
   }
@@ -73,8 +59,7 @@ export async function loadWhoopDashboard(userId: string, start: string, end: str
 }
 export async function clearFitnessCache(userId: string, discardPending = false) {
   const engine = engines.get(userId) ?? createHealthSync({ userId, storage: AsyncStorage, uuid: randomUUID, request: async () => { throw new Error('Offline'); } });
-  if (!discardPending && (await engine.snapshot()).pending) throw new Error('Sync your pending entries before signing out, or explicitly discard them in Account.');
-  await engine.clear();
+  await engine.clear(discardPending);
   await AsyncStorage.removeItem(whoopKey(userId));
   engines.delete(userId); checkedToken = null; checkedOwner = null;
 }
@@ -87,8 +72,7 @@ registerSignOutCleanup(async () => {
 export async function exportFitnessFile(path: string, filename: string, mimeType: string) {
   const token = await getSessionToken();
   if (!token) throw new SyncFailure(401, 'Sign in to export your data.');
-  const response = await fetchWithTimeout(path, token, 'GET');
-  const text = await response.text();
+  const text = await fetchFitnessText(apiBaseUrl + path, token, 'GET');
   const { Platform } = await import('react-native');
   if (Platform.OS === 'web') {
     const url = URL.createObjectURL(new Blob([text], { type: mimeType }));

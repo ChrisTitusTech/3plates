@@ -11,12 +11,14 @@ function offset(date = new Date()) {
   const minutes = -date.getTimezoneOffset();
   return `${minutes < 0 ? '-' : '+'}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}:${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
 }
-export function newLogForm(): LogForm {
+export function newLogForm(now = new Date()): LogForm {
+  const start = new Date(now); start.setDate(start.getDate() - 1); start.setHours(22, 0, 0, 0);
+  const end = new Date(now); end.setHours(7, 0, 0, 0);
   return { date: localDay(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', notes: '',
     title: '', sport: 'Strength', durationMinutes: '', distance: '', linkedWhoopWorkoutId: '',
     meal: '', calories: '', proteinGrams: '', carbohydrateGrams: '', fatGrams: '', amount: '',
-    startDate: localDay(new Date(Date.now() - 86400000)), startTime: '22:00', startOffset: offset(),
-    endDate: localDay(), endTime: '07:00', endOffset: offset(), nap: 'no', quality: '5',
+    startDate: localDay(start), startTime: '22:00', startOffset: offset(start),
+    endDate: localDay(end), endTime: '07:00', endOffset: offset(end), nap: 'no', quality: '5',
     energy: '5', soreness: '5', stress: '5', mood: '5', tags: '', weight: '',
     metric: 'workouts_per_week', target: '',
   };

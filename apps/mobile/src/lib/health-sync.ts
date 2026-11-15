@@ -76,10 +76,11 @@ export function createHealthSync(options: {
       await persist(state);
       return id;
     }),
-    remove: (id: string) => exclusive(async () => {
+    remove: (id: string, expectedVersion?: number) => exclusive(async () => {
       const state = await read();
       const current = state.records[id];
       if (!current?.entry) return;
+      if (expectedVersion !== undefined && current.version !== expectedVersion) throw new Error('This entry changed since you confirmed deletion. Review it before deleting.');
       if (state.pending.some((item) => item.mutation.id === id && item.error)) throw new Error('Resolve the sync conflict before deleting it.');
       state.pending.push({ mutation: { mutationId: options.uuid(), id, expectedVersion: current.version, entry: null } });
       state.records[id] = { ...current, version: current.version + 1, entry: null, updatedAt: new Date().toISOString() };
@@ -112,6 +113,9 @@ export function createHealthSync(options: {
       else delete state.records[id];
       await persist(state);
     }),
-    clear: () => exclusive(() => options.storage.removeItem(key)),
+    clear: (discardPending = false) => exclusive(async () => {
+      if (!discardPending && (await read()).pending.length) throw new Error('Sync your pending entries before signing out, or explicitly discard them in Account.');
+      await options.storage.removeItem(key);
+    }),
   };
 }

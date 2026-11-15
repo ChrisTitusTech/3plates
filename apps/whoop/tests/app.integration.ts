@@ -2,7 +2,7 @@ import "./env.js";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import { createHmac } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { and, eq, sql } from "drizzle-orm";
@@ -23,6 +23,7 @@ import {
   ApiError,
   ReconnectError,
   reserveRequest,
+  requestWhoop,
 } from "../server/whoop.js";
 import { enqueueSync, processJob, retryJob, upsert } from "../server/sync.js";
 const app = await buildApp({ serveStatic: false });
@@ -732,4 +733,52 @@ test("3plates WHOOP authorization adopts the existing member without replacing h
   const history = await db.select().from(records).where(eq(records.memberId, memberA));
   assert.equal(history.length, 1); assert.equal(history[0].sourceId, '101');
   assert.ok((await db.select().from(jobs).where(eq(jobs.memberId, memberA))).length > 0);
+});
+
+test("late authorization failure preserves newly authorized credentials", async () => {
+  globalThis.fetch = async () => {
+    await db.update(members).set({ tokens: encrypt({ access_token: "new-authorization", refresh_token: "new-refresh", expires_at: Date.now() + 3600000 }, config.TOKEN_KEY), connected: true }).where(eq(members.id, memberA));
+    return new Response("", { status: 403 });
+  };
+  await assert.rejects(requestWhoop(memberA, "/user/profile/basic"), ReconnectError);
+  const [member] = await db.select().from(members).where(eq(members.id, memberA));
+  assert.equal(member.connected, true);
+  assert.equal(await accessToken(memberA), "new-authorization");
+});
+
+test("worker exits when its singleton session is terminated", { timeout: 15000 }, async () => {
+  await db.update(members).set({ connected: false });
+  const worker = spawn(process.execPath, ["--import", "tsx", "server/worker.ts"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  let output = ""; worker.stdout.on("data", (data) => { output += data; }); worker.stderr.on("data", (data) => { output += data; });
+  const exited = new Promise<number | null>((resolve) => worker.once("exit", resolve));
+  try {
+    for (let i = 0; i < 100 && !output.includes("WHOOP worker started"); i++) await sleep(50);
+    assert.match(output, /WHOOP worker started/);
+    await db.execute(sql`select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'gallant-worker-lock'`);
+    assert.equal(await Promise.race([exited, sleep(5000, "timeout", { ref: false })]), 1);
+    assert.match(output, /singleton lock connection lost/);
+    await db.transaction(async (tx) => {
+      const [lock] = await tx.execute(sql`select pg_try_advisory_xact_lock(834702) as acquired`);
+      assert.equal(lock.acquired, true);
+    });
+  } finally { if (worker.exitCode === null) worker.kill("SIGKILL"); await exited; }
+});
+
+test("empty optional WHOOP public URL falls back before integration initialization", () => {
+  const result = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", 'const {origin} = await import("./server/config.ts"); console.log(origin)'], {
+    env: { ...process.env, WHOOP_PUBLIC_URL: "", PUBLIC_URL: "" }, encoding: "utf8",
+  });
+  assert.equal(result.trim(), "https://whoop.3spinningplates.com");
+});
+
+test('short dashboard ranges include a full seven-day rolling window without widening summaries', async () => {
+  for (let day = 2; day <= 8; day++) await upsert(db, memberA, 'cycle', { ...cycle(1000 + day), start: `2026-01-${String(day).padStart(2, '0')}T08:00:00Z`, score: { strain: day < 7 ? 10 : 0 } });
+  // Replace the fixture cycle on January 2 so it does not contribute a second strain value.
+  await upsert(db, memberA, 'cycle', { ...cycle(101), score: { strain: 10 } });
+  const response = await app.inject({ url: '/api/me/dashboard?start=2026-01-08&end=2026-01-08', headers: { cookie: cookieA } });
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.days.length, 1);
+  assert.ok(Math.abs(body.days[0].strainAverage - 50 / 7) < 0.001);
+  assert.equal(body.summary.strain.count, 1); assert.equal(body.previous.strain.count, 1);
 });

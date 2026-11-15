@@ -20,13 +20,21 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   const [editing, setEditing] = useState<string | undefined>();
   const [editingVersion, setEditingVersion] = useState<number | undefined>();
   const [imperial, setImperial] = useState(false);
+  const [unitsReady, setUnitsReady] = useState(false);
+  const [unitNotice, setUnitNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmConflict, setConfirmConflict] = useState<string | null>(null);
   const [choices, setChoices] = useState<Array<{ id: string; label: string }>>([]);
   const [visible, setVisible] = useState(20);
   useEffect(() => {
-    void fetchPreferences().then((result) => setImperial(result.data.units === 'imperial')).catch(() => undefined);
+    let active = true;
+    void fetchPreferences().then((result) => {
+      if (active) setImperial(result.data.units === 'imperial');
+    }).catch(() => {
+      if (active) setUnitNotice('Using metric units because your preferences are unavailable.');
+    }).finally(() => { if (active) setUnitsReady(true); });
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     let active = true; setChoices([]);
@@ -58,7 +66,9 @@ function LogFormScreen({ fitness }: { fitness: ReturnType<typeof useFitness> }) 
   function changeExercise(index: number, update: Partial<ExerciseForm>) {
     setExercises((current) => current.map((exercise, i) => i === index ? { ...exercise, ...update } : exercise));
   }
+  if (!unitsReady) return <FitnessPage title="Daily log"><Text style={ui.notice}>Loading your measurement units...</Text></FitnessPage>;
   return <FitnessPage title="Daily log">
+    {!!unitNotice && <Text style={ui.notice}>{unitNotice}</Text>}
     <Text accessibilityLiveRegion="polite" style={ui.notice}>{message} {snapshot.pending ? `${snapshot.pending} pending changes.` : ''}</Text>
     <Button title="Sync now" disabled={busy || saving} onPress={() => { void refresh(); }} />
     {snapshot.conflicts.map((conflict) => <Card key={conflict.mutation.mutationId} title="Entry needs attention">

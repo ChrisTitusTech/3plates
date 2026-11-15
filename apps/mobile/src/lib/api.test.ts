@@ -11,6 +11,7 @@ import {
   createManualWorkout,
   deleteManualWorkout,
   fetchMe,
+  fetchPreferences,
   fetchManualWorkouts,
   fetchProgress,
   fetchWorkoutsByMode,
@@ -690,4 +691,15 @@ test('temporary API outages permit cached account access but invalid sessions ne
   for (status of [502, 503, 429]) assert.deepEqual(await fetchMe(), { data: user, source: 'cache' });
   status = 401; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 401);
   status = 404; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 404);
+});
+
+test('temporary API outages preserve cached measurement preferences', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 200;
+  const preferences = { theme: 'system', units: 'imperial', reminderTime: '07:00' };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => ({ status, body: status === 200 ? preferences : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('cached-preferences-token'); await fetchMe(); await fetchPreferences();
+  for (status of [502, 503, 429]) assert.deepEqual(await fetchPreferences(), { data: preferences, source: 'cache' });
+  status = 401; await assert.rejects(fetchPreferences(), (error: unknown) => (error as { status: number }).status === 401);
 });

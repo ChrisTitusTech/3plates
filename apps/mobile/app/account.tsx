@@ -83,7 +83,9 @@ export default function AccountScreen() {
   if (!owner || loadedOwner !== owner) return <FitnessPage title="Account"><Text style={ui.notice}>{message}</Text>
     <Button title="Retry loading account" disabled={busy || !owner} onPress={() => { void action(load, 'Account settings loaded.'); }} />
     <Button title="Sign out" disabled={busy || !owner || snapshot.pending > 0} onPress={() => { void action(() => signOut(), 'Signed out.'); }} />
-    {!!snapshot.pending && <Text style={ui.notice}>Your pending entries stay on this device. Synchronize them from Log before signing out.</Text>}
+    {!!snapshot.pending && <><Text style={ui.notice}>Unsynchronized edits will be lost if you discard them. Sync from Log first to keep them.</Text>
+      <Button danger title={confirm === 'discard' ? 'Confirm discard and sign out' : 'Discard pending edits and sign out'} disabled={busy || !owner}
+        onPress={() => guarded('discard', () => signOut(true), 'Local edits discarded and signed out.')} /></>}
   </FitnessPage>;
   return <FitnessPage title="Account">
     <Text accessibilityLiveRegion="polite" style={ui.notice}>{message}</Text>

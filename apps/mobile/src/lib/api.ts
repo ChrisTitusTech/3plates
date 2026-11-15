@@ -792,10 +792,13 @@ export async function deleteManualWorkout(workoutId: string) {
 
 export async function fetchPreferences(): Promise<CachedReadResult<Preferences>> {
   const token = await requireSessionToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.preferences({
       extraHeaders: buildAuthHeaders(token),
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
@@ -809,10 +812,12 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
       source: 'network',
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
+    await assertCurrentSession(token);
     const cached = await readCache<Preferences>(storageKeys.preferences);
     if (!cached) {
       throw error;
@@ -822,6 +827,8 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
       data: cached,
       source: 'cache',
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

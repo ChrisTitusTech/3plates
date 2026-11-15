@@ -205,3 +205,46 @@ test('API 502 responses still allow offline manual entries and cached accounts c
   expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
   expect(f.errors).toEqual([]);
 });
+
+test('delayed imperial preferences cannot change the units of an open edit', async ({ page }) => {
+  const f = await setup(page);
+  const id = '00000000-0000-4000-8000-000000000099';
+  f.logs.set(id, { id, version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    entry: { kind: 'weight', date: '2026-11-14', timezone: 'UTC', notes: '', details: { kilograms: 100 } } });
+  let release!: () => void;
+  const preferencesReady = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/users/me/preferences', async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fallback();
+    await preferencesReady;
+    await route.fulfill({ json: { theme: 'system', units: 'imperial', reminderTime: '07:00' }, headers: { 'access-control-allow-origin': '*' } });
+  });
+  await page.goto('/log');
+  await expect(page.getByText('Loading your measurement units...')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit weight entry' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save entry', exact: true })).toHaveCount(0);
+  release();
+  await page.getByRole('button', { name: 'Edit weight entry' }).click();
+  await expect(page.getByLabel('Body weight (lb)')).toHaveValue('220.4623');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => f.logs.get(id)?.version).toBe(2);
+  const entry = f.logs.get(id)?.entry;
+  expect(entry?.kind === 'weight' && entry.details.kilograms).toBeCloseTo(100, 3);
+  expect(f.errors).toEqual([]);
+});
+
+test('account outages retain pending edits until confirmed discard and sign-out', async ({ page }) => {
+  const f = await setup(page); await page.goto('/log');
+  await page.getByRole('button', { name: 'hydration', exact: true }).click();
+  await page.getByLabel('Water (mL)').fill('350');
+  f.setApiUnavailable(true);
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click();
+  await expect(page.getByText('350 mL', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Account', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Discard pending edits and sign out', exact: true }).click();
+  expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('synthetic-session');
+  await page.getByRole('button', { name: 'Confirm discard and sign out', exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
+  expect(f.logs.size).toBe(0); expect(f.errors).toEqual([]);
+});

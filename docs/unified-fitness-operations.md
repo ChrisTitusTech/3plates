@@ -291,3 +291,24 @@ Keep this migration when rolling back application artifacts. Older API versions
 do not enforce authentication generations and restore the unlink race; prefer a
 forward fix or maintenance mode if authentication must be rolled back. This
 migration has only been applied to the local test database in this review pass.
+
+
+### Sharing and backup hardening (PR #44)
+
+Sharing writes now require the WHOOP member ID returned by the profile endpoint.
+Both clients send the ID associated with their loaded sharing draft; a cookie
+account mismatch is rejected. Reload existing browser tabs when deploying this
+API/client pair. Sharing token selection happens under a member row lock so an
+old request cannot restore a revoked public link. WHOOP credential exchange is
+separate from member activation: 3plates first accepts the identity, then checks
+it under the account lock before storing credentials or scheduling imports.
+Completed full reconciliations retire only webhook failures covered by all
+history kinds; newer or other-account failures remain actionable.
+
+Backups allow at most 60 seconds to acquire database locks, 20 minutes for dump,
+and two minutes for restore-list verification. The service has a 45-minute
+startup limit and 30-second stop limit, leaving time for the existing bounded
+offsite upload. The local operations harness verifies timeout cleanup without
+publishing partial dumps. Local systemd validation substitutes the production
+executable and Docker dependency, which are absent on this Podman workstation;
+validation of the installed service remains part of the next VPS rollout.

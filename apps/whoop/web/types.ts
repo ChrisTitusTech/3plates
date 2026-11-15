@@ -22,6 +22,7 @@ export type Dashboard = {
   body: Detail | null;
 };
 export type Member = {
+  id: string;
   name: string;
   connected: boolean;
   shareUrl: string | null;

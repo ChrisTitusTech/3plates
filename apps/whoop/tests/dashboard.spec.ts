@@ -78,7 +78,7 @@ test("private account settings require a preview before publishing", async ({
   const start = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
   await page.route("**/api/me", (route) =>
     route.fulfill({
-      json: { name: "Test Member", connected: true, shareUrl: null },
+      json: { id: "00000000-0000-4000-8000-000000000001", name: "Test Member", connected: true, shareUrl: null },
     }),
   );
   await page.route("**/api/me/dashboard?*", (route) =>
@@ -90,6 +90,7 @@ test("private account settings require a preview before publishing", async ({
   let published = false;
   let publishedPolicy: { kinds: string[] } | undefined;
   await page.route("**/api/me/sharing", (route) => {
+    expect(route.request().postDataJSON().memberId).toBe("00000000-0000-4000-8000-000000000001");
     published = true;
     publishedPolicy = route.request().postDataJSON().policy;
     return route.fulfill({
@@ -419,7 +420,7 @@ test("range responses reuse full-history context without losing lifetime data", 
   const initial = sample("2026-09-16", "2026-10-15");
   await page.route("**/api/me", (route) =>
     route.fulfill({
-      json: { name: "Test Member", connected: true, shareUrl: null },
+      json: { id: "00000000-0000-4000-8000-000000000001", name: "Test Member", connected: true, shareUrl: null },
     }),
   );
   await page.route("**/api/me/sync", (route) =>
@@ -456,7 +457,7 @@ test("existing unrestricted share settings accurately include body measurements"
   await page.route("**/api/me", (route) =>
     route.fulfill({
       json: {
-        name: "Test Member",
+        id: "00000000-0000-4000-8000-000000000001", name: "Test Member",
         connected: true,
         shareUrl: "https://example.test/share/synthetic",
         sharePolicy: null,
@@ -480,7 +481,7 @@ test("existing unrestricted share settings accurately include body measurements"
 
 for (const invalid of ["reversed", "empty"]) {
   test(`invalid ${invalid} range clears loading while an old dashboard request is pending`, async ({ page }) => {
-    await page.route("**/api/me", (route) => route.fulfill({ json: { name: "Test Member", connected: true, shareUrl: null } }));
+    await page.route("**/api/me", (route) => route.fulfill({ json: { id: "00000000-0000-4000-8000-000000000001", name: "Test Member", connected: true, shareUrl: null } }));
     await page.route("**/api/me/sync", (route) => route.fulfill({ json: { connected: true, lastSync: null, jobs: [] } }));
     let release!: () => void; let requested = false;
     const wait = new Promise<void>((resolve) => { release = resolve; });
@@ -500,7 +501,7 @@ for (const invalid of ["reversed", "empty"]) {
 }
 
 test('legacy deletion explicitly limits its scope to Gallant WHOOP data', async ({ page }) => {
-  await page.route('**/api/me', (route) => route.fulfill({ json: { name: 'Test Member', connected: true, shareUrl: null } }));
+  await page.route('**/api/me', (route) => route.fulfill({ json: { id: '00000000-0000-4000-8000-000000000001', name: 'Test Member', connected: true, shareUrl: null } }));
   await page.route('**/api/me/dashboard?*', (route) => route.fulfill({ json: sample('2026-11-01', '2026-11-14') }));
   await page.route('**/api/me/sync', (route) => route.fulfill({ json: { connected: true, lastSync: null, jobs: [] } }));
   await page.goto('/');
@@ -511,4 +512,25 @@ test('legacy deletion explicitly limits its scope to Gallant WHOOP data', async 
   const confirmation = await dialog;
   expect(confirmation.message()).toContain('Your 3plates account, sign-in methods, and manual entries will remain.');
   await confirmation.dismiss(); await click;
+});
+
+test("oversized persisted demo dates show a recoverable error", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/demo?start=%221900-01-01%22&end=%222026-11-15%22");
+  await expect(
+    page.getByText("Select a valid date range of at most 20,000 days."),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByText("Select a valid date range of at most 20,000 days."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "7 days", exact: true }).click();
+  await expect(page.locator("tbody tr")).toHaveCount(7);
+  await expect(
+    page.getByText("Select a valid date range of at most 20,000 days."),
+  ).toHaveCount(0);
+  expect(errors).toEqual([]);
 });

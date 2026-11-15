@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { randomUUID } from 'expo-crypto';
-import { apiBaseUrl, fetchMe, getCachedUser, getSessionToken, registerSignOutCleanup } from './api';
+import { apiBaseUrl, fetchMe, getCachedUser, getSessionGeneration, getSessionToken, registerSignOutCleanup } from './api';
 import { createHealthSync, SyncFailure, type HealthSync } from './health-sync';
 import { fetchFitnessText } from './fitness-http';
 import type { Dashboard } from '@3plates/whoop/types';
@@ -68,11 +68,18 @@ registerSignOutCleanup(async (user) => {
   if (user) await clearFitnessCache(user.id);
 });
 
-export async function exportFitnessFile(path: string, filename: string, mimeType: string) {
+export async function exportFitnessFile(path: string, filename: string, mimeType: string, owner: string | undefined) {
+  const generation = getSessionGeneration();
   const token = await getSessionToken();
   if (!token) throw new SyncFailure(401, 'Sign in to export your data.');
+  async function assertOwner() {
+    if (!owner || generation !== getSessionGeneration() || await getSessionToken() !== token || (await getCachedUser())?.id !== owner || generation !== getSessionGeneration())
+      throw new SyncFailure(401, 'Your active account changed. Export cancelled.');
+  }
+  await assertOwner();
   const text = await fetchFitnessText(apiBaseUrl + path, token, 'GET');
   const { Platform } = await import('react-native');
+  await assertOwner();
   if (Platform.OS === 'web') {
     const url = URL.createObjectURL(new Blob([text], { type: mimeType }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
@@ -81,8 +88,9 @@ export async function exportFitnessFile(path: string, filename: string, mimeType
     const { File, Paths } = await import('expo-file-system');
     const { shareAsync, isAvailableAsync } = await import('expo-sharing');
     if (!await isAvailableAsync()) throw new Error('File sharing is unavailable on this device.');
+    await assertOwner();
     const file = new File(Paths.cache, randomUUID() + '-' + filename);
-    try { await file.write(text); await shareAsync(file.uri, { mimeType, dialogTitle: 'Export your fitness data' }); }
+    try { await file.write(text); await assertOwner(); await shareAsync(file.uri, { mimeType, dialogTitle: 'Export your fitness data' }); }
     finally { if (file.exists) await file.delete(); }
   }
 }

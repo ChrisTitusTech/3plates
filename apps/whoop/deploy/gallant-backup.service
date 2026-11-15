@@ -5,5 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+TimeoutStartSec=45min
+TimeoutStopSec=30s
 ExecStart=/opt/gallant-dashboard/current/deploy/backup.sh
 UMask=0077

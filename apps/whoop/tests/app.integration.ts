@@ -131,7 +131,7 @@ test("authentication, date validation, and ownership are enforced by the API", a
         method: "POST",
         url: "/api/me/sharing",
         headers: { cookie: cookieA, origin: "https://attacker.test" },
-        payload: { enabled: true },
+        payload: { memberId: memberA, enabled: true },
       })
     ).statusCode,
     403,
@@ -146,7 +146,7 @@ test("public links are explicit, sanitized, read-only, and immediately revocable
     method: "POST",
     url: "/api/me/sharing",
     headers: { cookie: cookieA, origin },
-    payload: { enabled: true },
+    payload: { memberId: memberA, enabled: true },
   });
   const token = result.json().shareUrl.split("/").at(-1);
   const shared = await app.inject(
@@ -166,7 +166,7 @@ test("public links are explicit, sanitized, read-only, and immediately revocable
     method: "POST",
     url: "/api/me/sharing",
     headers: { cookie: cookieA, origin },
-    payload: { enabled: false },
+    payload: { memberId: memberA, enabled: false },
   });
   assert.equal((await app.inject(`/api/shared/${token}`)).statusCode, 404);
 });
@@ -628,6 +628,7 @@ test("context reuse invalidates on edits and deletion; restricted shares enforce
     url: "/api/me/sharing",
     headers: { cookie: cookieA, origin },
     payload: {
+      memberId: memberA,
       enabled: true,
       policy: {
         kinds: ["sleep"],
@@ -726,6 +727,9 @@ test("3plates WHOOP authorization adopts the existing member without replacing h
     return Response.json({ user_id: 1, first_name: 'Existing', last_name: 'Member', email: 'existing@example.test' });
   };
   const identity = await authorize({ code: 'synthetic-code', redirectUri: 'https://api.example.test/auth/callback' });
+  assert.equal((await db.select().from(jobs)).length, 0);
+  assert.equal(await accessToken(memberA), 'access');
+  await identity.activate();
   assert.equal(identity.providerSubjectId, '1'); assert.equal(identity.emailVerified, false);
   const [member] = await db.select().from(members).where(eq(members.whoopId, '1'));
   assert.equal(member.id, memberA); assert.equal(member.name, 'Existing Member'); assert.equal(member.connected, true);
@@ -815,4 +819,102 @@ test("test environment pins validated database and fake credentials before doten
     console.log('test configuration pinned');
   `], { encoding: "utf8" });
   assert.match(result, /test configuration pinned/);
+});
+
+test("sharing rejects drafts from a different signed-in member", async () => {
+  assert.equal(
+    (await app.inject({ url: "/api/me", headers: { cookie: cookieA } })).json()
+      .id,
+    memberA,
+  );
+  const result = await app.inject({
+    method: "POST",
+    url: "/api/me/sharing",
+    headers: { cookie: cookieB, origin },
+    payload: { memberId: memberA, enabled: true, policy: { kinds: ["body"] } },
+  });
+  assert.equal(result.statusCode, 409);
+  const [other] = await db
+    .select()
+    .from(members)
+    .where(eq(members.id, memberB));
+  assert.equal(other.shareToken, null);
+  assert.equal(other.sharePolicy, null);
+});
+
+test("sharing enable rereads a concurrently revoked token under the member lock", async () => {
+  const oldToken = randomToken();
+  await db
+    .update(members)
+    .set({ shareToken: oldToken })
+    .where(eq(members.id, memberA));
+  let release!: () => void;
+  let locked!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const revocation = db.transaction(async (tx) => {
+    await tx
+      .update(members)
+      .set({ shareToken: null })
+      .where(eq(members.id, memberA));
+    locked();
+    await wait;
+  });
+  await held;
+  const enable = app.inject({
+    method: "POST",
+    url: "/api/me/sharing",
+    headers: { cookie: cookieA, origin },
+    payload: { memberId: memberA, enabled: true },
+  });
+  try {
+    let blocked = false;
+    for (let i = 0; i < 500; i++) {
+      const rows =
+        await client`select pid from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and lower(query) like '%for update%'`;
+      if (rows.length) {
+        blocked = true;
+        break;
+      }
+      await sleep(10);
+    }
+    assert.equal(
+      blocked,
+      true,
+      "enable must read the old snapshot then wait for the member lock",
+    );
+  } finally {
+    release();
+    await revocation;
+  }
+  const result = await enable;
+  assert.equal(result.statusCode, 200);
+  const newToken = result.json().shareUrl.split("/").at(-1);
+  assert.notEqual(newToken, oldToken);
+  assert.equal((await app.inject(`/api/shared/${oldToken}`)).statusCode, 404);
+  assert.equal((await app.inject(`/api/shared/${newToken}`)).statusCode, 200);
+});
+
+test("full reconciliation retires covered webhook failures but retains newer and unrelated failures", async () => {
+  const before = new Date(Date.now() - 60000);
+  const after = new Date(Date.now() + 60000);
+  await db.insert(jobs).values([
+    { memberId: memberA, kind: "event", key: "event:covered", payload: { type: "sleep.updated", id: "old" }, status: "failed", updatedAt: before },
+    { memberId: memberA, kind: "event", key: "event:new", payload: { type: "sleep.updated", id: "new" }, status: "failed", updatedAt: after },
+    { memberId: memberB, kind: "event", key: "event:other", payload: {}, status: "failed", updatedAt: before },
+  ]);
+  await enqueueSync(db, memberA, "full");
+  const full = await db.select().from(jobs).where(and(eq(jobs.memberId, memberA), eq(jobs.status, "pending")));
+  const api = async (_id: string, path: string) => path.startsWith('/user/') ? { user_id: 1 } : { records: [], next_token: null };
+  for (const job of full.filter((job) => job.kind !== "sleep")) await processJob(job, api);
+  const failed = async (key: string) => (await db.select().from(jobs).where(eq(jobs.key, key)))[0].status;
+  assert.equal(await failed('event:covered'), 'failed');
+  await processJob(full.find((job) => job.kind === 'sleep')!, api);
+  assert.equal(await failed('event:covered'), 'superseded');
+  assert.equal(await failed('event:new'), 'failed');
+  assert.equal(await failed('event:other'), 'failed');
 });

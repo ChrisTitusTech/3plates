@@ -21,5 +21,5 @@ export type OAuthProviderAdapter = {
     code: string;
     redirectUri: string;
     codeVerifier: string;
-  }): Promise<OAuthIdentity>;
+  }): Promise<OAuthIdentity & { activate?: () => Promise<void> }>;
 };

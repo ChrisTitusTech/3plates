@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "lint": "eslint .",
     "test": "tsx --test tests/*.test.ts",
-    "test:db": "tsx --test tests/*.integration.ts",
+    "test:db": "pnpm build && tsx --test tests/*.integration.ts",
     "test:browser": "playwright test",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },

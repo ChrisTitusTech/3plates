@@ -416,6 +416,7 @@ export async function buildApp(
   app.get("/api/me", async (req) => {
     const m = await requireMember(req);
     return {
+      id: m.id,
       name: m.name,
       connected: m.connected,
       shareUrl: m.shareToken ? origin + "/share/" + m.shareToken : null,
@@ -476,9 +477,10 @@ export async function buildApp(
   );
   app.post("/api/me/sharing", async (req) => {
     const m = await requireMember(req);
-    const { enabled, policy } = z
+    const { enabled, policy, memberId } = z
       .object({
         enabled: z.boolean(),
+        memberId: z.string().uuid(),
         policy: z
           .object({
             kinds: z
@@ -492,26 +494,30 @@ export async function buildApp(
           .optional(),
       })
       .parse(req.body);
+    if (memberId !== m.id)
+      throw fail(409, "Your account changed. Reload before changing sharing.");
     if (enabled && policy?.expires && Date.parse(policy.expires) <= Date.now())
       throw fail(400, "Expiration must be in the future.");
     if (enabled && !m.connected)
       throw fail(409, "Reconnect WHOOP before enabling sharing.");
-    const shareToken = enabled ? (m.shareToken ?? randomToken()) : null;
-    const updated = await db
-      .update(members)
-      .set({
-        shareToken,
-        ...(enabled && policy ? { sharePolicy: policy } : {}),
-      })
-      .where(
-        and(
-          eq(members.id, m.id),
-          enabled ? eq(members.connected, true) : undefined,
-        ),
-      )
-      .returning({ id: members.id });
-    if (!updated.length)
-      throw fail(409, "Reconnect WHOOP before enabling sharing.");
+    const shareToken = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(members)
+        .where(eq(members.id, m.id))
+        .for("update");
+      if (!current || (enabled && !current.connected))
+        throw fail(409, "Reconnect WHOOP before enabling sharing.");
+      const token = enabled ? (current.shareToken ?? randomToken()) : null;
+      await tx
+        .update(members)
+        .set({
+          shareToken: token,
+          ...(enabled && policy ? { sharePolicy: policy } : {}),
+        })
+        .where(eq(members.id, m.id));
+      return token;
+    });
     return { shareUrl: shareToken ? origin + "/share/" + shareToken : null };
   });
   app.get("/api/shared/:token", async (req) => {

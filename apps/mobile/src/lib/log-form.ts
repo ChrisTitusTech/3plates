@@ -1,7 +1,7 @@
 import { healthLogInputSchema, type HealthLogInput } from '@3plates/contract';
 
 export type LogKind = HealthLogInput['kind'];
-export type ExerciseForm = { name: string; sets: Array<{ reps: string; weight: string }> };
+export type ExerciseForm = { name: string; sets: Array<{ reps: string; weight: string; originalWeight?: string; originalWeightKg?: number; originalImperial?: boolean }> };
 export type LogForm = Record<string, string>;
 export const logKinds: LogKind[] = ['workout', 'nutrition', 'hydration', 'sleep', 'recovery', 'weight', 'goal'];
 export function localDay(date = new Date()) {
@@ -45,21 +45,23 @@ function time(form: LogForm, prefix: 'start' | 'end') {
 }
 export function formEntry(kind: LogKind, form: LogForm, exercises: ExerciseForm[], imperial: boolean): HealthLogInput {
   const n = (key: string) => number(form[key], key.replace(/([A-Z])/g, ' $1'));
+  const measurement = (key: string, factor: number) => form[key] === form[key + 'OriginalText'] && String(factor) === form[key + 'OriginalFactor']
+    ? Number(form[key + 'OriginalValue']) : n(key) * factor;
   let details: unknown;
   switch (kind) {
     case 'workout': details = { title: form.title, sport: form.sport, durationMinutes: n('durationMinutes'),
-      ...(form.distance.trim() ? { distanceKm: n('distance') * (imperial ? 1.609344 : 1) } : {}),
+      ...(form.distance.trim() ? { distanceKm: measurement('distance', imperial ? 1.609344 : 1) } : {}),
       linkedWhoopWorkoutId: form.linkedWhoopWorkoutId || null,
       exercises: exercises.map((exercise) => ({ name: exercise.name, sets: exercise.sets.map((set) => ({
-        reps: number(set.reps, 'Reps'), weightKg: number(set.weight, 'Weight') * (imperial ? 0.45359237 : 1),
+        reps: number(set.reps, 'Reps'), weightKg: set.weight === set.originalWeight && imperial === set.originalImperial && set.originalWeightKg !== undefined ? set.originalWeightKg : number(set.weight, 'Weight') * (imperial ? 0.45359237 : 1),
       })) })),
     }; break;
     case 'nutrition': details = { meal: form.meal, calories: n('calories'), proteinGrams: n('proteinGrams'), carbohydrateGrams: n('carbohydrateGrams'), fatGrams: n('fatGrams') }; break;
-    case 'hydration': details = { milliliters: n('amount') * (imperial ? 29.5735295625 : 1) }; break;
+    case 'hydration': details = { milliliters: measurement('amount', imperial ? 29.5735295625 : 1) }; break;
     case 'sleep': details = { start: time(form, 'start'), end: time(form, 'end'), nap: form.nap === 'yes', quality: n('quality') }; break;
     case 'recovery': details = { energy: n('energy'), soreness: n('soreness'), stress: n('stress'), mood: n('mood'), tags: form.tags === form.originalTagsText ? JSON.parse(form.originalTags) : form.tags.split(',').map((tag) => tag.trim()).filter(Boolean) }; break;
-    case 'weight': details = { kilograms: n('weight') * (imperial ? 0.45359237 : 1) }; break;
-    case 'goal': details = { metric: form.metric, target: n('target') * goalFactor(form.metric, imperial) }; break;
+    case 'weight': details = { kilograms: measurement('weight', imperial ? 0.45359237 : 1) }; break;
+    case 'goal': details = { metric: form.metric, target: measurement('target', goalFactor(form.metric, imperial)) }; break;
   }
   return healthLogInputSchema.parse({ kind, date: form.date, timezone: form.timezone, notes: form.notes, details });
 }
@@ -73,7 +75,7 @@ export function entryForm(entry: HealthLogInput, imperial: boolean) {
     form.distance = entry.details.distanceKm === undefined ? '' : decimal(entry.details.distanceKm / (imperial ? 1.609344 : 1));
     form.linkedWhoopWorkoutId = entry.details.linkedWhoopWorkoutId ?? '';
     exercises = entry.details.exercises.map((exercise) => ({ name: exercise.name,
-      sets: exercise.sets.map((set) => ({ reps: String(set.reps), weight: decimal(set.weightKg / (imperial ? 0.45359237 : 1)) })) }));
+      sets: exercise.sets.map((set) => ({ reps: String(set.reps), weight: decimal(set.weightKg / (imperial ? 0.45359237 : 1)), originalWeight: decimal(set.weightKg / (imperial ? 0.45359237 : 1)), originalWeightKg: set.weightKg, originalImperial: imperial })) }));
   }
   if (entry.kind === 'hydration') form.amount = decimal(entry.details.milliliters / (imperial ? 29.5735295625 : 1));
   if (entry.kind === 'weight') form.weight = decimal(entry.details.kilograms / (imperial ? 0.45359237 : 1));
@@ -91,6 +93,14 @@ export function entryForm(entry: HealthLogInput, imperial: boolean) {
     }
     form.nap = entry.details.nap ? 'yes' : 'no';
   }
+  const remember = (key: string, value: number | undefined, factor: number) => {
+    if (value === undefined) return;
+    form[key + 'OriginalText'] = form[key]; form[key + 'OriginalValue'] = String(value); form[key + 'OriginalFactor'] = String(factor);
+  };
+  if (entry.kind === 'workout') remember('distance', entry.details.distanceKm, imperial ? 1.609344 : 1);
+  if (entry.kind === 'hydration') remember('amount', entry.details.milliliters, imperial ? 29.5735295625 : 1);
+  if (entry.kind === 'weight') remember('weight', entry.details.kilograms, imperial ? 0.45359237 : 1);
+  if (entry.kind === 'goal') remember('target', entry.details.target, goalFactor(entry.details.metric, imperial));
   return { form, exercises };
 }
 export function entrySummary(entry: HealthLogInput) {

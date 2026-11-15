@@ -653,6 +653,7 @@ export function createAuthService(input: {
         linkedAuthGeneration: transaction.purpose === 'link' ? transaction.authGeneration! : undefined,
       });
 
+      if (identity.activate) await userStateStore.activateOAuthIdentity(resolved.user.id, identity, resolved.authGeneration, identity.activate);
       await userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
       const session = await issueSession(resolved.user.id, { generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId });
 

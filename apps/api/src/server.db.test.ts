@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { assertUnlinkInvalidatesAuthentication, createTestAuthApp, signIn } from './test-support.js';
+import { assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -902,3 +902,7 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
     await withDbApp((context) => assertUnlinkInvalidatesAuthentication(context, phase));
   });
 }
+
+dbTest('DB provider activation rejects conflicting links and callbacks after deletion', async () => {
+  await withDbApp(assertProviderActivationFollowsAcceptance);
+});

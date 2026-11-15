@@ -54,6 +54,7 @@ export type AuthBootstrapResult = {
 
 export interface UserStateStore {
   onSessionsRevoked?(handler: (userId: string) => Promise<void>): void;
+  activateOAuthIdentity(userId: string, identity: OAuthIdentity, generation: number, activate: () => Promise<void>): Promise<void>;
   getAuthenticationGeneration(userId: string): Promise<number | null>;
   listIdentities(userId: string): Promise<Array<{ provider: string; providerSubjectId: string }>>;
   unlinkIdentity(userId: string, provider: string, beforeRemove?: (subject: string) => Promise<void>): Promise<void>;
@@ -295,6 +296,14 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
 
   return {
     getUserById,
+    async activateOAuthIdentity(userId, identity, generation, activate) {
+      await db.transaction(async (tx) => {
+        const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+        const [linked] = await tx.select().from(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, identity.provider), eq(userIdentities.providerSubjectId, identity.providerSubjectId)));
+        if (!user || user.deletionRequestedAt || user.authGeneration !== generation || !linked) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+        await activate();
+      });
+    },
     async getAuthenticationGeneration(userId) {
       const [user] = await db.select({ generation: users.authGeneration }).from(users).where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)));
       return user?.generation ?? null;
@@ -909,6 +918,12 @@ export function createMemoryUserStateStore(): UserStateStore & {
     async getUserById(userId) {
       return deletionRequests.has(userId) ? null : usersById.get(userId) ?? null;
     },
+    async activateOAuthIdentity(userId, identity, generation, activate) {
+      await withIdentityLock(userId, async () => {
+        if (!usersById.has(userId) || deletionRequests.has(userId) || (authGenerations.get(userId) ?? 0) !== generation || identitiesByKey.get(identityKey(identity.provider, identity.providerSubjectId)) !== userId) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+        await activate();
+      });
+    },
     async getAuthenticationGeneration(userId) { return usersById.has(userId) && !deletionRequests.has(userId) ? authGenerations.get(userId) ?? 0 : null; },
     async listIdentities(userId) {
       return [...identitiesByKey.entries()].filter(([, id]) => id === userId).map(([key]) => {
@@ -929,7 +944,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
         await revokeSessions?.(userId);
       });
     },
-    async requestDeletion(userId) { deletionRequests.add(userId); },
+    async requestDeletion(userId) { await withIdentityLock(userId, async () => { deletionRequests.add(userId); }); },
     async pendingDeletions(afterId) { return [...deletionRequests].sort().filter((id) => !afterId || id > afterId).slice(0, 100); },
     async deleteAccount(userId) {
       if (!deletionRequests.has(userId)) return;

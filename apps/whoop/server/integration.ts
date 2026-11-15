@@ -49,16 +49,20 @@ export async function authorize(input: { code: string; redirectUri: string }) {
   }).parse(await response.json());
   const subject = String(profile.user_id);
   const name = `${profile.first_name} ${profile.last_name}`.trim();
-  await db.transaction(async (tx) => {
-    const [member] = await tx.insert(members).values({
-      whoopId: subject, name, email: profile.email, tokens: encrypt(tokens, config.TOKEN_KEY),
-    }).onConflictDoUpdate({ target: members.whoopId, set: {
-      name, email: profile.email, tokens: encrypt(tokens, config.TOKEN_KEY), connected: true,
-    } }).returning();
-    await enqueueSync(tx, member.id, 'full');
-  });
   return { provider: 'whoop' as const, providerSubjectId: subject,
-    email: profile.email ?? null, emailVerified: false, displayName: name };
+    email: profile.email ?? null, emailVerified: false, displayName: name,
+    // Tokens remain local to this callback until 3plates accepts and locks the identity.
+    activate: async () => {
+      await db.transaction(async (tx) => {
+        const [member] = await tx.insert(members).values({
+          whoopId: subject, name, email: profile.email, tokens: encrypt(tokens, config.TOKEN_KEY),
+        }).onConflictDoUpdate({ target: members.whoopId, set: {
+          name, email: profile.email, tokens: encrypt(tokens, config.TOKEN_KEY), connected: true,
+        } }).returning();
+        await enqueueSync(tx, member.id, 'full');
+      });
+    },
+  };
 }
 
 export type MemberOperation = 'profile' | 'dashboard' | 'sync' | 'sharing' | 'export' | 'disconnect' | 'delete';

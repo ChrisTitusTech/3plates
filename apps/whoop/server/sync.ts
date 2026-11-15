@@ -134,6 +134,14 @@ export async function processJob(
           ),
         );
     }
+    if (!page.next_token && job.payload.mode === "full") {
+      // A complete reconciliation of every history kind covers older failed webhooks.
+      // Partial/recent traversals and failures newer than the reconciliation remain actionable.
+      await tx.update(jobs).set({ status: "superseded", error: null, updatedAt: sql`now()` }).where(and(
+        eq(jobs.memberId, job.memberId), eq(jobs.kind, "event"), eq(jobs.status, "failed"),
+        ...historyKinds.map((kind) => sql`exists (select 1 from jobs completed where completed.member_id = ${jobs.memberId} and completed.kind = ${kind} and completed.status = 'done' and completed.payload->>'mode' = 'full' and completed.started_at > ${jobs.updatedAt})`),
+      ));
+    }
     await tx
       .update(members)
       .set({ lastSync: new Date() })
@@ -236,7 +244,7 @@ export async function retryJob(job: typeof jobs.$inferSelect, error: unknown) {
       status: terminal ? "failed" : "pending",
       attempts,
       availableAt: new Date(Date.now() + delay * 1000),
-      updatedAt: new Date(),
+      updatedAt: sql`now()`,
       error:
         error instanceof ReconnectError
           ? error.message

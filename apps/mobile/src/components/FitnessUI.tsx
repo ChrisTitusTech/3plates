@@ -1,6 +1,7 @@
 import { useMemo, type PropsWithChildren } from 'react';
 import { Link, usePathname } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type ThemeColors } from '../lib/theme';
 
 const createStyles = (colors: ThemeColors) => StyleSheet.create({
@@ -47,8 +48,9 @@ export function Card({ title, children }: PropsWithChildren<{ title?: string }>)
 export function FitnessPage({ title, children }: PropsWithChildren<{ title: string }>) {
   const { ui, colors } = useFitnessStyles();
   const path = usePathname();
+  const insets = useSafeAreaInsets();
   const tabs = [['/today', 'Today'], ['/log', 'Log'], ['/training', 'Workouts'], ['/trends', 'Trends'], ['/account', 'Account']] as const;
-  return <ScrollView testID="fitness-page" style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={ui.page} keyboardShouldPersistTaps="handled">
+  return <ScrollView testID="fitness-page" style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={[ui.page, { paddingTop: 20 + insets.top, paddingBottom: 20 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]} keyboardShouldPersistTaps="handled">
     <Text style={ui.muted}>3PLATES / YOUR FITNESS, TOGETHER</Text>
     <Text accessibilityRole="header" style={ui.title}>{title}</Text>
     <AppearanceControls />

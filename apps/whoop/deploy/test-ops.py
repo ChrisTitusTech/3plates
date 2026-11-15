@@ -78,6 +78,19 @@ elif name == 'install' and args[0] == '-d': pathlib.Path(args[-1]).mkdir(parents
         args = [str(self.release)] if name == 'activate.sh' else [str(self.root / 'var/backups/gallant/gallant-test.dump')] if name == 'offsite.sh' else []
         return subprocess.run(['bash', str(script), *args], env=dict(self.env, **env), capture_output=True, text=True, timeout=10)
 
+    def test_backup_timeout_does_not_publish_partial_dump(self):
+        result = self.run_script('backup.sh', DB_TIMEOUT='1')
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertEqual([p.name for p in (self.root / 'var/backups/gallant').iterdir()], ['gallant-test.dump'])
+
+    def test_backup_bounds_database_lock_wait_and_verifies_dump(self):
+        result = self.run_script('backup.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = (self.root / 'commands').read_text()
+        self.assertIn('--lock-wait-timeout=60s', log)
+        self.assertIn('timeout --kill-after=10s 20m docker exec', log)
+        self.assertIn('pg_restore --list', log)
+
     def test_restart_failure_rolls_back(self):
         result = self.run_script('activate.sh', RESTART_FAIL='1')
         self.assertEqual(result.returncode, 1, result.stderr)

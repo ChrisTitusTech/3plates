@@ -163,3 +163,37 @@ The independent Codex review of this batch completed with no actionable
 regressions; its targeted tests and typechecks also passed. `pnpm audit` reports
 no known vulnerabilities. CI and remote review must pass on the published head
 before merge; the production database and deployed applications are unchanged.
+
+
+The next review batch binds file exports to their initiating owner and session,
+including native sharing setup. Refresh replacement validates the original token
+inside the serialized transition. Notes-only measurement edits preserve exact
+canonical values, including maximum hydration and workout set weights. Fitness
+pages include all safe-area insets. Legacy sharing writes carry their draft's
+member ID and choose public tokens under a row lock; oversized demo ranges show
+a recoverable error. Database integration tests build required static assets.
+Backup commands and the service have finite deadlines and lock waits.
+
+Additional Codex findings are covered in this batch: WHOOP credential exchange
+has no member/import side effects until 3plates accepts the identity; activation
+holds the account lock and rejects removed identities or deletion tombstones.
+Full reconciliation retires covered webhook failures while retaining newer and
+other-account failures. Regression tests cover these cases in the API memory
+and PostgreSQL stores and the WHOOP database.
+
+
+Validation: 6 contract, 71 API, 51 mobile, 25 WHOOP unit, 28 WHOOP database,
+58 unified browser, 34 legacy browser, and 10 operations tests pass with no
+skips. The 5 unchanged web-deployment tests retain prior evidence (288 total).
+Workspace and WHOOP typechecks, WHOOP lint/build, API build, all-platform Expo
+exports, Bash syntax/ShellCheck/shfmt, and the dependency audit pass (no known
+vulnerabilities). The legacy browser suite was rerun successfully after correcting
+the new test's persisted-date URL encoding and an interrupted mobile navigation
+check during a development-server source update. Local systemd verification
+requires substitutions for the absent production path and Docker service;
+installed-service and real-device safe-area/share-sheet checks remain rollout
+acceptance work. No VPS changes were made in this review cycle.
+
+Independent Codex review of the completed batch found no actionable regressions;
+its focused API/mobile/operations checks also pass. Remote CI and review remain
+required on the next published head before merge.

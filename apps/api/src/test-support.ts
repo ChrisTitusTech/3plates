@@ -158,3 +158,29 @@ export async function assertUnlinkInvalidatesAuthentication(
   const me = await app.inject({ method: 'GET', url: '/users/me', headers: { authorization: `Bearer ${fresh.sessionToken}` } });
   assert.equal(me.statusCode, 200);
 }
+
+export async function assertProviderActivationFollowsAcceptance(context: ReturnType<typeof createTestAuthApp>) {
+  const { app, store, appleProfile } = context;
+  let activations = 0;
+  Object.assign(appleProfile, { activate: async () => { activations++; } });
+  let session = await signIn(app, 'google');
+  await store.resolveOAuthIdentity({ ...appleProfile, providerSubjectId: 'already-linked', linkedUserId: session.user.id });
+  const start = await app.inject({ method: 'POST', url: '/auth/link', headers: { authorization: `Bearer ${session.sessionToken}` }, payload: { provider: 'apple' } });
+  const rejected = await app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${start.json().state}` });
+  assert.equal(rejected.statusCode, 409); assert.equal(activations, 0);
+  await store.unlinkIdentity(session.user.id, 'apple'); session = await signIn(app, 'google');
+  const accepted = await app.inject({ method: 'POST', url: '/auth/link', headers: { authorization: `Bearer ${session.sessionToken}` }, payload: { provider: 'apple' } });
+  assert.equal((await app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${accepted.json().state}` })).statusCode, 200);
+  assert.equal(activations, 1);
+  const activate = store.activateOAuthIdentity.bind(store);
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  store.activateOAuthIdentity = async (...args) => { entered(); await wait; return activate(...args); };
+  const login = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'apple' } });
+  const callback = app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${login.json().state}` });
+  try {
+    await started; await store.requestDeletion(session.user.id); release();
+    assert.equal((await callback).statusCode, 409); assert.equal(activations, 1);
+  } finally { release(); store.activateOAuthIdentity = activate; }
+}

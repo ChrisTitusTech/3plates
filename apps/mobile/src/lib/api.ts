@@ -494,9 +494,11 @@ function sessionTransition<T>(run: () => Promise<T>): Promise<T> {
 function assertSessionGeneration(expected: number) {
   if (getSessionGeneration() !== expected) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
 }
-export function setSessionToken(token: string | null) {
+export function setSessionToken(token: string | null, expected?: { token: string; generation: number }) {
   return sessionTransition(async () => {
+    if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
     await migratePreviousProfile();
+    if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
     await writeSessionToken(token);
     sessionChanged();
   });
@@ -588,6 +590,7 @@ export async function completeAuthCallback(input: {
 }
 
 export async function refreshSessionAndPersist() {
+  const generation = getSessionGeneration();
   const token = await requireSessionToken();
 
   const response = await contractClient.authRefresh({
@@ -599,8 +602,7 @@ export async function refreshSessionAndPersist() {
     throw toApiRequestError(response.status, response.body);
   }
 
-  await assertCurrentSession(token);
-  await setSessionToken(response.body.sessionToken);
+  await setSessionToken(response.body.sessionToken, { token, generation });
   await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;

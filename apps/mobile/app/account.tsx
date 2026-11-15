@@ -155,19 +155,19 @@ export default function AccountScreen() {
           <Field label="Expire in days (1-365)" value={shareDays} onChange={setShareDays} numeric /></View>
         <Button title="Save and enable sharing" disabled={busy || !member?.connected} onPress={() => { void action(async () => {
           if (!shareKinds.length || !calendarDateSchema.safeParse(shareStart).success || !calendarDateSchema.safeParse(shareEnd).success || shareStart > shareEnd || !Number.isInteger(Number(shareDays)) || Number(shareDays) < 1 || Number(shareDays) > 365) throw new Error('Choose data categories, valid dates, and an expiration between 1 and 365 days.');
-          await fitnessRequest('/users/me/whoop/sharing', 'POST', { enabled: true, policy: { kinds: shareKinds, start: shareStart, end: shareEnd, expires: new Date(Date.now() + Number(shareDays) * 86400000).toISOString() } }, owner); await load();
+          await fitnessRequest('/users/me/whoop/sharing', 'POST', { memberId: member?.id, enabled: true, policy: { kinds: shareKinds, start: shareStart, end: shareEnd, expires: new Date(Date.now() + Number(shareDays) * 86400000).toISOString() } }, owner); await load();
         }, 'Sharing policy saved.'); }} />
         {member?.shareUrl && <><Text selectable style={ui.text}>{member.shareUrl}</Text>
           <Text style={ui.muted}>Expires: {member.sharePolicy?.expires ? new Date(member.sharePolicy.expires).toLocaleString() : 'No expiration set. Save a policy to add one.'}</Text>
-          <Button title="Disable sharing link" disabled={busy} onPress={() => { void action(async () => { await fitnessRequest('/users/me/whoop/sharing', 'POST', { enabled: false }, owner); await load(); }, 'Sharing disabled.'); }} /></>}
+          <Button title="Disable sharing link" disabled={busy} onPress={() => { void action(async () => { await fitnessRequest('/users/me/whoop/sharing', 'POST', { memberId: member?.id, enabled: false }, owner); await load(); }, 'Sharing disabled.'); }} /></>}
       </Card>
     </>}
     <Card title="Your data">
       <Text style={ui.muted}>{snapshot.pending} pending manual changes. Exports contain synchronized server data.</Text>
       <Button title="Sync manual entries" disabled={busy} onPress={() => { void refresh(); }} />
-      <Button title="Export manual data (JSON)" disabled={busy || snapshot.pending > 0} onPress={() => { void action(() => exportFitnessFile('/users/me/export', '3plates-manual.json', 'application/json'), 'Export ready.'); }} />
+      <Button title="Export manual data (JSON)" disabled={busy || snapshot.pending > 0} onPress={() => { void action(() => exportFitnessFile('/users/me/export', '3plates-manual.json', 'application/json', owner), 'Export ready.'); }} />
       {providers.includes('whoop') && <View style={ui.row}>{(['json', 'csv'] as const).map((format) => <Button key={format} title={`Export WHOOP (${format.toUpperCase()})`} disabled={busy}
-        onPress={() => { void action(() => exportFitnessFile(`/users/me/whoop/export?format=${format}`, `3plates-whoop.${format}`, format === 'csv' ? 'text/csv' : 'application/json'), 'Export ready.'); }} />)}</View>}
+        onPress={() => { void action(() => exportFitnessFile(`/users/me/whoop/export?format=${format}`, `3plates-whoop.${format}`, format === 'csv' ? 'text/csv' : 'application/json', owner), 'Export ready.'); }} />)}</View>}
       <Link href="/preferences" style={ui.heading}>Units and preferences</Link><Link href="/notifications" style={ui.heading}>Workout reminders</Link>
     </Card>
     <Card title="Sign out">

@@ -535,3 +535,25 @@ for (const path of ['/training', '/trends']) test(`${path} shows account failure
   if (path === '/trends') await expect(page.getByRole('img', { name: /Recovery.*observations.*Minimum.*maximum/ }).first()).toBeVisible();
   expect(f.errors).toEqual([]);
 });
+
+for (const kind of ['manual', 'WHOOP JSON', 'WHOOP CSV']) test(`${kind} export is cancelled after an account switch`, async ({ page }) => {
+  const f = await setup(page); const downloads: string[] = [];
+  page.on('download', (download) => downloads.push(download.suggestedFilename()));
+  let release!: () => void; let requested = false;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const path = kind === 'manual' ? '**/users/me/export' : '**/users/me/whoop/export?*';
+  await page.route(path, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    requested = true; await wait; await route.fulfill({ body: '{"private":"account A"}', headers: { 'access-control-allow-origin': '*' } });
+  });
+  await page.goto('/account');
+  const button = kind === 'manual' ? 'Export manual data (JSON)' : `Export WHOOP (${kind.split(' ')[1]})`;
+  await page.getByRole('button', { name: button, exact: true }).click();
+  await expect.poll(() => requested).toBe(true);
+  await f.switchAccount(); await expect(page.getByText('Second Athlete / synthetic@example.test')).toBeVisible();
+  release(); await expect(page.getByRole('button', { name: button, exact: true })).toBeEnabled();
+  // A subsequent valid export proves the first completion was processed without emitting a file.
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: button, exact: true }).click();
+  await download; expect(downloads).toHaveLength(1); expect(f.errors).toEqual([]);
+});

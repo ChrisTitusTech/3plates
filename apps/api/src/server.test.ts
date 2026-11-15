@@ -8,7 +8,7 @@ import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, createTestAuthApp, signIn } from './test-support.js';
+import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
@@ -34,6 +34,7 @@ function createMissingUserStateApp() {
     getOrCreateUser: async () => sessionUser,
     getUserById: async () => null,
     getAuthenticationGeneration: async () => 0,
+    activateOAuthIdentity: async () => {},
     resolveOAuthIdentity: async () => ({
       authGeneration: 0,
       user: sessionUser,
@@ -1401,3 +1402,8 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
     await assertUnlinkInvalidatesAuthentication(context, phase);
   });
 }
+
+test('memory provider activation rejects conflicting links and callbacks after deletion', async (t) => {
+  const context = createAuthenticatedApp(); t.after(() => context.app.close());
+  await assertProviderActivationFollowsAcceptance(context);
+});

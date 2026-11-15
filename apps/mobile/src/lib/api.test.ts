@@ -23,6 +23,7 @@ import {
   registerSignOutCleanup,
   getCachedUser,
   productionApiUrl,
+  refreshSessionAndPersist,
   registerDevice,
   resolveApiBaseUrl,
   setSessionToken,
@@ -935,4 +936,26 @@ test('session expiry preserves account-owned offline changes for same-account re
   assert.equal(await getSessionToken(), 'alice-after-expiry');
   await flushPendingMutations(); await syncPendingPreferences();
   assert.equal(await getPendingMutationCount(), 0); assert.equal(writes, 2);
+});
+
+test('a refresh queued behind a newer sign-in cannot replace that session', async (t) => {
+  const base = createMemoryStorage(); let pause = false;
+  let release!: () => void; let entered!: () => void; let finishRefresh!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const response = new Promise<void>((resolve) => { finishRefresh = resolve; });
+  const storage = { ...base, async getItem(key: string) {
+    if (pause && key === '@3plates/cache/me') { pause = false; entered(); await waiting; }
+    return base.getItem(key);
+  } };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    authRefresh: async () => { await response; return { status: 200, body: { sessionToken: 'alice-refreshed', user: createBaseUser() } }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const refresh = refreshSessionAndPersist();
+  const rejected = assert.rejects(refresh, /active account changed/);
+  pause = true; const signIn = setSessionToken('bob'); await started;
+  finishRefresh(); await new Promise<void>((resolve) => setImmediate(resolve));
+  release(); await signIn; await rejected;
+  assert.equal(await getSessionToken(), 'bob');
 });

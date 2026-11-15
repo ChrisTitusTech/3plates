@@ -183,8 +183,17 @@ function App() {
       return;
     }
     if (demo) {
-      setData(sample(start, end));
-      setError("");
+      setBusy(false);
+      try {
+        setData(sample(start, end));
+        setError("");
+      } catch (error) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Choose a shorter demo date range.",
+        );
+      }
       return;
     }
     setBusy(true);
@@ -286,6 +295,7 @@ function App() {
     action(async () => {
       const s = await api<{ shareUrl: string | null }>("/api/me/sharing", {
         enabled,
+        memberId: member?.id,
         ...(enabled ? { policy: shareDraft } : {}),
       });
       setMember(

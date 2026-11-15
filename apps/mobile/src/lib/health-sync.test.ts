@@ -193,3 +193,23 @@ test('notes-only recovery edits preserve tags containing commas', () => {
   const changed = formEntry('recovery', form, [], false);
   if (changed.kind === 'recovery') assert.deepEqual(changed.details.tags, ['rest', 'travel']);
 });
+
+test('notes-only measurement edits preserve canonical precision including boundary values', () => {
+  const base = { date: '2026-11-15', timezone: 'UTC', notes: '' };
+  const entries: HealthLogInput[] = [
+    { ...base, kind: 'hydration', details: { milliliters: 20000 } },
+    { ...base, kind: 'weight', details: { kilograms: 80.123456789 } },
+    { ...base, kind: 'goal', details: { metric: 'hydration_ml', target: 1234.56789 } },
+    { ...base, kind: 'workout', details: { title: 'Precise workout', sport: 'Run', durationMinutes: 30, distanceKm: 10.123456789, linkedWhoopWorkoutId: null,
+      exercises: [{ name: 'Lift', sets: [{ reps: 5, weightKg: 100.123456789 }] }] } },
+  ];
+  for (const imperial of [false, true]) for (const entry of entries) {
+    const { form, exercises } = entryForm(entry, imperial); form.notes = 'Follow-up';
+    assert.deepEqual(formEntry(entry.kind, form, exercises, imperial), { ...entry, notes: 'Follow-up' });
+  }
+  const { form } = entryForm(entries[0], true); form.amount = '16';
+  assert.equal((formEntry('hydration', form, [], true).details as { milliliters: number }).milliliters, 16 * 29.5735295625);
+  const workout = entryForm(entries[3], true); workout.exercises[0].sets[0].weight = '225';
+  const saved = formEntry('workout', workout.form, workout.exercises, true);
+  if (saved.kind === 'workout') assert.equal(saved.details.exercises[0].sets[0].weightKg, 225 * 0.45359237);
+});

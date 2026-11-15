@@ -487,3 +487,20 @@ test('typing during an existing entry save keeps a draft that can be saved again
   await expect(page.getByText(/changed while you were editing/)).not.toBeVisible();
   expect(f.errors).toEqual([]);
 });
+
+test('switching to an account without a sharing policy resets its sharing form', async ({ page }) => {
+  const f = await setup(page); let second = false;
+  await page.route('**/users/me/whoop/profile', (route) => route.fulfill({ json: { connected: true, shareUrl: null,
+    sharePolicy: second ? null : { kinds: ['body'], start: '2020-01-01', end: '2020-01-02' } } }));
+  await page.goto('/account');
+  await expect(page.getByLabel('Share from (YYYY-MM-DD)')).toHaveValue('2020-01-01');
+  await page.getByLabel('Expire in days (1-365)').fill('365');
+  second = true; await f.switchAccount();
+  await expect(page.getByText('Second Athlete / synthetic@example.test')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Included: cycle', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Excluded: body', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Share from (YYYY-MM-DD)')).not.toHaveValue('2020-01-01');
+  await expect(page.getByLabel('Expire in days (1-365)')).toHaveValue('7');
+  expect(f.errors).toEqual([]);
+});

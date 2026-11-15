@@ -64,8 +64,7 @@ export async function clearFitnessCache(userId: string, discardPending = false) 
   engines.delete(userId); checkedToken = null; checkedOwner = null;
 }
 export async function clearWhoopCache(userId: string) { await AsyncStorage.removeItem(whoopKey(userId)); }
-registerSignOutCleanup(async () => {
-  const user = await getCachedUser();
+registerSignOutCleanup(async (user) => {
   if (user) await clearFitnessCache(user.id);
 });
 

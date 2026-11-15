@@ -32,15 +32,17 @@ elif name == 'systemctl' and args[:1] == ['restart']:
         marker.touch()
         if os.environ.get('RESTART_FAIL') == '1': sys.exit(1)
 elif name == 'curl' and os.environ.get('NOT_READY') == '1': sys.exit(1)
-elif name == 'stat': print('0')
+elif name == 'stat': print(str(os.getuid()) + ':600' if '%u:%a' in args else '0')
+elif name == 'age': pathlib.Path(args[args.index('-o') + 1]).touch()
 elif name == 'timeout':
+    if args[2] == 'rsync' and os.environ.get('TRANSFER_TIMEOUT') == '1': sys.exit(124)
     if args[2] == 'docker' and os.environ.get('DB_TIMEOUT') == '1': sys.exit(124)
     if args[2].endswith('gallant-alert') and os.environ.get('ALERT_TIMEOUT') == '1': sys.exit(124)
     os.execvp(args[2], args[2:])
 elif name == 'install' and args[0] == '-d': pathlib.Path(args[-1]).mkdir(parents=True, exist_ok=True)
 ''')
         stub.chmod(0o755)
-        for name in ['id', 'pnpm', 'chown', 'chmod', 'runuser', 'docker', 'systemctl', 'curl', 'sleep', 'stat', 'timeout', 'install', 'node']:
+        for name in ['id', 'pnpm', 'chown', 'chmod', 'runuser', 'docker', 'systemctl', 'curl', 'sleep', 'stat', 'timeout', 'install', 'node', 'age', 'rsync']:
             (self.bin / name).symlink_to(stub)
         (self.root / 'etc').mkdir()
         for name in ['gallant-dashboard.env', 'gallant-postgres.env']:
@@ -73,7 +75,7 @@ elif name == 'install' and args[0] == '-d': pathlib.Path(args[-1]).mkdir(parents
         for prefix in ['/opt/gallant-dashboard', '/etc', '/var']:
             text = text.replace(prefix, str(self.root) + prefix)
         script.write_text(text)
-        args = [str(self.release)] if name == 'activate.sh' else []
+        args = [str(self.release)] if name == 'activate.sh' else [str(self.root / 'var/backups/gallant/gallant-test.dump')] if name == 'offsite.sh' else []
         return subprocess.run(['bash', str(script), *args], env=dict(self.env, **env), capture_output=True, text=True, timeout=10)
 
     def test_restart_failure_rolls_back(self):
@@ -118,6 +120,21 @@ elif name == 'install' and args[0] == '-d': pathlib.Path(args[-1]).mkdir(parents
         self.run_script('monitor.sh', DB_TIMEOUT='1')
         self.assertIn('Unable to check synchronization health', (self.root / 'delivered').read_text())
         self.assertIn('Unable to check synchronization health', (self.ops / 'status').read_text())
+
+    def test_offsite_timeout_does_not_record_success_and_can_retry(self):
+        config = self.root / 'etc/gallant-backup-offsite.env'
+        config.write_text('BACKUP_HOST=backup@example.test\nBACKUP_DIR=/backups\nBACKUP_RECIPIENT=test-recipient\n')
+        config.chmod(0o600)
+        result = self.run_script('offsite.sh', TRANSFER_TIMEOUT='1')
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertFalse((self.ops / 'offsite-success').exists())
+        log = (self.root / 'commands').read_text()
+        self.assertIn('timeout --kill-after=10s 15m rsync --timeout=120', log)
+        age_args = next(line.split() for line in log.splitlines() if line.startswith('age '))
+        self.assertFalse(Path(age_args[age_args.index('-o') + 1]).parent.exists())
+        result = self.run_script('offsite.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.ops / 'offsite-success').exists())
 
 
 if __name__ == '__main__':

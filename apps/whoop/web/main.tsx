@@ -1179,13 +1179,14 @@ function App() {
               >
                 Disconnect
               </button>
+              <p>Deleting Gallant WHOOP data leaves your 3plates account and manual entries intact. To delete your full fitness account, use Account in the 3plates app.</p>
               <button
                 className="button danger"
                 disabled={busy}
                 onClick={() => {
                   if (
                     confirm(
-                      "Permanently delete your account and imported history?",
+                      "Permanently delete your Gallant WHOOP data, sharing links, and Gallant sign-in? Your 3plates account, sign-in methods, and manual entries will remain.",
                     )
                   )
                     void action(async () => {
@@ -1194,7 +1195,7 @@ function App() {
                     });
                 }}
               >
-                Delete my account
+                Delete Gallant WHOOP data
               </button>
             </div>
           </section>

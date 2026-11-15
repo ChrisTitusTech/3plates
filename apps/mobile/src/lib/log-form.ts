@@ -57,7 +57,7 @@ export function formEntry(kind: LogKind, form: LogForm, exercises: ExerciseForm[
     case 'nutrition': details = { meal: form.meal, calories: n('calories'), proteinGrams: n('proteinGrams'), carbohydrateGrams: n('carbohydrateGrams'), fatGrams: n('fatGrams') }; break;
     case 'hydration': details = { milliliters: n('amount') * (imperial ? 29.5735295625 : 1) }; break;
     case 'sleep': details = { start: time(form, 'start'), end: time(form, 'end'), nap: form.nap === 'yes', quality: n('quality') }; break;
-    case 'recovery': details = { energy: n('energy'), soreness: n('soreness'), stress: n('stress'), mood: n('mood'), tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean) }; break;
+    case 'recovery': details = { energy: n('energy'), soreness: n('soreness'), stress: n('stress'), mood: n('mood'), tags: form.tags === form.originalTagsText ? JSON.parse(form.originalTags) : form.tags.split(',').map((tag) => tag.trim()).filter(Boolean) }; break;
     case 'weight': details = { kilograms: n('weight') * (imperial ? 0.45359237 : 1) }; break;
     case 'goal': details = { metric: form.metric, target: n('target') * goalFactor(form.metric, imperial) }; break;
   }
@@ -78,7 +78,10 @@ export function entryForm(entry: HealthLogInput, imperial: boolean) {
   if (entry.kind === 'hydration') form.amount = decimal(entry.details.milliliters / (imperial ? 29.5735295625 : 1));
   if (entry.kind === 'weight') form.weight = decimal(entry.details.kilograms / (imperial ? 0.45359237 : 1));
   if (entry.kind === 'goal') form.target = decimal(entry.details.target / goalFactor(entry.details.metric, imperial));
-  if (entry.kind === 'recovery') form.tags = entry.details.tags.join(', ');
+  if (entry.kind === 'recovery') {
+    form.tags = entry.details.tags.join(', ');
+    form.originalTagsText = form.tags; form.originalTags = JSON.stringify(entry.details.tags);
+  }
   if (entry.kind === 'sleep') {
     for (const prefix of ['start', 'end'] as const) {
       const value = entry.details[prefix];

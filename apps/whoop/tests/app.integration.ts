@@ -23,7 +23,6 @@ import {
   ApiError,
   ReconnectError,
   reserveRequest,
-  requestWhoop,
 } from "../server/whoop.js";
 import { enqueueSync, processJob, retryJob, upsert } from "../server/sync.js";
 const app = await buildApp({ serveStatic: false });
@@ -735,12 +734,24 @@ test("3plates WHOOP authorization adopts the existing member without replacing h
   assert.ok((await db.select().from(jobs).where(eq(jobs.memberId, memberA))).length > 0);
 });
 
-test("late authorization failure preserves newly authorized credentials", async () => {
+test("late authorization failure preserves new credentials and retries the running full-sync job", async () => {
+  await enqueueSync(db, memberA, "full");
+  let [job] = await db.update(jobs).set({ status: "running", attempts: 7 }).where(and(eq(jobs.memberId, memberA), eq(jobs.kind, "cycle"))).returning();
   globalThis.fetch = async () => {
     await db.update(members).set({ tokens: encrypt({ access_token: "new-authorization", refresh_token: "new-refresh", expires_at: Date.now() + 3600000 }, config.TOKEN_KEY), connected: true }).where(eq(members.id, memberA));
     return new Response("", { status: 403 });
   };
-  await assert.rejects(requestWhoop(memberA, "/user/profile/basic"), ReconnectError);
+  try { await processJob(job); assert.fail("Expected stale-authorization failure"); }
+  catch (error) { assert.ok(error instanceof ApiError); assert.equal(error.status, 503); await retryJob(job, error); }
+  [job] = await db.select().from(jobs).where(eq(jobs.id, job.id));
+  assert.equal(job.status, "pending");
+  assert.equal(job.attempts, 7);
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer new-authorization");
+    return Response.json({ records: [cycle(101)], next_token: null });
+  };
+  await processJob(job);
+  assert.equal((await db.select().from(jobs).where(eq(jobs.id, job.id)))[0].status, "done");
   const [member] = await db.select().from(members).where(eq(members.id, memberA));
   assert.equal(member.connected, true);
   assert.equal(await accessToken(memberA), "new-authorization");

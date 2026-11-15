@@ -498,3 +498,17 @@ for (const invalid of ["reversed", "empty"]) {
     release();
   });
 }
+
+test('legacy deletion explicitly limits its scope to Gallant WHOOP data', async ({ page }) => {
+  await page.route('**/api/me', (route) => route.fulfill({ json: { name: 'Test Member', connected: true, shareUrl: null } }));
+  await page.route('**/api/me/dashboard?*', (route) => route.fulfill({ json: sample('2026-11-01', '2026-11-14') }));
+  await page.route('**/api/me/sync', (route) => route.fulfill({ json: { connected: true, lastSync: null, jobs: [] } }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await expect(page.getByText(/Deleting Gallant WHOOP data leaves your 3plates account/)).toBeVisible();
+  const dialog = page.waitForEvent('dialog');
+  const click = page.getByRole('button', { name: 'Delete Gallant WHOOP data', exact: true }).click();
+  const confirmation = await dialog;
+  expect(confirmation.message()).toContain('Your 3plates account, sign-in methods, and manual entries will remain.');
+  await confirmation.dismiss(); await click;
+});

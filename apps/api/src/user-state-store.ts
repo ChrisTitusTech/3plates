@@ -829,6 +829,13 @@ export function createMemoryUserStateStore(): UserStateStore & {
   listDevicesForUser(userId: string): NotificationDeviceRecord[];
   seedWorkout(workout: WorkoutRecord): void;
 } {
+  const identityWork = new Map<string, Promise<unknown>>();
+  async function withIdentityLock<T>(userId: string, run: () => Promise<T>): Promise<T> {
+    const next = (identityWork.get(userId) ?? Promise.resolve()).catch(() => undefined).then(run);
+    identityWork.set(userId, next);
+    try { return await next; }
+    finally { if (identityWork.get(userId) === next) identityWork.delete(userId); }
+  }
   const usersByEmail = new Map<string, MemoryUser>();
   const usersById = new Map<string, MemoryUser>();
   const deletionRequests = new Set<string>();
@@ -893,13 +900,16 @@ export function createMemoryUserStateStore(): UserStateStore & {
       });
     },
     async unlinkIdentity(userId, provider, beforeRemove) {
-      const entries = [...identitiesByKey.entries()].filter(([, id]) => id === userId);
-      const identity = entries.find(([key]) => key.startsWith(provider + ':'));
-      if (!identity) return;
-      if (!entries.some(([key]) => !key.startsWith(provider + ':'))) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
-      if (beforeRemove) await beforeRemove(identity[0].slice(provider.length + 1));
-      identitiesByKey.delete(identity[0]);
-      await revokeSessions?.(userId);
+      return withIdentityLock(userId, async () => {
+        if (!usersById.has(userId) || deletionRequests.has(userId)) throw missingUserStateError();
+        const entries = [...identitiesByKey.entries()].filter(([, id]) => id === userId);
+        const identity = entries.find(([key]) => key.startsWith(provider + ':'));
+        if (!identity) return;
+        if (!entries.some(([key]) => !key.startsWith(provider + ':'))) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
+        if (beforeRemove) await beforeRemove(identity[0].slice(provider.length + 1));
+        identitiesByKey.delete(identity[0]);
+        await revokeSessions?.(userId);
+      });
     },
     async requestDeletion(userId) { deletionRequests.add(userId); },
     async pendingDeletions(afterId) { return [...deletionRequests].sort().filter((id) => !afterId || id > afterId).slice(0, 100); },
@@ -907,6 +917,10 @@ export function createMemoryUserStateStore(): UserStateStore & {
       if (!deletionRequests.has(userId)) return;
       for (const [key, id] of identitiesByKey) if (id === userId) identitiesByKey.delete(key);
       for (const [email, user] of usersByEmail) if (user.id === userId) usersByEmail.delete(email);
+      progressByUserId.delete(userId); manualWorkoutsByUserId.delete(userId);
+      preferencesByUserId.delete(userId); levelsByUserId.delete(userId); streakByUserId.delete(userId);
+      for (const [token, device] of devicesByToken) if (device.userId === userId) devicesByToken.delete(token);
+      for (const [id, workout] of workoutsById) if (workout.createdBy === userId) workoutsById.set(id, { ...workout, createdBy: null });
       usersById.delete(userId); deletionRequests.delete(userId);
     },
 

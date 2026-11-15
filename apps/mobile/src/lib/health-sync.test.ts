@@ -181,3 +181,15 @@ test('notes-only sleep edits preserve seconds and fractions while changed times 
   assert.equal(changed.details.end, '2026-11-14T22:01:00+00:00');
   assert.equal(Date.parse(changed.details.start), Date.parse(entry.details.start));
 });
+
+test('notes-only recovery edits preserve tags containing commas', () => {
+  const entry: HealthLogInput = { kind: 'recovery', date: '2026-11-15', timezone: 'UTC', notes: '',
+    details: { energy: 5, soreness: 5, stress: 5, mood: 5, tags: ['pain, left knee', 'rest'] } };
+  const { form } = entryForm(entry, false); form.notes = 'Follow-up';
+  const saved = formEntry('recovery', form, [], false);
+  assert.equal(saved.kind, 'recovery');
+  if (saved.kind === 'recovery') assert.deepEqual(saved.details.tags, entry.details.tags);
+  form.tags = 'rest, travel';
+  const changed = formEntry('recovery', form, [], false);
+  if (changed.kind === 'recovery') assert.deepEqual(changed.details.tags, ['rest', 'travel']);
+});

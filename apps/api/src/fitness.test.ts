@@ -159,3 +159,38 @@ test('a slow deletion cleanup does not delay API readiness', async (t) => {
   try { assert.equal((await f.app.inject('/health')).statusCode, 200); }
   finally { release(); }
 });
+
+test('concurrent memory unlinks preserve the last sign-in method across provider cleanup', async () => {
+  const store = createMemoryUserStateStore();
+  const identity = { provider: 'whoop' as const, providerSubjectId: 'memory-unlink', email: null, emailVerified: false, displayName: null };
+  const { user } = await store.resolveOAuthIdentity(identity);
+  await store.resolveOAuthIdentity({ ...identity, provider: 'google', linkedUserId: user.id });
+  let release!: () => void; let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const first = store.unlinkIdentity(user.id, 'whoop', async () => { entered(); await waiting; });
+  await started;
+  const second = store.unlinkIdentity(user.id, 'google');
+  const rejected = assert.rejects(second, /only login/);
+  release(); await first; await rejected;
+  assert.deepEqual((await store.listIdentities(user.id)).map((item) => item.provider), ['google']);
+});
+
+test('memory account deletion removes personal values while retaining other accounts', async () => {
+  const store = createMemoryUserStateStore();
+  const { user } = await store.resolveOAuthIdentity({ provider: 'whoop', providerSubjectId: 'memory-delete', email: null, emailVerified: false, displayName: null });
+  await store.updatePreferences(user.id, { theme: 'dark', units: 'imperial', reminderTime: '08:00' });
+  await store.createManualWorkout(user.id, { type: 'running_walking', date: '2026-11-15', distance: '5', duration: '30', wodName: '', workoutDetails: '', scale: 'scaled', score: '' });
+  await store.updateStreakOnLogin(user.id, new Date('2026-11-15T12:00:00Z'));
+  await store.registerDevice(user.id, { platform: 'ios', pushToken: 'removed-device' });
+  await store.registerDevice('other', { platform: 'android', pushToken: 'retained-device' });
+  await store.requestDeletion(user.id); await store.deleteAccount(user.id);
+  assert.equal(await store.getUserById(user.id), null);
+  assert.deepEqual(await store.listManualWorkouts(user.id), []);
+  assert.deepEqual(await store.getProgress(user.id), { streakDays: 0, completedWorkouts: 0, lastWorkoutAt: null });
+  assert.equal((await store.getPreferences(user.id)).theme, 'system');
+  assert.deepEqual(store.listDevicesForUser(user.id), []);
+  assert.equal(store.listDevicesForUser('other').length, 1);
+  await store.updateStreakOnLogin(user.id, new Date('2026-11-16T12:00:00Z'));
+  assert.equal((await store.getProgress(user.id)).streakDays, 1);
+});

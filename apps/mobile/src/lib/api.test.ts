@@ -18,6 +18,8 @@ import {
   flushPendingMutations,
   getPendingMutationCount,
   getSessionToken,
+  getSessionGeneration,
+  registerSignOutCleanup,
   getCachedUser,
   productionApiUrl,
   registerDevice,
@@ -866,4 +868,45 @@ test('enqueue and flush keep their original queue key when the session switches 
     const aliceQueue = JSON.parse((await backing.getItem(aliceKey))!);
     assert.equal(aliceQueue.length, 1); assert.equal(aliceQueue[0].payload.pushToken, 'alice-push-token');
   }
+});
+
+
+test('sign-out cannot clear a session established during cleanup or the backend request', async (t) => {
+  t.after(__resetApiTestAdapters);
+  t.after(() => registerSignOutCleanup(async () => undefined));
+  for (const phase of ['before-discard', 'cleanup', 'request']) {
+    const storage = createMemoryStorage(); let activeUser = createBaseUser(); let requests = 0;
+    const switchAccount = async () => { activeUser = { ...activeUser, id: 'bob' }; await setSessionToken('bob'); await fetchMe(); };
+    const client = createClientOverrides({ me: async () => ({ status: 200, body: activeUser }),
+      authSignOut: async (input: { extraHeaders: { authorization: string } }) => {
+        requests++; assert.equal(input.extraHeaders.authorization, 'Bearer alice');
+        if (phase === 'request') await switchAccount();
+        return { status: 200, body: { signedOut: true } };
+      } });
+    __setApiTestAdapters({ storage, client: client as never });
+    registerSignOutCleanup(async (owner) => { assert.equal(owner?.id, 'user-1'); if (phase === 'cleanup') await switchAccount(); });
+    await setSessionToken('alice'); await fetchMe(); const generation = getSessionGeneration();
+    if (phase === 'before-discard') await switchAccount();
+    await assert.rejects(signOutAndClearSession(generation), /active account changed/);
+    assert.equal(await getSessionToken(), 'bob'); assert.equal((await getCachedUser())?.id, 'bob');
+    assert.equal(requests, phase === 'request' ? 1 : 0);
+  }
+});
+
+test('a new sign-in waits for old local session cleanup to finish', async (t) => {
+  const backing = createMemoryStorage(); let release!: () => void; let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let armed = false;
+  const storage = { ...backing, async removeItem(key: string) {
+    if (armed && key === '@3plates/cache/me') { entered(); await waiting; }
+    await backing.removeItem(key);
+  } };
+  __setApiTestAdapters({ storage, client: createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }) }) as never });
+  t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe(); armed = true;
+  const clear = clearSession(); await started;
+  const signIn = setSessionToken('bob').then(() => fetchMe());
+  release(); await clear; await signIn;
+  assert.equal(await getSessionToken(), 'bob'); assert.equal((await getCachedUser())?.id, 'user-1');
 });

@@ -112,3 +112,23 @@ advance that draft's expected version. The fix has desktop/phone coverage that
 successfully saves the preserved draft again without hiding external conflicts.
 The scoped independent follow-up completed with no actionable findings. Exact
 remote-head checks and review completion are still required before merge.
+
+The next review batch serializes memory identity removal across provider
+cleanup and removes all account-owned memory during deletion. Account sharing
+forms reset to fresh defaults when no policy exists, and sign-out retains its
+original owner/session through discard, cleanup, and backend completion. Local
+session transitions serialize cache removal with a later sign-in. Notes-only
+recovery edits retain tags containing commas. Offsite uploads have I/O and
+whole-command deadlines and record success only after completion. The legacy
+Gallant deletion UI explicitly limits its scope to WHOOP data; full 3plates
+account deletion remains in the fitness app's Account screen. Stale WHOOP
+authorization failures preserve new credentials and defer backfill jobs without
+exhausting their retry budget.
+
+Validation for this batch: 6 contract, 63 API, 48 mobile, 25 WHOOP unit,
+25 WHOOP database, 46 unified browser, 32 legacy browser, and 8 WHOOP operations
+tests pass; the 5 unchanged web deployment tests retain their prior evidence
+(258 total). Workspace typechecks, API and WHOOP builds, WHOOP lint, shell
+syntax/ShellCheck/shfmt, and web/Android/iOS exports pass. Independent Codex
+review of the batch completed with no actionable regressions. CI and remote
+reviews must still complete on the published commit before merge.

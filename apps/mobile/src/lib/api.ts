@@ -484,24 +484,40 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   if (event.key === storageKeys.sessionToken || event.key === null) sessionChanged();
 });
 
-export async function setSessionToken(token: string | null) {
-  await migratePreviousProfile();
-  await writeSessionToken(token);
-  sessionChanged();
+// Serialize local session transitions so cleanup cannot erase a newer sign-in.
+let sessionWork: Promise<unknown> = Promise.resolve();
+function sessionTransition<T>(run: () => Promise<T>): Promise<T> {
+  const next = sessionWork.then(run, run);
+  sessionWork = next.catch(() => undefined);
+  return next;
+}
+function assertSessionGeneration(expected: number) {
+  if (getSessionGeneration() !== expected) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
+}
+export function setSessionToken(token: string | null) {
+  return sessionTransition(async () => {
+    await migratePreviousProfile();
+    await writeSessionToken(token);
+    sessionChanged();
+  });
 }
 
-export async function clearSession() {
-  const owner = await getCachedUser();
-  await writeSessionToken(null);
-  sessionChanged();
-  for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
-    await storage.removeItem(owner ? `${key}/user/${owner.id}` : key);
-  }
-  await storage.removeItem(storageKeys.me);
-  await storage.removeItem(storageKeys.progress);
-  await storage.removeItem(storageKeys.manualWorkouts);
-  await storage.removeItem(storageKeys.preferences);
-  await storage.removeItem(storageKeys.pendingMutations);
+export function clearSession(expectedGeneration = getSessionGeneration()) {
+  return sessionTransition(async () => {
+    assertSessionGeneration(expectedGeneration);
+    const owner = await getCachedUser();
+    assertSessionGeneration(expectedGeneration);
+    await writeSessionToken(null);
+    sessionChanged();
+    for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
+      await storage.removeItem(owner ? `${key}/user/${owner.id}` : key);
+    }
+    await storage.removeItem(storageKeys.me);
+    await storage.removeItem(storageKeys.progress);
+    await storage.removeItem(storageKeys.manualWorkouts);
+    await storage.removeItem(storageKeys.preferences);
+    await storage.removeItem(storageKeys.pendingMutations);
+  });
 }
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
@@ -596,8 +612,8 @@ export async function redeemMobileAuthExchangeCode(code: string) {
   return response.body;
 }
 
-let beforeSignOut: (() => Promise<void>) | undefined;
-export function registerSignOutCleanup(handler: () => Promise<void>) { beforeSignOut = handler; }
+let beforeSignOut: ((owner: User | null) => Promise<void>) | undefined;
+export function registerSignOutCleanup(handler: (owner: User | null) => Promise<void>) { beforeSignOut = handler; }
 export async function getCachedUser() { return readCache<User>(storageKeys.me); }
 export async function getCachedPreferences() {
   const token = await requireSessionToken();
@@ -606,11 +622,15 @@ export async function getCachedPreferences() {
   return cached;
 }
 
-export async function signOutAndClearSession() {
-  if (beforeSignOut) await beforeSignOut();
+export async function signOutAndClearSession(expectedGeneration = getSessionGeneration()) {
+  assertSessionGeneration(expectedGeneration);
   const token = await getSessionToken();
+  const owner = await getCachedUser();
+  assertSessionGeneration(expectedGeneration);
+  if (beforeSignOut) await beforeSignOut(owner);
+  assertSessionGeneration(expectedGeneration);
   if (!token) {
-    await clearSession();
+    await clearSession(expectedGeneration);
     return {
       signedOut: false,
     };
@@ -622,7 +642,7 @@ export async function signOutAndClearSession() {
       body: {},
     });
 
-    await clearSession();
+    await clearSession(expectedGeneration);
 
     if (response.status === 200) {
       return {
@@ -639,7 +659,7 @@ export async function signOutAndClearSession() {
     throw toApiRequestError(response.status, response.body);
   } catch (error) {
     if (isNetworkFailure(error)) {
-      await clearSession();
+      await clearSession(expectedGeneration);
       return {
         signedOut: false,
       };

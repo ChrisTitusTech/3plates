@@ -10,6 +10,7 @@ import { apiBaseUrl, clearSession, getSessionGeneration, signOutAndClearSession,
 import { clearFitnessCache, clearWhoopCache, exportFitnessFile, fitnessRequest } from '../src/lib/fitness-client';
 import { localDay } from '../src/lib/log-form';
 
+const shareDefaults = () => ({ kinds: ['cycle', 'sleep', 'recovery', 'workout'], start: localDay(new Date(Date.now() - 29 * 86400000)), end: localDay() });
 const name = (provider: string) => provider === 'whoop' ? 'WHOOP' : provider === 'google' ? 'Google' : 'Apple';
 export default function AccountScreen() {
   const { ui } = useFitnessStyles();
@@ -34,7 +35,11 @@ export default function AccountScreen() {
   const loadSequence = useRef(0);
   const activeOwner = useRef(owner);
   activeOwner.current = owner;
-  useEffect(() => { setConfirm(''); setDeleteText(''); confirmedOwner.current = undefined; }, [owner]);
+  function resetSharing() {
+    const defaults = shareDefaults();
+    setShareKinds(defaults.kinds); setShareStart(defaults.start); setShareEnd(defaults.end); setShareDays('7');
+  }
+  useEffect(() => { setConfirm(''); setDeleteText(''); confirmedOwner.current = undefined; resetSharing(); }, [owner]);
   async function load() {
     if (!owner) return;
     const sequence = ++loadSequence.current;
@@ -62,7 +67,7 @@ export default function AccountScreen() {
           if (profile.sharePolicy) {
             setShareKinds(profile.sharePolicy.kinds);
             setShareStart(profile.sharePolicy.start ?? ''); setShareEnd(profile.sharePolicy.end ?? '');
-          }
+          } else resetSharing();
         } catch {
           if (current()) setWhoopMessage('WHOOP is temporarily unavailable. Your other account controls remain available. Refresh status to retry.');
         }
@@ -93,8 +98,9 @@ export default function AccountScreen() {
     await Linking.openURL(started.next);
   }
   async function signOut(discard = false) {
+    const generation = getSessionGeneration();
     if (owner && discard) await clearFitnessCache(owner, true);
-    await signOutAndClearSession(); router.replace('/sign-in');
+    await signOutAndClearSession(generation); router.replace('/sign-in');
   }
   if (!owner || loadedOwner !== owner) return <FitnessPage title="Account"><Text style={ui.notice}>{message}</Text>
     <Button title="Retry loading account" disabled={busy || !owner} onPress={() => { void action(load, 'Account settings loaded.'); }} />

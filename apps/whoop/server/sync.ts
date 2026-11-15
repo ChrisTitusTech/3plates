@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "./db.js";
 import { jobs, members, records } from "./schema.js";
 import { endpoints, historyKinds, normalize, type Raw } from "./domain.js";
-import { ApiError, ReconnectError, requestWhoop } from "./whoop.js";
+import { ApiError, AuthorizationChangedError, ReconnectError, requestWhoop } from "./whoop.js";
 
 type Database = Pick<
   typeof db,
@@ -223,7 +223,7 @@ async function processEvent(
   });
 }
 export async function retryJob(job: typeof jobs.$inferSelect, error: unknown) {
-  const deferred = error instanceof ApiError && error.status === 429;
+  const deferred = error instanceof AuthorizationChangedError || (error instanceof ApiError && error.status === 429);
   const attempts = deferred ? job.attempts : job.attempts + 1;
   const terminal =
     error instanceof ReconnectError || (!deferred && attempts >= 8);

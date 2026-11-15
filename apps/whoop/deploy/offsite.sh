@@ -21,7 +21,7 @@ trap 'rm -rf "$temporary"' EXIT
 name=$(basename "$dump").age
 age -r "$BACKUP_RECIPIENT" -o "$temporary/$name" "$dump"
 # Destination must already exist; no remote shell interpolation or host-key bypass.
-rsync --protect-args -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' -- "$temporary/$name" "$BACKUP_HOST:$BACKUP_DIR/"
+timeout --kill-after=10s 15m rsync --timeout=120 --protect-args -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' -- "$temporary/$name" "$BACKUP_HOST:$BACKUP_DIR/"
 install -d -m 700 "$ops_dir"
 touch "$ops_dir/offsite-success"
 printf 'Encrypted off-server backup uploaded.\n'

@@ -347,3 +347,9 @@ work and release local writes and session cleanup. Unsaved draft restoration
 validates its shape; in-process edits and clear markers override stale browser
 storage after a storage failure. Legacy Workouts history and forms reset with
 every authenticated session generation.
+
+Owner verification during queued-change retries preserves temporary HTTP statuses.
+A 429 or 5xx response shows a retryable error and keeps the signed-in session and
+pending entries. Only a real 401 or successful response naming a different owner
+triggers the authentication-error path. Both general queue flushing and automatic
+preference synchronization use this distinction.

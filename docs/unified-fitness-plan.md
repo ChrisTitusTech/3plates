@@ -282,3 +282,24 @@ The fresh independent Codex review of the complete seven-finding batch finished
 with no actionable regressions, including the new draft tests. Its repeated
 60 mobile tests, mobile typecheck, and whitespace checks pass. CI and hosted
 reviews must still complete on the published commit before merge.
+
+A follow-up review fixes owner-check error classification in both legacy queue
+flushing and preference-only synchronization. Temporary 429/5xx responses retain
+their HTTP status and never carry invalid_auth, including when the upstream body
+contains that code. A real 401 or a successful response for another account still
+rejects authentication. Pending changes remain intact for retry. Unit coverage
+exercises 429, 503, 401, owner mismatch, and eventual success in both paths; the
+browser regression retries pending preferences through 429 and 503 and verifies
+that the session, queue, and settings screen remain available before recovery.
+
+Validation: all 61 mobile tests, 70 unified desktop/phone browser tests, workspace
+typechecks, and production web/Android/iOS exports pass. Unchanged suites retain
+passing evidence: 7 contract, 71 API, 25 WHOOP unit, 31 WHOOP database, 34 legacy
+browser, 10 operations, and 5 web-deployment tests (314 total). The previously
+clean dependency audit remains applicable; no dependencies changed. The desktop
+and phone regression confirms Retry pending stays on Settings through 429/503,
+retains the session and queue, then synchronizes when owner validation recovers.
+
+Independent Codex review completed without actionable regressions in this fix.
+Its repeated 61 mobile unit tests, mobile typecheck, and whitespace checks pass.
+The published commit still requires passing CI and hosted reviews before merge.

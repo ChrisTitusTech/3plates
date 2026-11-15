@@ -665,3 +665,28 @@ test('legacy workout history and open form clear when another account signs in',
   await expect(page.getByLabel('WOD name or type')).toHaveValue('');
   expect(f.errors).toEqual([]);
 });
+
+test('retrying pending preferences during owner-check outages keeps the session and queue', async ({ page }) => {
+  const f = await setup(page); await page.clock.install(); await page.goto('/preferences');
+  await expect(page.getByRole('button', { name: 'Save preferences', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'dark', exact: true }).click();
+  f.setApiUnavailable(true);
+  await page.getByRole('button', { name: 'Save preferences', exact: true }).click();
+  await expect(page.getByText('Pending offline updates: 1', { exact: true })).toBeVisible();
+  f.setApiUnavailable(false);
+  let ownerStatus = 429;
+  await page.route('**/users/me', (route) => ownerStatus !== 200 && route.request().method() === 'GET'
+    ? route.fulfill({ status: ownerStatus, json: { error: { code: 'invalid_auth', message: 'Upstream unavailable' } } }) : route.fallback());
+  for (ownerStatus of [429, 503]) {
+    await page.getByRole('button', { name: 'Retry pending', exact: true }).click();
+    await expect(page.getByText(`Unable to verify your account. Please retry. (${ownerStatus})`, { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/preferences$/);
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('synthetic-session');
+    expect(await page.evaluate((id) => JSON.parse(localStorage.getItem('@3plates/pending-mutations/user/' + id)!).length, user.id)).toBe(1);
+  }
+  ownerStatus = 200;
+  await page.getByRole('button', { name: 'Retry pending', exact: true }).click();
+  await expect(page.getByText('Pending offline updates: 0', { exact: true })).toBeVisible();
+  expect(f.preferences.get(user.id)?.theme).toBe('dark');
+  expect(f.errors).toEqual([]);
+});

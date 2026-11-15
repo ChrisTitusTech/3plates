@@ -1036,7 +1036,8 @@ export async function syncPendingPreferences() {
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
       const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
-      if (!owner || response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+      if (response.status !== 200) throw new ApiRequestError(response.status, 'Unable to verify your account. Please retry.', response.status === 401 ? 'invalid_auth' : null);
+      if (!owner || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
       return await persistPreferences(pending.payload, token);
     } finally { clearTimeout(timeout); }
   });
@@ -1155,7 +1156,8 @@ async function flushPendingMutationsSerial(token: string | null) {
       const owner = await getCachedUser();
       if (owner) {
         const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
-        if (response.status !== 200 || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+        if (response.status !== 200) throw new ApiRequestError(response.status, 'Unable to verify your account. Please retry.', response.status === 401 ? 'invalid_auth' : null);
+        if (response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
         await assertCurrentSession(token);
       }
 

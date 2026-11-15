@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ManualWorkoutCreate, NotificationDevice, Preferences, Progress, User } from '@3plates/contract';
 
 import {
+  ApiRequestError,
   __resetApiTestAdapters,
   __setApiTestAdapters,
   clearSession,
@@ -1059,5 +1060,30 @@ test('queue flush deadlines release waiting local writes and retain unacknowledg
     assert.ok(queue.some((item: { id: string }) => item.id === 'device'));
     await clearSession(); await setSessionToken('next-' + phase);
     assert.equal(await getSessionToken(), 'next-' + phase);
+  }
+});
+
+test('queue owner checks preserve transient status, sessions and mutations in both sync paths', async (t) => {
+  t.after(__resetApiTestAdapters);
+  for (const synchronize of [flushPendingMutations, syncPendingPreferences]) {
+    const storage = createMemoryStorage(); let status = 200; let owner = createBaseUser(); let online = false;
+    const preferences: Preferences = { theme: 'dark', units: 'metric', reminderTime: '07:00' };
+    const client = createClientOverrides({
+      me: async () => ({ status, body: status === 200 ? owner : { ok: false, error: { code: 'invalid_auth', message: 'Upstream failure' } } }),
+      updatePreferences: async () => ({ status: online ? 200 : 503, body: online ? preferences : null }),
+    });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('owner-check'); await fetchMe(); await updatePreferences(preferences);
+    const key = '@3plates/pending-mutations/user/user-1'; const queued = await storage.getItem(key);
+    for (status of [429, 503, 401]) {
+      await assert.rejects(synchronize(), (error: unknown) => error instanceof ApiRequestError
+        && error.status === status && error.code === (status === 401 ? 'invalid_auth' : null));
+      assert.equal(await getSessionToken(), 'owner-check'); assert.equal(await storage.getItem(key), queued);
+    }
+    status = 200; owner = { ...owner, id: 'another-account' };
+    await assert.rejects(synchronize(), (error: unknown) => error instanceof ApiRequestError && error.status === 401 && error.code === 'invalid_auth');
+    assert.equal(await storage.getItem(key), queued);
+    owner = createBaseUser(); online = true; await synchronize();
+    assert.equal(await getPendingMutationCount(), 0); assert.equal(await getSessionToken(), 'owner-check');
   }
 });

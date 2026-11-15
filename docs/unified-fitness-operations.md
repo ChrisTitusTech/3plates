@@ -216,9 +216,9 @@ successfully reaches WHOOP's identity login. Website, API, Gallant, and forum
 checks pass; API activation logs contain no warnings or errors. The SSH session
 was closed after the sequential checks.
 
-# Appearance follow-up (local)
+# Appearance release
 
-The local appearance follow-up (`2af5ed5`, `256003f`, `2f6653e`) adds Light, Dark, and
+The appearance follow-up (`2af5ed5`, `256003f`, `2f6653e`) adds Light, Dark, and
 Follow system controls, shared native/web palettes, themed charts and settings,
 and the corresponding status bar/browser color scheme. It uses the existing
 account preference, hydrates cached appearance before network requests, and
@@ -231,9 +231,20 @@ desktop/phone browser tests, all three Expo exports, and Android ARM64/x86_64
 native compilation. Light/dark phone screenshots were inspected. Independent
 review findings about cached hydration, native reconnect retries, and account
 switches were fixed; the focused follow-up review of `2f6653e` found no
-actionable regressions. This
-appearance follow-up has not been pushed or deployed; the VPS application
-revision remains `636b8c7` with WHOOP sign-in enabled as recorded above.
+actionable regressions.
+
+The user subsequently authorized VPS deployment. Web revision `3a7de87` is
+deployed to `/var/www/3plates`; the unchanged API remains at `636b8c7` with WHOOP
+enabled. A fresh production export was built with the production API URL and
+transferred through `3plates` using strictly sequential SSH/SCP connections.
+The previous website is backed up at `/var/backups/3plates/deploy-3a7de87/web`.
+Archive checksum verification passed before activation. Assets were copied
+first and HTML replaced last, retaining older hashed assets for open clients.
+
+The public HTML and all 18 web JavaScript files match the local release bytes.
+All five app routes, API health, Gallant, and the forum pass HTTP checks; Google,
+Apple, and WHOOP remain available. No API restart, database migration, or
+environment change was needed. The SSH connection was closed after deployment.
 
 # Release acceptance still requiring external evidence
 

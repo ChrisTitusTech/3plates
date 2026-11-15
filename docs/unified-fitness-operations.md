@@ -216,6 +216,25 @@ successfully reaches WHOOP's identity login. Website, API, Gallant, and forum
 checks pass; API activation logs contain no warnings or errors. The SSH session
 was closed after the sequential checks.
 
+# Appearance follow-up (local)
+
+The local appearance follow-up (`2af5ed5`, `256003f`, `2f6653e`) adds Light, Dark, and
+Follow system controls, shared native/web palettes, themed charts and settings,
+and the corresponding status bar/browser color scheme. It uses the existing
+account preference, hydrates cached appearance before network requests, and
+retries pending preferences every 30 seconds while the app is active, including
+native reconnects without foreground events. Session switches clear the old
+appearance before validating the new account.
+
+Local checks for this follow-up pass: mobile typecheck, 32 client tests, 32
+desktop/phone browser tests, all three Expo exports, and Android ARM64/x86_64
+native compilation. Light/dark phone screenshots were inspected. Independent
+review findings about cached hydration, native reconnect retries, and account
+switches were fixed; the focused follow-up review of `2f6653e` found no
+actionable regressions. This
+appearance follow-up has not been pushed or deployed; the VPS application
+revision remains `636b8c7` with WHOOP sign-in enabled as recorded above.
+
 # Release acceptance still requiring external evidence
 
 - Signed Android and iOS builds on actual target devices, including accessibility,

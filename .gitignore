@@ -4,6 +4,8 @@ build
 .expo
 .turbo
 coverage
+test-results/
+playwright-report/
 .DS_Store
 .env
 .env.*

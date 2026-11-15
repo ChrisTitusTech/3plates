@@ -14,6 +14,8 @@ import {
 } from '@3plates/contract';
 import { createDatabaseClient } from '@3plates/db';
 import {
+  authSessions,
+  oauthTransactions,
   notificationDevices,
   progressEvents,
   userIdentities,
@@ -22,7 +24,7 @@ import {
   users,
   workouts,
 } from '@3plates/db';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, sql, isNull, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
@@ -44,15 +46,24 @@ export type WorkoutMode = z.infer<typeof workoutModeSchema>;
 export type WorkoutRecord = z.infer<typeof workoutSchema>;
 export type AdminWorkoutRecord = z.infer<typeof adminWorkoutSchema>;
 export type AuthBootstrapResult = {
+  authGeneration: number;
   user: UserRecord;
   isNewUser: boolean;
   effectiveLevel: number;
 };
 
 export interface UserStateStore {
+  onSessionsRevoked?(handler: (userId: string) => Promise<void>): void;
+  activateOAuthIdentity(userId: string, identity: OAuthIdentity, generation: number, activate: () => Promise<void>): Promise<void>;
+  getAuthenticationGeneration(userId: string): Promise<number | null>;
+  listIdentities(userId: string): Promise<Array<{ provider: string; providerSubjectId: string }>>;
+  unlinkIdentity(userId: string, provider: string, beforeRemove?: (subject: string) => Promise<void>): Promise<void>;
+  requestDeletion(userId: string): Promise<void>;
+  pendingDeletions(afterId?: string): Promise<string[]>;
+  deleteAccount(userId: string): Promise<void>;
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
   getUserById(userId: string): Promise<UserRecord | null>;
-  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null }): Promise<AuthBootstrapResult>;
+  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null; linkedAuthGeneration?: number }): Promise<AuthBootstrapResult>;
   getUserEffectiveLevel(userId: string): Promise<number>;
   getProgress(userId: string): Promise<ProgressRecord>;
   updateProgress(userId: string, progress: ProgressRecord): Promise<void>;
@@ -118,7 +129,7 @@ export function computeStreakUpdate(
   return { streakDays: 1, lastStreakDate: today };
 }
 
-function mapUser(row: { id: string; email: string; displayName: string | null }): UserRecord {
+function mapUser(row: { id: string; email: string | null; displayName: string | null }): UserRecord {
   return userSchema.parse({
     id: row.id,
     email: row.email,
@@ -277,7 +288,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         displayName: users.displayName,
       })
       .from(users)
-      .where(eq(users.id, userId))
+      .where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)))
       .limit(1);
 
     return user ? mapUser(user) : null;
@@ -285,11 +296,60 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
 
   return {
     getUserById,
+    async activateOAuthIdentity(userId, identity, generation, activate) {
+      await db.transaction(async (tx) => {
+        const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+        const [linked] = await tx.select().from(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, identity.provider), eq(userIdentities.providerSubjectId, identity.providerSubjectId)));
+        if (!user || user.deletionRequestedAt || user.authGeneration !== generation || !linked) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+        await activate();
+      });
+    },
+    async getAuthenticationGeneration(userId) {
+      const [user] = await db.select({ generation: users.authGeneration }).from(users).where(and(eq(users.id, userId), isNull(users.deletionRequestedAt)));
+      return user?.generation ?? null;
+    },
+    async listIdentities(userId) {
+      return db.select({ provider: userIdentities.provider, providerSubjectId: userIdentities.providerSubjectId })
+        .from(userIdentities).where(eq(userIdentities.userId, userId));
+    },
+    async unlinkIdentity(userId, provider, beforeRemove) {
+      await db.transaction(async (tx) => {
+        const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+        if (!user || user.deletionRequestedAt) throw missingUserStateError();
+        const identities = await tx.select().from(userIdentities).where(eq(userIdentities.userId, userId));
+        const identity = identities.find((item) => item.provider === provider);
+        if (!identity) return;
+        if (!identities.some((item) => item.provider !== provider)) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
+        if (beforeRemove) await beforeRemove(identity.providerSubjectId);
+        await tx.delete(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, provider)));
+        await tx.update(users).set({ authGeneration: sql`${users.authGeneration} + 1` }).where(eq(users.id, userId));
+        await tx.delete(oauthTransactions).where(and(eq(oauthTransactions.userId, userId), eq(oauthTransactions.purpose, 'link')));
+        // Removing a sign-in method also invalidates sessions created through it.
+        await tx.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
+      });
+    },
+    async requestDeletion(userId) {
+      await db.transaction(async (tx) => {
+        await tx.update(users).set({ deletionRequestedAt: new Date() }).where(eq(users.id, userId));
+        await tx.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
+      });
+    },
+    async pendingDeletions(afterId) {
+      return (await db.select({ id: users.id }).from(users)
+        .where(and(isNotNull(users.deletionRequestedAt), afterId ? gt(users.id, afterId) : undefined))
+        .orderBy(asc(users.id)).limit(100)).map((row) => row.id);
+    },
+    async deleteAccount(userId) { await db.delete(users).where(and(eq(users.id, userId), isNotNull(users.deletionRequestedAt))); },
 
     async resolveOAuthIdentity(input) {
       const identity = input;
 
       return db.transaction(async (transaction) => {
+        if (identity.linkedUserId) {
+          const [owner] = await transaction.select().from(users).where(eq(users.id, identity.linkedUserId)).for('update');
+          if (!owner || owner.deletionRequestedAt) throw missingUserStateError();
+          if (identity.linkedAuthGeneration !== undefined && owner.authGeneration !== identity.linkedAuthGeneration) throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+        }
         const [existingIdentity] = await transaction
           .select({
             userId: userIdentities.userId,
@@ -308,20 +368,26 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             throw conflictOrStaleUpdateError('Identity is already linked to another account.');
           }
 
-          const user = await getUserById(existingIdentity.userId);
-          if (!user) {
+          const [user] = await transaction.select().from(users).where(eq(users.id, existingIdentity.userId)).for('update');
+          const [currentIdentity] = await transaction.select().from(userIdentities).where(and(eq(userIdentities.userId, existingIdentity.userId), eq(userIdentities.provider, identity.provider), eq(userIdentities.providerSubjectId, identity.providerSubjectId)));
+          if (!user || user.deletionRequestedAt || !currentIdentity) {
             throw missingUserStateError('Identity references a missing user.');
           }
 
           const effectiveLevel = await getOrCreateUserLevel(transaction, user.id);
           return {
-            user,
+            user: mapUser(user),
+            authGeneration: user.authGeneration,
             isNewUser: false,
             effectiveLevel,
           };
         }
 
         if (identity.linkedUserId) {
+          const [owner] = await transaction.select().from(users).where(eq(users.id, identity.linkedUserId)).for('update');
+          if (!owner || owner.deletionRequestedAt) throw missingUserStateError();
+          const [sameProvider] = await transaction.select().from(userIdentities).where(and(eq(userIdentities.userId, identity.linkedUserId), eq(userIdentities.provider, identity.provider)));
+          if (sameProvider) throw conflictOrStaleUpdateError('This account already has a login with that provider.');
           await transaction.insert(userIdentities).values({
             userId: identity.linkedUserId,
             provider: identity.provider,
@@ -329,52 +395,21 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
             email: identity.email,
           });
 
-          const linkedUser = await getUserById(identity.linkedUserId);
-          if (!linkedUser) {
-            throw missingUserStateError('Linked account is missing.');
-          }
+          const linkedUser = mapUser(owner);
 
           const effectiveLevel = await getOrCreateUserLevel(transaction, linkedUser.id);
           return {
             user: linkedUser,
+            authGeneration: owner.authGeneration,
             isNewUser: false,
             effectiveLevel,
           };
         }
 
-        if (identity.email && identity.emailVerified) {
-          const [existingUserByEmail] = await transaction
-            .select({
-              id: users.id,
-              email: users.email,
-              displayName: users.displayName,
-            })
-            .from(users)
-            .where(eq(users.email, identity.email))
-            .limit(1);
-
-          if (existingUserByEmail) {
-            await transaction.insert(userIdentities).values({
-              userId: existingUserByEmail.id,
-              provider: identity.provider,
-              providerSubjectId: identity.providerSubjectId,
-              email: identity.email,
-            });
-
-            const user = mapUser(existingUserByEmail);
-            const effectiveLevel = await getOrCreateUserLevel(transaction, user.id);
-            return {
-              user,
-              isNewUser: false,
-              effectiveLevel,
-            };
-          }
-        }
-
         const [createdUser] = await transaction
           .insert(users)
           .values({
-            email: identity.email ?? `${identity.providerSubjectId}@${identity.provider}.local`,
+            email: identity.email,
             displayName: identity.displayName,
           })
           .returning({
@@ -394,6 +429,7 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
 
         return {
           user: mapUser(createdUser),
+          authGeneration: 0,
           isNewUser: true,
           effectiveLevel,
         };
@@ -817,8 +853,18 @@ export function createMemoryUserStateStore(): UserStateStore & {
   listDevicesForUser(userId: string): NotificationDeviceRecord[];
   seedWorkout(workout: WorkoutRecord): void;
 } {
+  const identityWork = new Map<string, Promise<unknown>>();
+  async function withIdentityLock<T>(userId: string, run: () => Promise<T>): Promise<T> {
+    const next = (identityWork.get(userId) ?? Promise.resolve()).catch(() => undefined).then(run);
+    identityWork.set(userId, next);
+    try { return await next; }
+    finally { if (identityWork.get(userId) === next) identityWork.delete(userId); }
+  }
   const usersByEmail = new Map<string, MemoryUser>();
   const usersById = new Map<string, MemoryUser>();
+  const authGenerations = new Map<string, number>();
+  const deletionRequests = new Set<string>();
+  let revokeSessions: ((userId: string) => Promise<void>) | undefined;
   const identitiesByKey = new Map<string, string>();
   const progressByUserId = new Map<string, ProgressRecord>();
   const manualWorkoutsByUserId = new Map<string, ManualWorkoutRecord[]>();
@@ -842,6 +888,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
   }
 
   return {
+    onSessionsRevoked(handler) { revokeSessions = handler; },
     async getOrCreateUser(input) {
       const identity = userIdentitySchema.parse(input);
       const existingUser = usersByEmail.get(identity.email);
@@ -869,10 +916,49 @@ export function createMemoryUserStateStore(): UserStateStore & {
     },
 
     async getUserById(userId) {
-      return usersById.get(userId) ?? null;
+      return deletionRequests.has(userId) ? null : usersById.get(userId) ?? null;
+    },
+    async activateOAuthIdentity(userId, identity, generation, activate) {
+      await withIdentityLock(userId, async () => {
+        if (!usersById.has(userId) || deletionRequests.has(userId) || (authGenerations.get(userId) ?? 0) !== generation || identitiesByKey.get(identityKey(identity.provider, identity.providerSubjectId)) !== userId) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+        await activate();
+      });
+    },
+    async getAuthenticationGeneration(userId) { return usersById.has(userId) && !deletionRequests.has(userId) ? authGenerations.get(userId) ?? 0 : null; },
+    async listIdentities(userId) {
+      return [...identitiesByKey.entries()].filter(([, id]) => id === userId).map(([key]) => {
+        const separator = key.indexOf(':');
+        return { provider: key.slice(0, separator), providerSubjectId: key.slice(separator + 1) };
+      });
+    },
+    async unlinkIdentity(userId, provider, beforeRemove) {
+      return withIdentityLock(userId, async () => {
+        if (!usersById.has(userId) || deletionRequests.has(userId)) throw missingUserStateError();
+        const entries = [...identitiesByKey.entries()].filter(([, id]) => id === userId);
+        const identity = entries.find(([key]) => key.startsWith(provider + ':'));
+        if (!identity) return;
+        if (!entries.some(([key]) => !key.startsWith(provider + ':'))) throw conflictOrStaleUpdateError('Add another sign-in method before removing your only login.');
+        if (beforeRemove) await beforeRemove(identity[0].slice(provider.length + 1));
+        authGenerations.set(userId, (authGenerations.get(userId) ?? 0) + 1);
+        identitiesByKey.delete(identity[0]);
+        await revokeSessions?.(userId);
+      });
+    },
+    async requestDeletion(userId) { await withIdentityLock(userId, async () => { deletionRequests.add(userId); }); },
+    async pendingDeletions(afterId) { return [...deletionRequests].sort().filter((id) => !afterId || id > afterId).slice(0, 100); },
+    async deleteAccount(userId) {
+      if (!deletionRequests.has(userId)) return;
+      for (const [key, id] of identitiesByKey) if (id === userId) identitiesByKey.delete(key);
+      for (const [email, user] of usersByEmail) if (user.id === userId) usersByEmail.delete(email);
+      progressByUserId.delete(userId); manualWorkoutsByUserId.delete(userId);
+      preferencesByUserId.delete(userId); levelsByUserId.delete(userId); streakByUserId.delete(userId);
+      for (const [token, device] of devicesByToken) if (device.userId === userId) devicesByToken.delete(token);
+      for (const [id, workout] of workoutsById) if (workout.createdBy === userId) workoutsById.set(id, { ...workout, createdBy: null });
+      usersById.delete(userId); authGenerations.delete(userId); deletionRequests.delete(userId);
     },
 
     async resolveOAuthIdentity(input) {
+      if (input.linkedUserId && input.linkedAuthGeneration !== undefined && (authGenerations.get(input.linkedUserId) ?? 0) !== input.linkedAuthGeneration) throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
       const existingUserId = identitiesByKey.get(identityKey(input.provider, input.providerSubjectId));
       if (existingUserId) {
         if (input.linkedUserId && existingUserId !== input.linkedUserId) {
@@ -880,7 +966,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
         }
 
         const existingUser = usersById.get(existingUserId);
-        if (!existingUser) {
+        if (!existingUser || deletionRequests.has(existingUserId)) {
           throw missingUserStateError('Identity references a missing user.');
         }
 
@@ -888,6 +974,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
         levelsByUserId.set(existingUser.id, effectiveLevel);
         return {
           user: existingUser,
+          authGeneration: authGenerations.get(existingUser.id) ?? 0,
           isNewUser: false,
           effectiveLevel,
         };
@@ -895,37 +982,25 @@ export function createMemoryUserStateStore(): UserStateStore & {
 
       if (input.linkedUserId) {
         const linkedUser = usersById.get(input.linkedUserId);
-        if (!linkedUser) {
+        if (!linkedUser || deletionRequests.has(input.linkedUserId)) {
           throw missingUserStateError('Linked account is missing.');
         }
 
+        if ([...identitiesByKey.entries()].some(([key, id]) => id === linkedUser.id && key.startsWith(input.provider + ':'))) throw conflictOrStaleUpdateError('This account already has a login with that provider.');
         identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), linkedUser.id);
         const effectiveLevel = levelsByUserId.get(linkedUser.id) ?? 1;
         levelsByUserId.set(linkedUser.id, effectiveLevel);
         return {
           user: linkedUser,
+          authGeneration: authGenerations.get(linkedUser.id) ?? 0,
           isNewUser: false,
           effectiveLevel,
         };
       }
 
-      if (input.email && input.emailVerified) {
-        const existingUserByEmail = usersByEmail.get(input.email);
-        if (existingUserByEmail) {
-          identitiesByKey.set(identityKey(input.provider, input.providerSubjectId), existingUserByEmail.id);
-          const effectiveLevel = levelsByUserId.get(existingUserByEmail.id) ?? 1;
-          levelsByUserId.set(existingUserByEmail.id, effectiveLevel);
-          return {
-            user: existingUserByEmail,
-            isNewUser: false,
-            effectiveLevel,
-          };
-        }
-      }
-
       const createdUser = userSchema.parse({
         id: crypto.randomUUID(),
-        email: input.email ?? `${input.providerSubjectId}@${input.provider}.local`,
+        email: input.email,
         displayName: input.displayName,
       });
 
@@ -936,6 +1011,7 @@ export function createMemoryUserStateStore(): UserStateStore & {
       levelsByUserId.set(createdUser.id, 1);
       return {
         user: createdUser,
+        authGeneration: 0,
         isNewUser: true,
         effectiveLevel: 1,
       };

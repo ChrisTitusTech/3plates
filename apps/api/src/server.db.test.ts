@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { createDatabaseClient, notificationDevices, progressEvents, users, workouts } from '@3plates/db';
@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { createTestAuthApp, signIn } from './test-support.js';
+import { assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -804,4 +804,106 @@ dbTest('OAuth state can be consumed only once by concurrent callbacks', async ()
   } finally {
     await repository.close?.();
   }
+});
+
+dbTest('health logs serialize concurrent edits, replay receipts, paginate tombstones, and cascade on deletion', async () => {
+  const { createDbHealthStore } = await import('./health-store.js');
+  await withDbApp(async ({ app, store }) => {
+    const session = await signIn(app, 'google');
+    const health = createDbHealthStore(requireDatabaseUrl());
+    try {
+      const entry = { kind: 'hydration' as const, date: '2026-11-14', timezone: 'UTC', notes: 'JSONB control: \u0001', details: { milliliters: 250 } };
+      const mutation = { id: randomUUID(), mutationId: randomUUID(), expectedVersion: 0, entry };
+      const results = await Promise.all([health.mutate(session.user.id, mutation), health.mutate(session.user.id, mutation)]);
+      assert.deepEqual(results[0], results[1]);
+      assert.deepEqual(results[0].entry, entry);
+      const race = await Promise.allSettled([300, 500].map((milliliters) => health.mutate(session.user.id, {
+        ...mutation, mutationId: randomUUID(), expectedVersion: 1, entry: { ...entry, details: { milliliters } },
+      })));
+      assert.equal(race.filter((r) => r.status === 'fulfilled').length, 1);
+      assert.equal(race.filter((r) => r.status === 'rejected').length, 1);
+      await assert.rejects(health.mutate(session.user.id, { ...mutation, entry: { ...entry, notes: 'changed' } }), /mutation ID/);
+      await health.mutate(session.user.id, { ...mutation, mutationId: randomUUID(), expectedVersion: 2, entry: null });
+      await health.mutate(session.user.id, { ...mutation, id: randomUUID(), mutationId: randomUUID() });
+      const first = await health.list(session.user.id, { limit: 1 });
+      assert.ok(first.nextCursor);
+      const second = await health.list(session.user.id, { limit: 1, cursor: first.nextCursor! });
+      assert.equal(second.nextCursor, null); assert.notEqual(first.logs[0].id, second.logs[0].id);
+      assert.equal([...first.logs, ...second.logs].filter((log) => log.entry === null).length, 1);
+      assert.deepEqual((await health.list(randomUUID(), { limit: 100 })).logs, []);
+      await store.requestDeletion(session.user.id);
+      await assert.rejects(health.mutate(session.user.id, { ...mutation, id: randomUUID(), mutationId: randomUUID() }), /Authentication/);
+      await store.deleteAccount(session.user.id);
+      assert.deepEqual((await health.list(session.user.id, { limit: 100 })).logs, []);
+    } finally { await health.close(); }
+  });
+});
+
+dbTest('identity removal refuses sole login and revokes sessions; equal verified emails stay separate', async () => {
+  await withDbApp(async ({ app, store, googleProfile }) => {
+    const session = await signIn(app, 'google');
+    const whoop = { provider: 'whoop' as const, providerSubjectId: 'whoop-test', email: googleProfile.email, emailVerified: true, displayName: 'WHOOP' };
+    const separate = await store.resolveOAuthIdentity(whoop);
+    assert.notEqual(separate.user.id, session.user.id);
+    await assert.rejects(store.unlinkIdentity(session.user.id, 'google'), /only login/);
+    await store.resolveOAuthIdentity({ ...whoop, providerSubjectId: 'linked-whoop', linkedUserId: session.user.id });
+    await assert.rejects(store.resolveOAuthIdentity({ ...whoop, providerSubjectId: 'another-whoop', linkedUserId: session.user.id }), /already has/);
+    let removedSubject = '';
+    await store.unlinkIdentity(session.user.id, 'whoop', async (subject) => { removedSubject = subject; });
+    assert.equal(removedSubject, 'linked-whoop');
+    assert.equal((await app.inject({ url: '/users/me', headers: { authorization: `Bearer ${session.sessionToken}` } })).statusCode, 401);
+    assert.equal((await store.listIdentities(session.user.id)).length, 1);
+  });
+});
+
+dbTest('pending account deletions paginate past retained failures and removed rows', async () => {
+  await withDbApp(async ({ store }) => {
+    const { db, close } = createDatabaseClient(requireDatabaseUrl());
+    try {
+      const ids = Array.from({ length: 205 }, () => randomUUID()).sort();
+      await db.insert(users).values(ids.map((id) => ({ id, email: null, deletionRequestedAt: new Date() })));
+      const first = await store.pendingDeletions();
+      assert.deepEqual(first, ids.slice(0, 100));
+      await store.deleteAccount(first[0]);
+      const second = await store.pendingDeletions(first.at(-1));
+      assert.deepEqual(second, ids.slice(100, 200));
+      assert.deepEqual(await store.pendingDeletions(second.at(-1)), ids.slice(200));
+      assert.deepEqual(await store.pendingDeletions(ids.at(-1)), []);
+    } finally { await close(); }
+  });
+});
+
+dbTest('session rotation and identity removal cannot leave a usable replacement session', async () => {
+  await withDbApp(async ({ app, store, authRepository }) => {
+    const session = await signIn(app, 'google');
+    await store.resolveOAuthIdentity({ provider: 'apple', providerSubjectId: 'unlink-race', email: null, emailVerified: false, displayName: null, linkedUserId: session.user.id });
+    const replacement = randomUUID();
+    await Promise.all([
+      authRepository.rotateSession(session.sessionToken, createHash('sha256').update(replacement).digest('hex'), new Date(Date.now() + 60000)),
+      store.unlinkIdentity(session.user.id, 'apple'),
+    ]);
+    assert.equal(await authRepository.getSessionByToken(session.sessionToken), null);
+    assert.equal(await authRepository.getSessionByToken(replacement), null);
+  });
+});
+
+dbTest('concurrent session rotation consumes its source exactly once', async () => {
+  await withDbApp(async ({ app, authRepository }) => {
+    const session = await signIn(app, 'google');
+    const tokens = [randomUUID(), randomUUID()];
+    const rotated = await Promise.all(tokens.map((token) => authRepository.rotateSession(session.sessionToken, createHash('sha256').update(token).digest('hex'), new Date(Date.now() + 60000))));
+    assert.equal(rotated.filter(Boolean).length, 1);
+    const valid = await Promise.all(tokens.map((token) => authRepository.getSessionByToken(token)));
+    assert.equal(valid.filter(Boolean).length, 1);
+  });
+});
+
+for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const) {
+  dbTest(`DB unlink rejects ${phase} authorization and permits fresh remaining-provider login`, async () => {
+    await withDbApp((context) => assertUnlinkInvalidatesAuthentication(context, phase));
+  });
+}
+
+dbTest('DB provider activation rejects conflicting links and callbacks after deletion', async () => {
+  await withDbApp(assertProviderActivationFollowsAcceptance);
 });

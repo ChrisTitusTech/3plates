@@ -46,7 +46,7 @@ module.exports = ({ config }) => ({
     bundler: 'metro',
     output: 'single',
   },
-  plugins: ['expo-router', 'expo-secure-store', 'expo-notifications', 'expo-status-bar'],
+  plugins: ['expo-router', 'expo-secure-store', 'expo-notifications', 'expo-status-bar', 'expo-sharing'],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL || productionApiUrl,
     ...(easProjectId

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useTheme, type ThemeColors } from '../src/lib/theme';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { WorkoutListResponse, WorkoutMode } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { ApiRequestError, clearSession, fetchWorkoutsByMode } from '../src/lib/api';
+import { ApiRequestError, expireSession, getSessionGeneration, fetchWorkoutsByMode } from '../src/lib/api';
 import {
   createManualWorkoutForm,
   deleteManualWorkoutEntry,
@@ -39,8 +40,14 @@ const modes: Array<{ value: WorkoutMode; label: string }> = [
 const pageSize = 10;
 
 export default function WorkoutsScreen() {
-  const router = useRouter();
   const sessionReady = useRequireSession();
+  return sessionReady ? <AuthenticatedWorkoutsScreen key={sessionReady} sessionReady={sessionReady} /> : null;
+}
+
+function AuthenticatedWorkoutsScreen({ sessionReady }: { sessionReady: number }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const router = useRouter();
   const [mode, setMode] = useState<WorkoutMode>('active_recovery');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [source, setSource] = useState<'network' | 'cache' | null>(null);
@@ -65,13 +72,18 @@ export default function WorkoutsScreen() {
     );
   }, [manualForm, manualType]);
 
+  const loadSequence = useRef(0);
   const loadWorkouts = async (nextMode: WorkoutMode, page = 1) => {
+    const generation = getSessionGeneration();
+    const sequence = ++loadSequence.current;
+    const current = () => generation === getSessionGeneration() && sequence === loadSequence.current;
     setStatus('loading');
     setError(null);
     setMessage(null);
 
     try {
       const result = await fetchWorkoutsByMode(nextMode, { page, pageSize });
+      if (!current()) return;
       setWorkoutList(result.data);
       setSource(result.source);
       setStatus('ready');
@@ -84,9 +96,9 @@ export default function WorkoutsScreen() {
         setMessage('No workouts are published for this mode yet.');
       }
     } catch (loadError) {
+      if (!current()) return;
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-        await clearSession();
-        router.replace('/sign-in');
+        if (await expireSession(generation)) router.replace('/sign-in');
         return;
       }
 
@@ -217,6 +229,8 @@ export default function WorkoutsScreen() {
 
         <Text style={styles.label}>Date</Text>
         <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
           style={styles.input}
           accessibilityLabel="Workout date"
           placeholder="2026-07-07"
@@ -230,6 +244,8 @@ export default function WorkoutsScreen() {
           <>
             <Text style={styles.label}>Distance</Text>
             <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
               style={styles.input}
               accessibilityLabel="Workout distance"
               placeholder="3.1 miles"
@@ -240,6 +256,8 @@ export default function WorkoutsScreen() {
 
             <Text style={styles.label}>Duration</Text>
             <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
               style={styles.input}
               accessibilityLabel="Workout duration"
               placeholder="32:15"
@@ -252,6 +270,8 @@ export default function WorkoutsScreen() {
           <>
             <Text style={styles.label}>WOD name/type</Text>
             <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
               style={styles.input}
               accessibilityLabel="WOD name or type"
               placeholder="Fran"
@@ -262,6 +282,8 @@ export default function WorkoutsScreen() {
 
             <Text style={styles.label}>Workout details</Text>
             <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
               style={[styles.input, styles.multilineInput]}
               accessibilityLabel="Workout details"
               placeholder="21-15-9 thrusters and pull-ups"
@@ -294,6 +316,8 @@ export default function WorkoutsScreen() {
 
             <Text style={styles.label}>Score</Text>
             <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
               style={styles.input}
               accessibilityLabel="Workout score"
               placeholder="7:42"
@@ -450,13 +474,13 @@ export default function WorkoutsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   blank: {
     flex: 1,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   scroll: {
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   page: {
     width: '100%',
@@ -465,7 +489,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
     gap: 12,
   },
   row: {
@@ -477,51 +501,51 @@ const styles = StyleSheet.create({
   choice: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#17202a',
-    backgroundColor: '#ffffff',
+    borderColor: colors.strong,
+    backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   choiceActive: {
-    backgroundColor: '#17202a',
+    backgroundColor: colors.strong,
   },
   choiceLabel: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '700',
   },
   choiceLabelActive: {
-    color: '#ffffff',
+    color: colors.onStrong,
   },
   meta: {
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 13,
   },
   manualCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 10,
   },
   sectionTitle: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 16,
     fontWeight: '800',
   },
   label: {
-    color: '#2d3742',
+    color: colors.ink,
     fontWeight: '700',
     fontSize: 14,
   },
   input: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cfd6df',
+    borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: '#ffffff',
-    color: '#17202a',
+    backgroundColor: colors.surface,
+    color: colors.ink,
   },
   multilineInput: {
     minHeight: 92,
@@ -530,10 +554,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 6,
   },
@@ -546,50 +570,50 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     flexShrink: 1,
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 18,
     fontWeight: '800',
   },
   cardMeta: {
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 13,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   cardBody: {
-    color: '#2d3742',
+    color: colors.ink,
     lineHeight: 20,
   },
   success: {
-    color: '#067647',
+    color: colors.success,
     fontWeight: '600',
   },
   error: {
-    color: '#b42318',
+    color: colors.danger,
     fontWeight: '600',
   },
   button: {
     alignSelf: 'flex-start',
-    backgroundColor: '#17202a',
+    backgroundColor: colors.strong,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   buttonText: {
-    color: '#ffffff',
+    color: colors.onStrong,
     fontWeight: '700',
   },
   deleteButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#b42318',
-    backgroundColor: '#ffffff',
+    borderColor: colors.danger,
+    backgroundColor: colors.surface,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   deleteButtonText: {
-    color: '#b42318',
+    color: colors.danger,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -597,12 +621,12 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#17202a',
+    borderColor: colors.strong,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   retryText: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '700',
   },
   paginationRow: {
@@ -614,17 +638,17 @@ const styles = StyleSheet.create({
   pageButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#17202a',
-    backgroundColor: '#ffffff',
+    borderColor: colors.strong,
+    backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   pageButtonText: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '700',
   },
   pageSummary: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '700',
   },
   buttonDisabled: {

@@ -153,9 +153,55 @@ jobs:
       - uses: actions/checkout@v7
       - name: Check shell scripts
         run: |
-          for script in scripts/*.sh; do bash -n "$script"; done
-          shellcheck scripts/*.sh
+          for script in scripts/*.sh apps/whoop/deploy/*.sh; do bash -n "$script"; done
+          shellcheck scripts/*.sh apps/whoop/deploy/*.sh
           python3 scripts/deploy-web.test.py
+          python3 apps/whoop/deploy/test-ops.py
+
+  whoop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gallant_test
+          POSTGRES_USER: gallant_test
+          POSTGRES_PASSWORD: local-test-only
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U gallant_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @3plates/whoop check
+      - run: pnpm --filter @3plates/whoop test:db
+      - run: pnpm --filter @3plates/whoop exec playwright install --with-deps chromium
+      - run: pnpm --filter @3plates/whoop test:browser
+
+  fitness-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPO_PUBLIC_API_URL: https://api.example.test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @3plates/mobile exec playwright install --with-deps chromium
+      - run: pnpm --filter @3plates/mobile exec expo export --platform web --output-dir dist
+      - run: pnpm --filter @3plates/mobile test:browser
 
   android-native:
     runs-on: ubuntu-latest

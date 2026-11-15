@@ -1,3 +1,4 @@
+import { useTheme, type ThemeColors } from '../src/lib/theme';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
@@ -11,7 +12,7 @@ import {
 import type { Progress } from '@3plates/contract';
 
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { ApiRequestError, clearSession, fetchProgress, updateProgress } from '../src/lib/api';
+import { ApiRequestError, expireSession, getSessionGeneration, fetchProgress, updateProgress } from '../src/lib/api';
 import {
   deleteManualWorkoutEntry,
   formatManualWorkoutLine,
@@ -105,6 +106,8 @@ function buildCalendarDays(monthDate: Date) {
 }
 
 export default function ProgressScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   const sessionReady = useRequireSession();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -149,6 +152,7 @@ export default function ProgressScreen() {
   }, [manualEntries, selectedDateKey]);
 
   const loadProgress = async () => {
+    const generation = getSessionGeneration();
     setStatus('loading');
     setError(null);
 
@@ -170,8 +174,7 @@ export default function ProgressScreen() {
       setStatus('ready');
     } catch (loadError) {
       if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-        await clearSession();
-        router.replace('/sign-in');
+        if (await expireSession(generation)) router.replace('/sign-in');
         return;
       }
 
@@ -344,13 +347,13 @@ export default function ProgressScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   blank: {
     flex: 1,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   scroll: {
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   page: {
     width: '100%',
@@ -359,7 +362,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
     gap: 12,
   },
   statsRow: {
@@ -370,28 +373,28 @@ const styles = StyleSheet.create({
   statCard: {
     flexGrow: 1,
     minWidth: 180,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 4,
   },
   statValue: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 28,
     fontWeight: '800',
   },
   statLabel: {
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 13,
     fontWeight: '700',
   },
   calendarCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 10,
   },
@@ -403,12 +406,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sectionTitle: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 16,
     fontWeight: '800',
   },
   checkedLabel: {
-    color: '#067647',
+    color: colors.success,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -418,7 +421,7 @@ const styles = StyleSheet.create({
   },
   weekday: {
     flex: 1,
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
@@ -435,46 +438,46 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#e8edf2',
-    backgroundColor: '#f7f8fa',
+    borderColor: colors.border,
+    backgroundColor: colors.background,
   },
   todayDay: {
-    borderColor: '#17202a',
+    borderColor: colors.strong,
   },
   checkedDay: {
-    borderColor: '#067647',
-    backgroundColor: '#067647',
+    borderColor: colors.success,
+    backgroundColor: colors.success,
   },
   selectedDay: {
-    borderColor: '#17202a',
+    borderColor: colors.strong,
     borderWidth: 2,
   },
   dayNumber: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 13,
     fontWeight: '700',
   },
   checkedDayText: {
-    color: '#ffffff',
+    color: colors.onStrong,
   },
   selectedDayText: {
     fontWeight: '900',
   },
   checkMark: {
-    color: '#ffffff',
+    color: colors.onStrong,
     fontSize: 16,
     fontWeight: '900',
     lineHeight: 18,
   },
   meta: {
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 13,
   },
   historyCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 10,
   },
@@ -496,7 +499,7 @@ const styles = StyleSheet.create({
   },
   historyLine: {
     flex: 1,
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 14,
     fontWeight: '700',
     lineHeight: 20,
@@ -504,31 +507,31 @@ const styles = StyleSheet.create({
   deleteButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#b42318',
-    backgroundColor: '#ffffff',
+    borderColor: colors.danger,
+    backgroundColor: colors.surface,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   deleteButtonText: {
-    color: '#b42318',
+    color: colors.danger,
     fontSize: 13,
     fontWeight: '800',
   },
   clearFilterButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#17202a',
-    backgroundColor: '#ffffff',
+    borderColor: colors.strong,
+    backgroundColor: colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   clearFilterText: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 13,
     fontWeight: '800',
   },
   error: {
-    color: '#b42318',
+    color: colors.danger,
     fontWeight: '600',
   },
 });

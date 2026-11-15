@@ -4,23 +4,32 @@ import test from 'node:test';
 import type { ManualWorkoutCreate, NotificationDevice, Preferences, Progress, User } from '@3plates/contract';
 
 import {
+  ApiRequestError,
   __resetApiTestAdapters,
   __setApiTestAdapters,
   clearSession,
+  expireSession,
   completeAuthCallback,
   createManualWorkout,
   deleteManualWorkout,
   fetchMe,
+  fetchPreferences,
   fetchManualWorkouts,
   fetchProgress,
   fetchWorkoutsByMode,
   flushPendingMutations,
   getPendingMutationCount,
   getSessionToken,
+  getSessionGeneration,
+  registerSignOutCleanup,
+  getCachedUser,
   productionApiUrl,
+  refreshSessionAndPersist,
   registerDevice,
   resolveApiBaseUrl,
   setSessionToken,
+  subscribePreferences,
+  syncPendingPreferences,
   signOutAndClearSession,
   updateProgress,
   updatePreferences,
@@ -636,4 +645,445 @@ test('workout mode read sends pagination query and falls back to cached value', 
   const second = await fetchWorkoutsByMode('active_recovery', { page: 2, pageSize: 5 });
   assert.equal(second.source, 'cache');
   assert.deepEqual(second.data, responseBody);
+});
+
+test('account caches stay separate and a late response cannot overwrite the active account', async (t) => {
+  const storage = createMemoryStorage();
+  let activeUser = createBaseUser();
+  let offline = false;
+  let completeRead: ((value: unknown) => void) | undefined;
+  const client = createClientOverrides({
+    me: async () => ({ status: 200, body: activeUser }),
+    progress: async () => {
+      if (offline) throw new Error('Network request failed');
+      return { status: 200, body: createProgress() };
+    },
+  });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice-token'); await fetchMe(); await fetchProgress();
+  activeUser = { ...activeUser, id: 'bob', email: 'bob@example.test' };
+  await setSessionToken('bob-token'); await fetchMe(); offline = true;
+  await assert.rejects(fetchProgress(), /Network request failed/);
+  client.me = () => new Promise((resolve) => { completeRead = resolve; }) as never;
+  const late = fetchMe();
+  // Allow the mocked request to start before switching sessions.
+  while (!completeRead) await new Promise((resolve) => setImmediate(resolve));
+  await setSessionToken('charlie-token');
+  completeRead({ status: 200, body: { ...activeUser, id: 'stale-bob' } });
+  await assert.rejects(late, /active account changed/);
+  assert.equal(JSON.parse((await storage.getItem('@3plates/cache/me'))!).value.id, 'bob');
+});
+
+test('upgrading moves legacy offline changes into their original account before an account switch', async (t) => {
+  const storage = createMemoryStorage(); const alice = createBaseUser(); const bob = { ...alice, id: 'bob' };
+  await storage.setItem('@3plates/cache/me', JSON.stringify({ value: alice, updatedAt: new Date().toISOString() }));
+  await storage.setItem('@3plates/pending-mutations', JSON.stringify([{ id: 'old-progress', type: 'updateProgress', createdAt: new Date().toISOString(), payload: createProgress() }]));
+  await storage.setItem('@3plates/cache/progress', JSON.stringify({ value: createProgress(), updatedAt: new Date().toISOString() }));
+  let owner = bob; let writes = 0;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: owner }), updateProgress: async () => { writes++; return { status: 200, body: createProgress() }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('bob-token'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 0); assert.equal(writes, 0);
+  assert.equal(await storage.getItem('@3plates/pending-mutations'), null);
+  assert.equal(JSON.parse((await storage.getItem(`@3plates/pending-mutations/user/${alice.id}`))!).length, 1);
+  owner = alice; await setSessionToken('alice-token'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 1);
+  const flushed = await flushPendingMutations(); assert.equal(flushed.flushed, 1); assert.equal(writes, 1);
+});
+
+test('temporary API outages permit cached account access but invalid sessions never do', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 200;
+  const client = createClientOverrides({ me: async () => ({ status, body: status === 200 ? user : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('cached-account-token'); await fetchMe();
+  for (status of [502, 503, 429]) assert.deepEqual(await fetchMe(), { data: user, source: 'cache' });
+  status = 401; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 401);
+  status = 404; await assert.rejects(fetchMe(), (error: unknown) => (error as { status: number }).status === 404);
+});
+
+test('temporary API outages preserve cached measurement preferences', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 200;
+  const preferences = { theme: 'system', units: 'imperial', reminderTime: '07:00' };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => ({ status, body: status === 200 ? preferences : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('cached-preferences-token'); await fetchMe(); await fetchPreferences();
+  for (status of [502, 503, 429]) assert.deepEqual(await fetchPreferences(), { data: preferences, source: 'cache' });
+  status = 401; await assert.rejects(fetchPreferences(), (error: unknown) => (error as { status: number }).status === 401);
+});
+
+test('queued appearance remains authoritative through outages and updates subscribers', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser(); let status = 503;
+  let saved: Preferences = { theme: 'system', units: 'imperial', reminderTime: '08:30' };
+  const changes: Preferences[] = [];
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => ({ status: 200, body: saved }),
+    updatePreferences: async ({ body }: { body: Preferences }) => { if (status === 200) saved = body; return { status, body: status === 200 ? body : null }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  t.after(subscribePreferences((value) => changes.push(value)));
+  await setSessionToken('theme-test-token'); await fetchMe(); await fetchPreferences();
+  const dark = { ...saved, theme: 'dark' as const };
+  assert.deepEqual(await updatePreferences(dark), { queued: true });
+  assert.deepEqual(changes, [dark]);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'cache' });
+  await syncPendingPreferences(); assert.equal(await getPendingMutationCount(), 1);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'cache' });
+  status = 200; await syncPendingPreferences(); assert.equal(await getPendingMutationCount(), 0);
+  assert.deepEqual(await fetchPreferences(), { data: dark, source: 'network' });
+});
+
+test('a delayed preference read cannot replace a newly saved appearance', async (t) => {
+  const storage = createMemoryStorage(); const user = createBaseUser();
+  const initial: Preferences = { theme: 'light', units: 'metric', reminderTime: '07:00' };
+  let release!: () => void; let started!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { started = resolve; });
+  let delay = false;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    preferences: async () => { if (delay) { started(); await waiting; } return { status: 200, body: initial }; },
+    updatePreferences: async ({ body }: { body: Preferences }) => ({ status: 200, body }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('theme-read-race'); await fetchMe(); await fetchPreferences();
+  delay = true; const stale = fetchPreferences(); await requested;
+  const dark = { ...initial, theme: 'dark' as const }; await updatePreferences(dark); release();
+  assert.deepEqual(await stale, { data: dark, source: 'cache' });
+});
+
+test('a new session cannot use a previous token-bound profile during an outage', async (t) => {
+  const storage = createMemoryStorage(); let status = 200;
+  const client = createClientOverrides({ me: async () => ({ status, body: status === 200 ? createBaseUser() : null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  await setSessionToken('bob');
+  assert.equal(await getCachedUser(), null);
+  for (status of [503, 429]) await assert.rejects(fetchMe());
+  await setSessionToken('alice');
+  assert.equal((await fetchMe()).data.id, createBaseUser().id);
+});
+
+test('a late progress response cannot remove the newly active account queue', async (t) => {
+  const storage = createMemoryStorage(); let user = createBaseUser();
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let delay = true;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: user }),
+    updateProgress: async () => { if (delay) { entered(); await wait; return { status: 200, body: createProgress() }; } throw new Error('Network request failed'); } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const late = updateProgress(createProgress()); await started;
+  user = { ...user, id: 'bob' }; await setSessionToken('bob'); await fetchMe(); delay = false;
+  await updateProgress(createProgress());
+  release(); await assert.rejects(late, /active account changed/);
+  assert.equal(await getPendingMutationCount(), 1);
+});
+
+test('a preference queued during a flush remains pending after that flush', async (t) => {
+  const storage = createMemoryStorage(); let flushing = false;
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { if (!flushing) throw new Error('Network request failed'); entered(); await wait; return { status: 200, body: createProgress() }; },
+    updatePreferences: async () => ({ status: 503, body: null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('flush-race'); await fetchMe(); await updateProgress(createProgress());
+  flushing = true; const flush = flushPendingMutations(); await started;
+  const preference = updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '08:00' });
+  await new Promise((resolve) => setImmediate(resolve));
+  release(); await flush; await preference;
+  const queue = JSON.parse((await storage.getItem('@3plates/pending-mutations/user/user-1'))!);
+  assert.equal(queue.length, 1); assert.equal(queue[0].type, 'updatePreferences'); assert.equal(queue[0].payload.theme, 'dark');
+});
+
+test('generic retry retains preference mutations on 429 and 5xx responses', async (t) => {
+  const storage = createMemoryStorage(); let status = 503;
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }), updatePreferences: async () => ({ status, body: null }) });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('retry-preferences'); await fetchMe();
+  await updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '07:00' });
+  for (status of [503, 429]) { await flushPendingMutations(); assert.equal(await getPendingMutationCount(), 1); }
+});
+
+test('a read begun during a preference write cannot overwrite the completed write', async (t) => {
+  const storage = createMemoryStorage(); const initial: Preferences = { theme: 'light', units: 'metric', reminderTime: '07:00' };
+  let finishWrite!: () => void; let beginWrite!: () => void; let finishRead!: () => void; let beginRead!: () => void;
+  const writing = new Promise<void>((resolve) => { beginWrite = resolve; });
+  const writeWait = new Promise<void>((resolve) => { finishWrite = resolve; });
+  const reading = new Promise<void>((resolve) => { beginRead = resolve; });
+  const readWait = new Promise<void>((resolve) => { finishRead = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    preferences: async () => { beginRead(); await readWait; return { status: 200, body: initial }; },
+    updatePreferences: async ({ body }: { body: Preferences }) => { beginWrite(); await writeWait; return { status: 200, body }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('write-then-read'); await fetchMe();
+  const dark = { ...initial, theme: 'dark' as const }; const write = updatePreferences(dark); await writing;
+  const stale = fetchPreferences(); await reading; finishWrite(); await write; finishRead();
+  assert.deepEqual(await stale, { data: dark, source: 'cache' });
+});
+
+test('successful sign-in repairs malformed profiles while preserving unidentified offline data', async (t) => {
+  t.after(__resetApiTestAdapters);
+  for (const raw of ['{broken', 'null', '{}']) {
+    const storage = createMemoryStorage();
+    await storage.setItem('@3plates/cache/me', raw);
+    await storage.setItem('@3plates/pending-mutations', JSON.stringify([{ id: 'orphan', type: 'updateProgress', payload: createProgress() }]));
+    __setApiTestAdapters({ storage, client: createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }) }) as never });
+    await setSessionToken('recovered-session');
+    assert.equal(await getSessionToken(), 'recovered-session');
+    assert.equal((await fetchMe()).data.id, createBaseUser().id);
+    assert.equal(await getPendingMutationCount(), 0);
+    assert.equal(JSON.parse((await storage.getItem('@3plates/pending-mutations/user/unverified'))!)[0].id, 'orphan');
+  }
+});
+
+test('enqueue and flush keep their original queue key when the session switches after the last token check', async (t) => {
+  t.after(__resetApiTestAdapters);
+  const { createHash } = await import('node:crypto');
+  for (const operation of ['enqueue', 'flush']) {
+    const backing = createMemoryStorage();
+    const aliceKey = '@3plates/pending-mutations/user/user-1';
+    const bobKey = '@3plates/pending-mutations/user/bob';
+    let armed = false; let switchOnCheck = false;
+    const storage = { ...backing, async getItem(key: string) {
+      const value = await backing.getItem(key);
+      if (armed && key === aliceKey && operation === 'enqueue') switchOnCheck = true;
+      if (switchOnCheck && key === '@3plates/session-token') {
+        armed = false; switchOnCheck = false;
+        await backing.setItem('@3plates/session-token', 'bob');
+        await backing.setItem('@3plates/cache/me', JSON.stringify({ value: { ...createBaseUser(), id: 'bob' }, sessionHash: createHash('sha256').update('bob').digest('hex') }));
+      }
+      return value;
+    } };
+    const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+      registerDevice: async () => { if (operation === 'flush') { switchOnCheck = true; await storage.getItem('@3plates/session-token'); } throw new Error('Network request failed'); } });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('alice'); await fetchMe(); await getPendingMutationCount();
+    const device: NotificationDevice = { platform: 'ios', pushToken: 'alice-push-token' };
+    const queued = { id: 'alice-change', type: 'registerDevice', payload: device, createdAt: new Date().toISOString() };
+    const bobQueue = JSON.stringify([{ ...queued, id: 'bob-change', payload: { ...device, pushToken: 'bob-push-token' } }]);
+    await backing.setItem(bobKey, bobQueue);
+    armed = true;
+    if (operation === 'flush') { await backing.setItem(aliceKey, JSON.stringify([queued])); await assert.rejects(flushPendingMutations(), /Network request failed/); }
+    else await registerDevice(device);
+    assert.equal(await getSessionToken(), 'bob');
+    assert.equal(await backing.getItem(bobKey), bobQueue);
+    const aliceQueue = JSON.parse((await backing.getItem(aliceKey))!);
+    assert.equal(aliceQueue.length, 1); assert.equal(aliceQueue[0].payload.pushToken, 'alice-push-token');
+  }
+});
+
+
+test('sign-out cannot clear a session established during cleanup or the backend request', async (t) => {
+  t.after(__resetApiTestAdapters);
+  t.after(() => registerSignOutCleanup(async () => undefined));
+  for (const phase of ['before-discard', 'cleanup', 'request']) {
+    const storage = createMemoryStorage(); let activeUser = createBaseUser(); let requests = 0;
+    const switchAccount = async () => { activeUser = { ...activeUser, id: 'bob' }; await setSessionToken('bob'); await fetchMe(); };
+    const client = createClientOverrides({ me: async () => ({ status: 200, body: activeUser }),
+      authSignOut: async (input: { extraHeaders: { authorization: string } }) => {
+        requests++; assert.equal(input.extraHeaders.authorization, 'Bearer alice');
+        if (phase === 'request') await switchAccount();
+        return { status: 200, body: { signedOut: true } };
+      } });
+    __setApiTestAdapters({ storage, client: client as never });
+    registerSignOutCleanup(async (owner) => { assert.equal(owner?.id, 'user-1'); if (phase === 'cleanup') await switchAccount(); });
+    await setSessionToken('alice'); await fetchMe(); const generation = getSessionGeneration();
+    if (phase === 'before-discard') await switchAccount();
+    await assert.rejects(signOutAndClearSession(generation), /active account changed/);
+    assert.equal(await getSessionToken(), 'bob'); assert.equal((await getCachedUser())?.id, 'bob');
+    assert.equal(requests, phase === 'request' ? 1 : 0);
+  }
+});
+
+test('a new sign-in waits for old local session cleanup to finish', async (t) => {
+  const backing = createMemoryStorage(); let release!: () => void; let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  let armed = false;
+  const storage = { ...backing, async removeItem(key: string) {
+    if (armed && key === '@3plates/cache/me') { entered(); await waiting; }
+    await backing.removeItem(key);
+  } };
+  __setApiTestAdapters({ storage, client: createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }) }) as never });
+  t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe(); armed = true;
+  const clear = clearSession(); await started;
+  const signIn = setSessionToken('bob').then(() => fetchMe());
+  release(); await clear; await signIn;
+  assert.equal(await getSessionToken(), 'bob'); assert.equal((await getCachedUser())?.id, 'user-1');
+});
+
+test('session expiry preserves account-owned offline changes for same-account reauthentication', async (t) => {
+  const storage = createMemoryStorage(); const alice = createBaseUser(); let owner = alice; let offline = true;
+  let writes = 0;
+  const preferences: Preferences = { theme: 'dark', units: 'imperial', reminderTime: '08:00' };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: owner }),
+    updateProgress: async () => { if (offline) throw new Error('Network request failed'); writes++; return { status: 200, body: createProgress() }; },
+    updatePreferences: async () => { if (offline) return { status: 503, body: null }; writes++; return { status: 200, body: preferences }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice-before-expiry'); await fetchMe();
+  await updateProgress(createProgress()); await updatePreferences(preferences);
+  assert.equal(await getPendingMutationCount(), 2);
+  const expiredGeneration = getSessionGeneration();
+  await expireSession(expiredGeneration);
+  assert.equal(await getSessionToken(), null); assert.equal(await getCachedUser(), null);
+  owner = { ...alice, id: 'bob' }; await setSessionToken('bob-token'); await fetchMe(); offline = false;
+  assert.equal(await getPendingMutationCount(), 0); await flushPendingMutations(); await syncPendingPreferences();
+  assert.equal(writes, 0);
+  owner = alice; await setSessionToken('alice-after-expiry'); await fetchMe();
+  assert.equal(await getPendingMutationCount(), 2);
+  assert.equal(await expireSession(expiredGeneration), false);
+  assert.equal(await getSessionToken(), 'alice-after-expiry');
+  await flushPendingMutations(); await syncPendingPreferences();
+  assert.equal(await getPendingMutationCount(), 0); assert.equal(writes, 2);
+});
+
+test('a refresh queued behind a newer sign-in cannot replace that session', async (t) => {
+  const base = createMemoryStorage(); let pause = false;
+  let release!: () => void; let entered!: () => void; let finishRefresh!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const response = new Promise<void>((resolve) => { finishRefresh = resolve; });
+  const storage = { ...base, async getItem(key: string) {
+    if (pause && key === '@3plates/cache/me') { pause = false; entered(); await waiting; }
+    return base.getItem(key);
+  } };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    authRefresh: async () => { await response; return { status: 200, body: { sessionToken: 'alice-refreshed', user: createBaseUser() } }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const refresh = refreshSessionAndPersist();
+  const rejected = assert.rejects(refresh, /active account changed/);
+  pause = true; const signIn = setSessionToken('bob'); await started;
+  finishRefresh(); await new Promise<void>((resolve) => setImmediate(resolve));
+  release(); await signIn; await rejected;
+  assert.equal(await getSessionToken(), 'bob');
+});
+
+test('concurrent offline progress and device mutations both survive account queue writes', async (t) => {
+  const backing = createMemoryStorage();
+  const key = '@3plates/pending-mutations/user/user-1';
+  const storage = { ...backing, async getItem(k: string) {
+    const value = await backing.getItem(k);
+    if (k === key) await new Promise((resolve) => setImmediate(resolve));
+    return value;
+  } };
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { throw new Error('Network request failed'); },
+    registerDevice: async () => { throw new Error('Network request failed'); } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('queue-race'); await fetchMe();
+  await Promise.all([updateProgress(createProgress()), registerDevice({ platform: 'ios', pushToken: 'concurrent-device' })]);
+  const queue = JSON.parse((await backing.getItem(key))!);
+  assert.deepEqual(queue.map((item: { type: string }) => item.type).sort(), ['registerDevice', 'updateProgress']);
+});
+
+test('flush checkpoints successes before a later 401 and preserves new concurrent writes', async (t) => {
+  const storage = createMemoryStorage(); let online = false; let authorized = false; let progressWrites = 0;
+  let entered!: () => void; let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: createBaseUser() }),
+    updateProgress: async () => { if (!online) throw new Error('Network request failed'); progressWrites++; return { status: 200, body: createProgress() }; },
+    registerDevice: async () => {
+      if (!online) throw new Error('Network request failed');
+      if (authorized) return { status: 200, body: { registered: true } };
+      entered(); await wait; return { status: 401, body: { ok: false, error: { code: 'invalid_auth', message: 'Expired' } } };
+    } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('checkpoint'); await fetchMe();
+  await updateProgress(createProgress()); await registerDevice({ platform: 'ios', pushToken: 'old-device' });
+  online = true; const flush = flushPendingMutations(); const rejected = assert.rejects(flush, /Expired/);
+  await started;
+  online = false;
+  const concurrent = registerDevice({ platform: 'android', pushToken: 'new-device' });
+  release(); await rejected; await concurrent;
+  assert.equal(await getPendingMutationCount(), 2);
+  online = true; authorized = true; await flushPendingMutations();
+  assert.equal(progressWrites, 1); assert.equal(await getPendingMutationCount(), 0);
+});
+
+test('a flush waiting behind a preference operation cannot adopt a newer account', async (t) => {
+  const storage = createMemoryStorage(); let activeUser = createBaseUser(); let progressWrites = 0;
+  let release!: () => void; let entered!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const client = createClientOverrides({ me: async () => ({ status: 200, body: activeUser }),
+    updatePreferences: async (input: { body: Preferences }) => { entered(); await wait; return { status: 200, body: input.body }; },
+    updateProgress: async () => { progressWrites++; return { status: 200, body: createProgress() }; } });
+  __setApiTestAdapters({ storage, client: client as never }); t.after(__resetApiTestAdapters);
+  await setSessionToken('alice'); await fetchMe();
+  const preference = assert.rejects(updatePreferences({ theme: 'dark', units: 'metric', reminderTime: '07:00' }), /active account changed/);
+  await started;
+  const flush = assert.rejects(flushPendingMutations(), /active account changed/);
+  await new Promise((resolve) => setImmediate(resolve));
+  await setSessionToken('bob'); activeUser = { ...activeUser, id: 'bob' }; await fetchMe();
+  await storage.setItem('@3plates/pending-mutations/user/bob', JSON.stringify([{ id: 'bob-progress', type: 'updateProgress', payload: createProgress(), createdAt: new Date().toISOString() }]));
+  release(); await preference; await flush;
+  assert.equal(progressWrites, 0); assert.equal(await getPendingMutationCount(), 1);
+});
+
+test('queue flush deadlines release waiting local writes and retain unacknowledged work', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] }); t.after(__resetApiTestAdapters);
+  for (const phase of ['owner', 'mutation']) {
+    const storage = createMemoryStorage(); let flushing = false; let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const stall = (signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Timed out', 'AbortError')), { once: true }); entered();
+    });
+    const client = createClientOverrides({
+      me: async (input: { fetchOptions?: { signal: AbortSignal } }) => {
+        if (flushing && phase === 'owner') return stall(input.fetchOptions!.signal);
+        return { status: 200, body: createBaseUser() };
+      },
+      updateProgress: async () => ({ status: 200, body: createProgress() }),
+      registerDevice: async (input: { fetchOptions?: { signal: AbortSignal } }) => {
+        if (input.fetchOptions) return stall(input.fetchOptions.signal);
+        throw new Error('Network request failed');
+      },
+    });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('deadline-' + phase); await fetchMe();
+    const key = '@3plates/pending-mutations/user/user-1';
+    await storage.setItem(key, JSON.stringify([
+      { id: 'progress', type: 'updateProgress', payload: createProgress(), createdAt: new Date().toISOString() },
+      { id: 'device', type: 'registerDevice', payload: { platform: 'ios', pushToken: 'old' }, createdAt: new Date().toISOString() },
+    ]));
+    flushing = true; const flush = assert.rejects(flushPendingMutations(), { name: 'AbortError' });
+    await started;
+    const local = registerDevice({ platform: 'android', pushToken: 'new' });
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(10000); await flush; await local;
+    const queue = JSON.parse((await storage.getItem(key))!);
+    assert.equal(queue.length, phase === 'owner' ? 3 : 2);
+    assert.ok(queue.some((item: { id: string }) => item.id === 'device'));
+    await clearSession(); await setSessionToken('next-' + phase);
+    assert.equal(await getSessionToken(), 'next-' + phase);
+  }
+});
+
+test('queue owner checks preserve transient status, sessions and mutations in both sync paths', async (t) => {
+  t.after(__resetApiTestAdapters);
+  for (const synchronize of [flushPendingMutations, syncPendingPreferences]) {
+    const storage = createMemoryStorage(); let status = 200; let owner = createBaseUser(); let online = false;
+    const preferences: Preferences = { theme: 'dark', units: 'metric', reminderTime: '07:00' };
+    const client = createClientOverrides({
+      me: async () => ({ status, body: status === 200 ? owner : { ok: false, error: { code: 'invalid_auth', message: 'Upstream failure' } } }),
+      updatePreferences: async () => ({ status: online ? 200 : 503, body: online ? preferences : null }),
+    });
+    __setApiTestAdapters({ storage, client: client as never });
+    await setSessionToken('owner-check'); await fetchMe(); await updatePreferences(preferences);
+    const key = '@3plates/pending-mutations/user/user-1'; const queued = await storage.getItem(key);
+    for (status of [429, 503, 401]) {
+      await assert.rejects(synchronize(), (error: unknown) => error instanceof ApiRequestError
+        && error.status === status && error.code === (status === 401 ? 'invalid_auth' : null));
+      assert.equal(await getSessionToken(), 'owner-check'); assert.equal(await storage.getItem(key), queued);
+    }
+    status = 200; owner = { ...owner, id: 'another-account' };
+    await assert.rejects(synchronize(), (error: unknown) => error instanceof ApiRequestError && error.status === 401 && error.code === 'invalid_auth');
+    assert.equal(await storage.getItem(key), queued);
+    owner = createBaseUser(); online = true; await synchronize();
+    assert.equal(await getPendingMutationCount(), 0); assert.equal(await getSessionToken(), 'owner-check');
+  }
 });

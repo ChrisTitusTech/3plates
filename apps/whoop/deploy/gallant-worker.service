@@ -1,0 +1,29 @@
+[Unit]
+Description=Gallant WHOOP history and synchronization worker
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=gallant
+Group=gallant
+WorkingDirectory=/opt/gallant-dashboard/current
+EnvironmentFile=/etc/gallant-dashboard.env
+ExecStart=/usr/bin/node dist/server/server/worker.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+UMask=0077
+MemoryMax=384M
+
+[Install]
+WantedBy=multi-user.target

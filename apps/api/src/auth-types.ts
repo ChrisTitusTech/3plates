@@ -1,4 +1,4 @@
-export type AuthProviderName = 'google' | 'apple';
+export type AuthProviderName = 'google' | 'apple' | 'whoop';
 
 export type AuthTransactionPurpose = 'sign-in' | 'link';
 
@@ -21,5 +21,5 @@ export type OAuthProviderAdapter = {
     code: string;
     redirectUri: string;
     codeVerifier: string;
-  }): Promise<OAuthIdentity>;
+  }): Promise<OAuthIdentity & { activate?: () => Promise<void> }>;
 };

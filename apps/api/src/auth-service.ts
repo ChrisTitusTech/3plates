@@ -1,4 +1,4 @@
-import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions } from '@3plates/db';
+import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions, userIdentities, users } from '@3plates/db';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
   createHash,
@@ -22,6 +22,7 @@ export type OAuthTransaction = {
   state: string;
   provider: AuthProviderName;
   purpose: AuthTransactionPurpose;
+  authGeneration?: number | null;
   userId: string | null;
   redirectTo: string | null;
   codeVerifier: string;
@@ -44,11 +45,14 @@ export type MobileAuthExchangeRecord = {
   exchangeExpiresAt: Date;
 };
 
+type SessionAuthorization = { generation: number; provider: string; subject: string };
 export interface AuthRepository {
   createOAuthTransaction(input: OAuthTransaction): Promise<void>;
   consumeOAuthTransaction(state: string): Promise<OAuthTransaction | null>;
-  createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
-  getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date } | null>;
+  createSession(userId: string, tokenHash: string, expiresAt: Date, authorization?: SessionAuthorization): Promise<void>;
+  rotateSession(token: string, nextHash: string, expiresAt: Date): Promise<string | null>;
+  revokeUserSessions(userId: string): Promise<void>;
+  getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date; authGeneration: number } | null>;
   revokeSessionByToken(token: string): Promise<void>;
   createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
   consumeMobileAuthExchange(code: string): Promise<MobileAuthExchangeRecord | null>;
@@ -56,11 +60,13 @@ export interface AuthRepository {
 }
 
 export type AuthService = {
+  close?(): Promise<void>;
   startAuthentication(input: {
     provider: AuthProviderName;
     purpose: AuthTransactionPurpose;
     redirectTo?: string | null;
     userId?: string | null;
+    initiatingToken?: string | null;
     callbackUrl: string;
   }): Promise<{ next: string; state: string; provider: AuthProviderName }>;
   completeAuthentication(input: {
@@ -143,6 +149,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         state: input.state,
         provider: input.provider,
         purpose: input.purpose,
+        authGeneration: input.authGeneration,
         userId: input.userId,
         redirectTo: input.redirectTo,
         codeVerifier: input.codeVerifier,
@@ -168,12 +175,34 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       };
     },
 
-    async createSession(userId, tokenHash, expiresAt) {
-      await db.insert(authSessions).values({
-        userId,
-        tokenHash,
-        expiresAt,
+    async createSession(userId, tokenHash, expiresAt, authorization) {
+      await db.transaction(async (tx) => {
+        const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+        if (!user || user.deletionRequestedAt) throw missingUserStateError();
+        if (authorization) {
+          const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, authorization.provider), eq(userIdentities.providerSubjectId, authorization.subject)));
+          if (!identity || user.authGeneration !== authorization.generation) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+        }
+        await tx.insert(authSessions).values({ userId, tokenHash, expiresAt, authGeneration: authorization?.generation ?? user.authGeneration });
       });
+    },
+
+    async rotateSession(token, nextHash, expiresAt) {
+      return db.transaction(async (tx) => {
+        const [candidate] = await tx.select({ userId: authSessions.userId, authGeneration: authSessions.authGeneration }).from(authSessions).where(eq(authSessions.tokenHash, hashToken(token)));
+        if (!candidate) return null;
+        const [user] = await tx.select().from(users).where(eq(users.id, candidate.userId)).for('update');
+        if (!user || user.deletionRequestedAt || user.authGeneration !== candidate.authGeneration) return null;
+        const [consumed] = await tx.update(authSessions).set({ revokedAt: new Date() })
+          .where(and(eq(authSessions.tokenHash, hashToken(token)), isNull(authSessions.revokedAt), gt(authSessions.expiresAt, new Date())))
+          .returning({ userId: authSessions.userId });
+        if (!consumed) return null;
+        await tx.insert(authSessions).values({ userId: consumed.userId, tokenHash: nextHash, expiresAt, authGeneration: user.authGeneration });
+        return consumed.userId;
+      });
+    },
+    async revokeUserSessions(userId) {
+      await db.update(authSessions).set({ revokedAt: new Date() }).where(eq(authSessions.userId, userId));
     },
 
     async getSessionByToken(token) {
@@ -182,6 +211,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         .select({
           userId: authSessions.userId,
           expiresAt: authSessions.expiresAt,
+          authGeneration: authSessions.authGeneration,
         })
         .from(authSessions)
         .where(and(eq(authSessions.tokenHash, tokenHash), isNull(authSessions.revokedAt)))
@@ -258,7 +288,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
 export function createMemoryAuthRepository(): AuthRepository {
   const transactions = new Map<string, OAuthTransaction>();
-  const sessions = new Map<string, { userId: string; expiresAt: Date; revokedAt: Date | null }>();
+  const sessions = new Map<string, { userId: string; expiresAt: Date; revokedAt: Date | null; authGeneration: number }>();
   const mobileExchanges = new Map<string, MobileAuthExchangeRecord>();
 
   function pruneExpiredMobileExchanges() {
@@ -281,8 +311,20 @@ export function createMemoryAuthRepository(): AuthRepository {
       return transaction;
     },
 
-    async createSession(userId, tokenHash, expiresAt) {
-      sessions.set(tokenHash, { userId, expiresAt, revokedAt: null });
+    async createSession(userId, tokenHash, expiresAt, authorization) {
+      sessions.set(tokenHash, { userId, expiresAt, revokedAt: null, authGeneration: authorization?.generation ?? 0 });
+    },
+
+    async rotateSession(token, nextHash, expiresAt) {
+      const session = sessions.get(hashToken(token));
+      if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
+      session.revokedAt = new Date();
+      sessions.set(nextHash, { userId: session.userId, expiresAt, revokedAt: null, authGeneration: session.authGeneration });
+      return session.userId;
+    },
+    async revokeUserSessions(userId) {
+      for (const session of sessions.values()) if (session.userId === userId) session.revokedAt = new Date();
+      for (const [state, transaction] of transactions) if (transaction.userId === userId && transaction.purpose === 'link') transactions.delete(state);
     },
 
     async getSessionByToken(token) {
@@ -292,7 +334,7 @@ export function createMemoryAuthRepository(): AuthRepository {
         return null;
       }
 
-      return { userId: session.userId, expiresAt: session.expiresAt };
+      return { userId: session.userId, expiresAt: session.expiresAt, authGeneration: session.authGeneration };
     },
 
     async revokeSessionByToken(token) {
@@ -530,15 +572,20 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
 export function createAuthService(input: {
   authRepository: AuthRepository;
   userStateStore: UserStateStore;
-  providers: Record<AuthProviderName, OAuthProviderAdapter>;
+  providers: Partial<Record<AuthProviderName, OAuthProviderAdapter>>;
 }): AuthService {
   const { authRepository, providers, userStateStore } = input;
+  userStateStore.onSessionsRevoked?.((userId) => authRepository.revokeUserSessions(userId));
   const sessionTtlMilliseconds = env.AUTH_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 
-  async function issueSession(userId: string) {
+  async function issueSession(userId: string, authorization: SessionAuthorization) {
     const sessionToken = buildSessionToken();
     const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
-    await authRepository.createSession(userId, hashToken(sessionToken), expiresAt);
+    await authRepository.createSession(userId, hashToken(sessionToken), expiresAt, authorization);
+    if (await userStateStore.getAuthenticationGeneration(userId) !== authorization.generation) {
+      await authRepository.revokeSessionByToken(sessionToken);
+      throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+    }
 
     return {
       sessionToken,
@@ -547,12 +594,18 @@ export function createAuthService(input: {
   }
 
   return {
-    async startAuthentication({ provider, purpose, redirectTo, userId, callbackUrl }) {
+    async startAuthentication({ provider, purpose, redirectTo, userId, initiatingToken, callbackUrl }) {
+      const adapter = providers[provider];
+      if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const codeVerifier = buildCodeVerifier();
       const state = randomUUID();
       const expiresAt = new Date(Date.now() + oauthTransactionTtlMilliseconds);
 
+      const initiatingSession = purpose === 'link' && initiatingToken ? await authRepository.getSessionByToken(initiatingToken) : null;
+      const authGeneration = initiatingSession?.authGeneration ?? null;
+      if (purpose === 'link' && (!initiatingSession || initiatingSession.userId !== userId || initiatingSession.expiresAt.getTime() <= Date.now() || authGeneration !== await userStateStore.getAuthenticationGeneration(initiatingSession.userId))) throw missingUserStateError('Sign in before linking another provider.');
       await authRepository.createOAuthTransaction({
+        authGeneration,
         state,
         provider,
         purpose,
@@ -562,7 +615,7 @@ export function createAuthService(input: {
         expiresAt,
       });
 
-      const next = providers[provider].buildAuthorizationUrl({
+      const next = adapter.buildAuthorizationUrl({
         redirectUri: callbackUrl,
         state,
         codeChallenge: buildCodeChallenge(codeVerifier),
@@ -585,19 +638,24 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
-      const identity = await providers[transaction.provider].exchangeCode({
+      const adapter = providers[transaction.provider];
+      if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
+      const identity = await adapter.exchangeCode({
         code,
         redirectUri: callbackUrl,
         codeVerifier: transaction.codeVerifier,
       });
 
+      if (transaction.purpose === 'link' && (!transaction.userId || typeof transaction.authGeneration !== 'number')) throw conflictOrStaleUpdateError('Start linking again.');
       const resolved = await userStateStore.resolveOAuthIdentity({
         ...identity,
         linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
+        linkedAuthGeneration: transaction.purpose === 'link' ? transaction.authGeneration! : undefined,
       });
 
+      if (identity.activate) await userStateStore.activateOAuthIdentity(resolved.user.id, identity, resolved.authGeneration, identity.activate);
       await userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
-      const session = await issueSession(resolved.user.id);
+      const session = await issueSession(resolved.user.id, { generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId });
 
       return {
         provider: transaction.provider,
@@ -647,25 +705,21 @@ export function createAuthService(input: {
     },
 
     async refreshSession(token) {
-      const session = await authRepository.getSessionByToken(token);
-      if (!session) {
-        return null;
+      const sessionToken = buildSessionToken();
+      const expiresAt = new Date(Date.now() + sessionTtlMilliseconds);
+      const userId = await authRepository.rotateSession(token, hashToken(sessionToken), expiresAt);
+      if (!userId) return null;
+      const currentSession = await authRepository.getSessionByToken(sessionToken);
+      if (!currentSession || currentSession.authGeneration !== await userStateStore.getAuthenticationGeneration(userId)) {
+        await authRepository.revokeSessionByToken(sessionToken); return null;
       }
-
-      if (session.expiresAt.getTime() <= Date.now()) {
-        await authRepository.revokeSessionByToken(token);
-        return null;
-      }
-
-      await authRepository.revokeSessionByToken(token);
-
-      const user = await userStateStore.getUserById(session.userId);
+      const user = await userStateStore.getUserById(userId);
       if (!user) {
+        await authRepository.revokeSessionByToken(sessionToken);
         throw missingUserStateError('Session belongs to a deleted user.');
       }
       const effectiveLevel = await userStateStore.getUserEffectiveLevel(user.id);
-
-      const refreshedSession = await issueSession(user.id);
+      const refreshedSession = { sessionToken, expiresAt };
 
       return {
         sessionToken: refreshedSession.sessionToken,
@@ -697,6 +751,7 @@ export function createAuthService(input: {
         return null;
       }
 
+      if (session.authGeneration !== await userStateStore.getAuthenticationGeneration(session.userId)) return null;
       const user = await userStateStore.getUserById(session.userId);
       if (!user) {
         throw missingUserStateError('Session belongs to a deleted user.');
@@ -704,5 +759,6 @@ export function createAuthService(input: {
 
       return user;
     },
+    async close() { await authRepository.close?.(); },
   };
 }

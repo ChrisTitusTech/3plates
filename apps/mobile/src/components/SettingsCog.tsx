@@ -1,7 +1,11 @@
+import { useMemo } from 'react';
+import { useTheme, type ThemeColors } from '../lib/theme';
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 export function SettingsCog() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Link href="/preferences" asChild>
       <Pressable
@@ -15,7 +19,7 @@ export function SettingsCog() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   button: {
     width: 44,
     height: 44,
@@ -23,11 +27,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#cfd6df',
-    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   icon: {
-    color: '#17202a',
+    color: colors.ink,
     fontSize: 22,
     fontWeight: '700',
     lineHeight: 24,

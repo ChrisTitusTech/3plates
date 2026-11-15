@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { useTheme, type ThemeColors } from '../../src/lib/theme';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -5,6 +7,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { redeemMobileAuthExchangeCode } from '../../src/lib/api';
 
 export default function AuthCallbackScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { exchangeCode } = useLocalSearchParams<{ exchangeCode?: string }>();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +24,7 @@ export default function AuthCallbackScreen() {
     redeemMobileAuthExchangeCode(exchangeCode)
       .then(() => {
         if (active) {
-          router.replace('/progress');
+          router.replace('/today');
         }
       })
       .catch((err: unknown) => {
@@ -45,21 +49,21 @@ export default function AuthCallbackScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   page: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f6f1e8',
+    backgroundColor: colors.background,
     padding: 24,
   },
   message: {
     fontSize: 18,
-    color: '#4c423b',
+    color: colors.muted,
   },
   error: {
     fontSize: 16,
-    color: '#b91c1c',
+    color: colors.danger,
     textAlign: 'center',
   },
 });

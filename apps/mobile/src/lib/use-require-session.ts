@@ -1,38 +1,28 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
-
-import { getSessionToken } from './api';
+import { getSessionGeneration, getSessionToken, subscribeSession } from './api';
 
 export function useRequireSession() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
-
+  // A new authenticated generation causes consumers to reload even if React
+  // batches the intermediate signed-out state.
+  const [ready, setReady] = useState(0);
   useEffect(() => {
     let active = true;
-
-    getSessionToken()
-      .then((token) => {
-        if (!active) {
-          return;
-        }
-
-        if (!token) {
-          router.replace('/sign-in');
-          return;
-        }
-
-        setReady(true);
-      })
-      .catch(() => {
-        if (active) {
-          router.replace('/sign-in');
-        }
+    const check = () => {
+      const generation = getSessionGeneration();
+      setReady(0);
+      void getSessionToken().then((token) => {
+        if (!active || generation !== getSessionGeneration()) return;
+        if (!token) router.replace('/sign-in');
+        else setReady(generation + 1);
+      }).catch(() => {
+        if (active && generation === getSessionGeneration()) router.replace('/sign-in');
       });
-
-    return () => {
-      active = false;
     };
+    const unsubscribe = subscribeSession(check);
+    check();
+    return () => { active = false; unsubscribe(); };
   }, [router]);
-
   return ready;
 }

@@ -76,6 +76,7 @@ async function handleStartAuthentication(
     purpose,
     redirectTo: parsedBody.data.redirectTo ?? null,
     userId: currentUser?.id ?? null,
+    initiatingToken: request.authToken,
     callbackUrl: getCallbackUrl(request),
   });
 

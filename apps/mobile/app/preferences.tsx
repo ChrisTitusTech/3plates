@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { useTheme, type ThemeColors } from '../src/lib/theme';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
@@ -13,7 +15,8 @@ import type { NotificationDevice, Preferences } from '@3plates/contract';
 
 import {
   ApiRequestError,
-  clearSession,
+  expireSession,
+  getSessionGeneration,
   fetchPreferences,
   flushPendingMutations,
   getPendingMutationCount,
@@ -40,6 +43,8 @@ function formatError(error: unknown) {
 }
 
 export default function PreferencesScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   const sessionReady = useRequireSession();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -56,10 +61,9 @@ export default function PreferencesScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleInvalidAuth = async (loadError: unknown) => {
+  const handleInvalidAuth = async (loadError: unknown, generation: number) => {
     if (loadError instanceof ApiRequestError && loadError.code === 'invalid_auth') {
-      await clearSession();
-      router.replace('/sign-in');
+      if (await expireSession(generation)) router.replace('/sign-in');
       return true;
     }
 
@@ -67,6 +71,7 @@ export default function PreferencesScreen() {
   };
 
   const loadPreferences = async () => {
+    const generation = getSessionGeneration();
     setStatus('loading');
     setMessage(null);
     setError(null);
@@ -88,7 +93,7 @@ export default function PreferencesScreen() {
         setMessage('Showing cached preferences while offline.');
       }
     } catch (loadError) {
-      if (await handleInvalidAuth(loadError)) {
+      if (await handleInvalidAuth(loadError, generation)) {
         return;
       }
 
@@ -104,6 +109,7 @@ export default function PreferencesScreen() {
   }, [sessionReady]);
 
   const withBusy = async (action: () => Promise<void>) => {
+    const generation = getSessionGeneration();
     setBusy(true);
     setMessage(null);
     setError(null);
@@ -112,7 +118,7 @@ export default function PreferencesScreen() {
       await action();
       setPendingCount(await getPendingMutationCount());
     } catch (actionError) {
-      if (await handleInvalidAuth(actionError)) {
+      if (await handleInvalidAuth(actionError, generation)) {
         return;
       }
 
@@ -193,6 +199,8 @@ export default function PreferencesScreen() {
 
         <Text style={styles.label}>Reminder time</Text>
         <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
           style={styles.input}
           accessibilityLabel="Reminder time"
           placeholder="07:00"
@@ -251,6 +259,8 @@ export default function PreferencesScreen() {
 
         <Text style={styles.label}>Push token</Text>
         <TextInput
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
           style={styles.input}
           accessibilityLabel="Push token"
           autoCapitalize="none"
@@ -349,13 +359,13 @@ export default function PreferencesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   blank: {
     flex: 1,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   scroll: {
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
   },
   page: {
     width: '100%',
@@ -364,29 +374,29 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     paddingBottom: 48,
-    backgroundColor: '#f7f8fa',
+    backgroundColor: colors.background,
     gap: 12,
   },
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#17202a',
+    color: colors.ink,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#dce3ea',
+    borderColor: colors.border,
     padding: 14,
     gap: 10,
   },
   sectionTitle: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '800',
     fontSize: 16,
   },
   label: {
-    color: '#2d3742',
+    color: colors.ink,
     fontWeight: '700',
     fontSize: 14,
   },
@@ -398,79 +408,79 @@ const styles = StyleSheet.create({
   choice: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cfd6df',
-    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
   choiceActive: {
-    borderColor: '#17202a',
-    backgroundColor: '#17202a',
+    borderColor: colors.strong,
+    backgroundColor: colors.strong,
   },
   choiceText: {
-    color: '#2d3742',
+    color: colors.ink,
     fontWeight: '600',
   },
   choiceTextActive: {
-    color: '#ffffff',
+    color: colors.onStrong,
   },
   input: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#cfd6df',
-    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: '#17202a',
+    color: colors.ink,
   },
   button: {
     alignSelf: 'flex-start',
-    backgroundColor: '#17202a',
+    backgroundColor: colors.strong,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   buttonText: {
-    color: '#ffffff',
+    color: colors.onStrong,
     fontWeight: '700',
   },
   buttonSecondary: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#17202a',
-    backgroundColor: '#ffffff',
+    borderColor: colors.strong,
+    backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   buttonSecondaryText: {
-    color: '#17202a',
+    color: colors.ink,
     fontWeight: '700',
   },
   dangerButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#b42318',
-    backgroundColor: '#ffffff',
+    borderColor: colors.danger,
+    backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   dangerButtonText: {
-    color: '#b42318',
+    color: colors.danger,
     fontWeight: '700',
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   meta: {
-    color: '#53606c',
+    color: colors.muted,
     fontSize: 13,
   },
   success: {
-    color: '#067647',
+    color: colors.success,
     fontWeight: '600',
   },
   error: {
-    color: '#b42318',
+    color: colors.danger,
     fontWeight: '600',
   },
 });

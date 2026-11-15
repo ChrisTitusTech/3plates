@@ -21,7 +21,9 @@
     "db:test": "bash ./scripts/db-smoke-test.sh",
     "deploy:web": "bash ./scripts/deploy-web.sh",
     "typecheck": "pnpm --filter @3plates/contract typecheck && pnpm --filter @3plates/db typecheck && pnpm --filter @3plates/api typecheck && pnpm --filter @3plates/mobile typecheck",
-    "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test && pnpm --filter @3plates/mobile test"
+    "test": "pnpm --filter @3plates/contract test && pnpm --filter @3plates/api test && pnpm --filter @3plates/mobile test",
+    "whoop:check": "pnpm --filter @3plates/whoop check",
+    "whoop:worker": "pnpm --filter @3plates/whoop worker"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

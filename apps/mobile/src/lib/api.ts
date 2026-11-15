@@ -144,6 +144,7 @@ async function writeSessionToken(token: string | null) {
 type CacheEnvelope<T> = {
   value: T;
   updatedAt: string;
+  sessionHash?: string;
 };
 
 type PendingMutation =
@@ -210,17 +211,92 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
   );
 }
 
-async function writeCache<T>(key: string, value: T) {
+async function assertCurrentSession(token: string) {
+  if (await getSessionToken() !== token) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
+}
+
+async function sessionHash(token: string) {
+  // Bind cached identity without copying the native secure-store credential into AsyncStorage.
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  const crypto = await import('expo-crypto');
+  return crypto.digestStringAsync(crypto.CryptoDigestAlgorithm.SHA256, token);
+}
+
+async function migratePreviousProfile() {
+  const raw = await storage.getItem(storageKeys.me);
+  if (!raw) return;
+  let previous: User | null = null;
+  try { previous = JSON.parse(raw)?.value ?? null; } catch { /* Invalid profile is a recoverable cache miss. */ }
+  if (typeof previous?.id === 'string' && previous.id) {
+    await migrateLegacyCache(previous.id);
+  } else {
+    // Preserve orphaned offline data without assigning it to a newly signed-in user.
+    migratedUsers.delete('unverified');
+    await migrateLegacyCache('unverified');
+  }
+}
+
+async function writeCache<T>(key: string, value: T, token?: string) {
+  if (token) await assertCurrentSession(token);
+  if (key === storageKeys.me) {
+    await migratePreviousProfile();
+  }
+  const destination = await accountStorageKey(key);
+  if (token) await assertCurrentSession(token);
   const envelope: CacheEnvelope<T> = {
     value,
     updatedAt: new Date().toISOString(),
+    ...(key === storageKeys.me && token ? { sessionHash: await sessionHash(token) } : {}),
   };
 
-  await storage.setItem(key, JSON.stringify(envelope));
+  await storage.setItem(destination, JSON.stringify(envelope));
+}
+
+async function accountStorageKey(key: string) {
+  if (key === storageKeys.me || key.startsWith(storageKeys.workoutsPrefix)) return key;
+  const user = await readCache<User>(storageKeys.me);
+  if (!user && await storage.getItem(storageKeys.me)) throw new ApiRequestError(401, 'Verify your active account before using cached data.', 'invalid_auth');
+  if (user) await migrateLegacyCache(user.id);
+  return user ? `${key}/user/${user.id}` : key;
+}
+
+let migration: Promise<unknown> = Promise.resolve();
+const migratedUsers = new Set<string>();
+function migrateLegacyCache(userId: string) {
+  const run = migration.catch(() => undefined).then(async () => {
+    if (migratedUsers.has(userId)) return;
+    for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
+      const legacy = await storage.getItem(key);
+      if (!legacy) continue;
+      const destination = `${key}/user/${userId}`;
+      const migrate = async () => {
+        const existing = await storage.getItem(destination);
+        let value = existing ?? legacy;
+        if (key === storageKeys.pendingMutations && existing) {
+          const oldQueue = JSON.parse(legacy) as PendingMutation[];
+          const newQueue = JSON.parse(existing) as PendingMutation[];
+          if (!Array.isArray(oldQueue) || !Array.isArray(newQueue)) throw new Error('Offline changes need storage recovery. They have not been discarded.');
+          value = JSON.stringify([...oldQueue.filter((item) => !newQueue.some((other) => other.id === item.id)), ...newQueue]);
+        }
+        // Copy before removal. An interrupted migration can safely repeat; receipt
+        // IDs in a pending queue are retained, including across account switches.
+        await storage.setItem(destination, value);
+        await storage.removeItem(key);
+      };
+      if (key === storageKeys.pendingMutations) await withQueue(destination, migrate);
+      else await migrate();
+    }
+    migratedUsers.add(userId);
+  });
+  migration = run;
+  return run;
 }
 
 async function readCache<T>(key: string): Promise<T | null> {
-  const rawValue = await storage.getItem(key);
+  const rawValue = await storage.getItem(await accountStorageKey(key));
   if (!rawValue) {
     return null;
   }
@@ -231,6 +307,11 @@ async function readCache<T>(key: string): Promise<T | null> {
       return null;
     }
 
+    if (key === storageKeys.me) {
+      const token = await getSessionToken();
+      if (!token || parsed.sessionHash !== await sessionHash(token)) return null;
+      await assertCurrentSession(token);
+    }
     return parsed.value;
   } catch {
     return null;
@@ -277,8 +358,8 @@ function makeMutationId() {
   return `m-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function readPendingMutations(): Promise<PendingMutation[]> {
-  const rawValue = await storage.getItem(storageKeys.pendingMutations);
+async function readPendingMutations(key?: string): Promise<PendingMutation[]> {
+  const rawValue = await storage.getItem(key ?? await accountStorageKey(storageKeys.pendingMutations));
   if (!rawValue) {
     return [];
   }
@@ -291,8 +372,21 @@ async function readPendingMutations(): Promise<PendingMutation[]> {
   }
 }
 
-async function writePendingMutations(mutations: PendingMutation[]) {
-  await storage.setItem(storageKeys.pendingMutations, JSON.stringify(mutations));
+// Serialize all queue mutations per account, including across browser tabs.
+const queueWork = new Map<string, Promise<unknown>>();
+function withQueue<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = queueWork.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => {
+    const locks = (globalThis as unknown as { navigator?: { locks?: { request<T>(key: string, run: () => Promise<T>): Promise<T> } } }).navigator?.locks;
+    return locks ? locks.request(key, run) : run();
+  });
+  queueWork.set(key, next);
+  void next.finally(() => { if (queueWork.get(key) === next) queueWork.delete(key); }).catch(() => undefined);
+  return next;
+}
+
+async function writePendingMutations(key: string, mutations: PendingMutation[]) {
+  await storage.setItem(key, JSON.stringify(mutations));
 }
 
 function coalescePendingMutations(mutations: PendingMutation[]) {
@@ -311,26 +405,39 @@ function coalescePendingMutations(mutations: PendingMutation[]) {
   return mutations.filter((mutation, index) => mutation.type !== 'updateProgress' || index === latestProgressIndex);
 }
 
-async function queuePendingMutation(mutation: PendingMutation) {
-  const existing = coalescePendingMutations(await readPendingMutations());
-  const nextMutations = mutation.type === 'updateProgress'
-    ? existing.filter((candidate) => candidate.type !== 'updateProgress')
-    : existing;
-
-  await writePendingMutations([...nextMutations, mutation]);
+async function queuePendingMutation(mutation: PendingMutation, token: string) {
+  await assertCurrentSession(token);
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  await withQueue(key, async () => {
+    await assertCurrentSession(token);
+    const existing = coalescePendingMutations(await readPendingMutations(key));
+    const nextMutations = mutation.type === 'updateProgress' || mutation.type === 'updatePreferences'
+      ? existing.filter((candidate) => candidate.type !== mutation.type)
+      : existing;
+    await assertCurrentSession(token);
+    await writePendingMutations(key, [...nextMutations, mutation]);
+  });
 }
 
-async function removePendingMutationsByType(type: PendingMutation['type']) {
-  const existing = await readPendingMutations();
-  await writePendingMutations(existing.filter((mutation) => mutation.type !== type));
+async function removePendingMutationsByType(type: PendingMutation['type'], token: string) {
+  await assertCurrentSession(token);
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  await withQueue(key, async () => {
+    const existing = await readPendingMutations(key);
+    await assertCurrentSession(token);
+    await writePendingMutations(key, existing.filter((mutation) => mutation.type !== type));
+  });
 }
 
-async function executePendingMutation(mutation: PendingMutation, token: string) {
+async function executePendingMutation(mutation: PendingMutation, token: string, signal: AbortSignal) {
   const extraHeaders = buildAuthHeaders(token);
 
   if (mutation.type === 'updateProgress') {
     const response = await contractClient.updateProgress({
       extraHeaders,
+      fetchOptions: { signal },
       body: mutation.payload,
     });
 
@@ -344,6 +451,7 @@ async function executePendingMutation(mutation: PendingMutation, token: string) 
   if (mutation.type === 'updatePreferences') {
     const response = await contractClient.updatePreferences({
       extraHeaders,
+      fetchOptions: { signal },
       body: mutation.payload,
     });
 
@@ -356,6 +464,7 @@ async function executePendingMutation(mutation: PendingMutation, token: string) 
 
   const response = await contractClient.registerDevice({
     extraHeaders,
+    fetchOptions: { signal },
     body: mutation.payload,
   });
 
@@ -368,17 +477,92 @@ export async function getSessionToken() {
   return readSessionToken();
 }
 
-export async function setSessionToken(token: string | null) {
-  await writeSessionToken(token);
+let sessionGeneration = 0;
+const sessionListeners = new Set<() => void>();
+const preferenceListeners = new Set<(preferences: Preferences) => void>();
+let preferenceWriteRevision = 0;
+let preferenceWork: Promise<unknown> = Promise.resolve();
+function serializePreferences<T>(action: () => Promise<T>) {
+  const run = async () => {
+    // Distinct from the pending-queue lock: include the request and its cache
+    // acknowledgement, so another tab cannot queue a newer value mid-save.
+    const key = await accountStorageKey(storageKeys.preferences);
+    return withQueue(`${key}/operation`, action);
+  };
+  const next = preferenceWork.then(run, run);
+  preferenceWork = next.catch(() => undefined);
+  return next;
+}
+export function subscribePreferences(listener: (preferences: Preferences) => void) {
+  preferenceListeners.add(listener);
+  return () => { preferenceListeners.delete(listener); };
+}
+async function notifyPreferences(preferences: Preferences, token: string) {
+  await assertCurrentSession(token);
+  for (const listener of preferenceListeners) listener(preferences);
+}
+export const getSessionGeneration = () => sessionGeneration;
+export function subscribeSession(listener: () => void) {
+  sessionListeners.add(listener);
+  return () => { sessionListeners.delete(listener); };
+}
+function sessionChanged() {
+  sessionGeneration++;
+  for (const listener of sessionListeners) listener();
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('storage', (event) => {
+  if (event.key === storageKeys.sessionToken || event.key === null) sessionChanged();
+});
+
+// Serialize local session transitions so cleanup cannot erase a newer sign-in.
+let sessionWork: Promise<unknown> = Promise.resolve();
+function sessionTransition<T>(run: () => Promise<T>): Promise<T> {
+  const next = sessionWork.then(run, run);
+  sessionWork = next.catch(() => undefined);
+  return next;
+}
+function assertSessionGeneration(expected: number) {
+  if (getSessionGeneration() !== expected) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
+}
+export function setSessionToken(token: string | null, expected?: { token: string; generation: number }) {
+  return sessionTransition(async () => {
+    if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
+    await migratePreviousProfile();
+    if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
+    await writeSessionToken(token);
+    sessionChanged();
+  });
 }
 
-export async function clearSession() {
-  await writeSessionToken(null);
-  await storage.removeItem(storageKeys.me);
-  await storage.removeItem(storageKeys.progress);
-  await storage.removeItem(storageKeys.manualWorkouts);
-  await storage.removeItem(storageKeys.preferences);
-  await storage.removeItem(storageKeys.pendingMutations);
+export function expireSession(expectedGeneration = getSessionGeneration()) {
+  return sessionTransition(async () => {
+    if (getSessionGeneration() !== expectedGeneration) return false;
+    await migratePreviousProfile();
+    if (getSessionGeneration() !== expectedGeneration) return false;
+    await writeSessionToken(null);
+    sessionChanged();
+    return true;
+  });
+}
+
+export function clearSession(expectedGeneration = getSessionGeneration()) {
+  return sessionTransition(async () => {
+    assertSessionGeneration(expectedGeneration);
+    const owner = await getCachedUser();
+    assertSessionGeneration(expectedGeneration);
+    await writeSessionToken(null);
+    sessionChanged();
+    for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
+      const destination = owner ? `${key}/user/${owner.id}` : key;
+      if (key === storageKeys.pendingMutations) await withQueue(destination, () => storage.removeItem(destination));
+      else await storage.removeItem(destination);
+    }
+    await storage.removeItem(storageKeys.me);
+    await storage.removeItem(storageKeys.progress);
+    await storage.removeItem(storageKeys.manualWorkouts);
+    await storage.removeItem(storageKeys.preferences);
+    await withQueue(storageKeys.pendingMutations, () => storage.removeItem(storageKeys.pendingMutations));
+  });
 }
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
@@ -432,12 +616,13 @@ export async function completeAuthCallback(input: {
   }
 
   await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
 
 export async function refreshSessionAndPersist() {
+  const generation = getSessionGeneration();
   const token = await requireSessionToken();
 
   const response = await contractClient.authRefresh({
@@ -449,8 +634,8 @@ export async function refreshSessionAndPersist() {
     throw toApiRequestError(response.status, response.body);
   }
 
-  await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await setSessionToken(response.body.sessionToken, { token, generation });
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
@@ -467,15 +652,30 @@ export async function redeemMobileAuthExchangeCode(code: string) {
   }
 
   await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user);
+  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 
   return response.body;
 }
 
-export async function signOutAndClearSession() {
+let beforeSignOut: ((owner: User | null) => Promise<void>) | undefined;
+export function registerSignOutCleanup(handler: (owner: User | null) => Promise<void>) { beforeSignOut = handler; }
+export async function getCachedUser() { return readCache<User>(storageKeys.me); }
+export async function getCachedPreferences() {
+  const token = await requireSessionToken();
+  const cached = await readCache<Preferences>(storageKeys.preferences);
+  await assertCurrentSession(token);
+  return cached;
+}
+
+export async function signOutAndClearSession(expectedGeneration = getSessionGeneration()) {
+  assertSessionGeneration(expectedGeneration);
   const token = await getSessionToken();
+  const owner = await getCachedUser();
+  assertSessionGeneration(expectedGeneration);
+  if (beforeSignOut) await beforeSignOut(owner);
+  assertSessionGeneration(expectedGeneration);
   if (!token) {
-    await clearSession();
+    await clearSession(expectedGeneration);
     return {
       signedOut: false,
     };
@@ -487,7 +687,7 @@ export async function signOutAndClearSession() {
       body: {},
     });
 
-    await clearSession();
+    await clearSession(expectedGeneration);
 
     if (response.status === 200) {
       return {
@@ -504,7 +704,7 @@ export async function signOutAndClearSession() {
     throw toApiRequestError(response.status, response.body);
   } catch (error) {
     if (isNetworkFailure(error)) {
-      await clearSession();
+      await clearSession(expectedGeneration);
       return {
         signedOut: false,
       };
@@ -516,27 +716,32 @@ export async function signOutAndClearSession() {
 
 export async function fetchMe(): Promise<CachedReadResult<User>> {
   const token = await requireSessionToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.me({
       extraHeaders: buildAuthHeaders(token),
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.me, response.body);
+    await writeCache(storageKeys.me, response.body, token);
 
     return {
       data: response.body,
       source: 'network',
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
+    await assertCurrentSession(token);
     const cached = await readCache<User>(storageKeys.me);
     if (!cached) {
       throw error;
@@ -546,6 +751,8 @@ export async function fetchMe(): Promise<CachedReadResult<User>> {
       data: cached,
       source: 'cache',
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -561,7 +768,7 @@ export async function fetchProgress(): Promise<CachedReadResult<Progress>> {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.progress, response.body);
+    await writeCache(storageKeys.progress, response.body, token);
 
     return {
       data: response.body,
@@ -597,8 +804,8 @@ export async function updateProgress(progress: Progress) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await removePendingMutationsByType('updateProgress');
-    await writeCache(storageKeys.progress, progress);
+    await removePendingMutationsByType('updateProgress', token);
+    await writeCache(storageKeys.progress, progress, token);
 
     return {
       queued: false,
@@ -613,8 +820,8 @@ export async function updateProgress(progress: Progress) {
       createdAt: new Date().toISOString(),
       type: 'updateProgress',
       payload: progress,
-    });
-    await writeCache(storageKeys.progress, progress);
+    }, token);
+    await writeCache(storageKeys.progress, progress, token);
 
     return {
       queued: true,
@@ -624,13 +831,14 @@ export async function updateProgress(progress: Progress) {
 
 async function updateCachedManualWorkouts(
   update: (current: ManualWorkoutListResponse) => ManualWorkoutListResponse,
+  token: string,
 ) {
   const current = await readCache<ManualWorkoutListResponse>(storageKeys.manualWorkouts);
   if (!current) {
     return;
   }
 
-  await writeCache(storageKeys.manualWorkouts, update(current));
+  await writeCache(storageKeys.manualWorkouts, update(current), token);
 }
 
 export async function fetchManualWorkouts(): Promise<CachedReadResult<ManualWorkoutListResponse>> {
@@ -645,7 +853,7 @@ export async function fetchManualWorkouts(): Promise<CachedReadResult<ManualWork
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.manualWorkouts, response.body);
+    await writeCache(storageKeys.manualWorkouts, response.body, token);
 
     return {
       data: response.body,
@@ -682,7 +890,7 @@ export async function createManualWorkout(workout: ManualWorkoutCreate): Promise
 
   await updateCachedManualWorkouts((current) => ({
     workouts: [response.body, ...current.workouts.filter((entry) => entry.id !== response.body.id)],
-  }));
+  }), token);
 
   return response.body;
 }
@@ -703,34 +911,50 @@ export async function deleteManualWorkout(workoutId: string) {
 
   await updateCachedManualWorkouts((current) => ({
     workouts: current.workouts.filter((entry) => entry.id !== workoutId),
-  }));
+  }), token);
 
   return response.body;
 }
 
 export async function fetchPreferences(): Promise<CachedReadResult<Preferences>> {
   const token = await requireSessionToken();
+  const revision = preferenceWriteRevision;
+  const pending = (await readPendingMutations()).filter((mutation) => mutation.type === 'updatePreferences').at(-1);
+  if (pending?.type === 'updatePreferences') {
+    await assertCurrentSession(token);
+    return { data: pending.payload, source: 'cache' };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.preferences({
       extraHeaders: buildAuthHeaders(token),
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.preferences, response.body);
+    if (revision !== preferenceWriteRevision) {
+      await assertCurrentSession(token);
+      const cached = await readCache<Preferences>(storageKeys.preferences);
+      return { data: cached ?? response.body, source: cached ? 'cache' : 'network' };
+    }
+    await writeCache(storageKeys.preferences, response.body, token);
 
     return {
       data: response.body,
       source: 'network',
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
+    await assertCurrentSession(token);
     const cached = await readCache<Preferences>(storageKeys.preferences);
     if (!cached) {
       throw error;
@@ -740,6 +964,8 @@ export async function fetchPreferences(): Promise<CachedReadResult<Preferences>>
       data: cached,
       source: 'cache',
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -769,7 +995,7 @@ export async function fetchWorkoutsByMode(
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(cacheKey, response.body);
+    await writeCache(cacheKey, response.body, token);
 
     return {
       data: response.body,
@@ -794,24 +1020,56 @@ export async function fetchWorkoutsByMode(
 
 export async function updatePreferences(preferences: Preferences) {
   const token = await requireSessionToken();
+  return serializePreferences(() => persistPreferences(preferences, token));
+}
+
+// Synchronize only appearance/preferences here; opening the app must not flush
+// unrelated progress or device-registration work as a side effect of theming.
+export async function syncPendingPreferences() {
+  const token = await requireSessionToken();
+  return serializePreferences(async () => {
+    await assertCurrentSession(token);
+    const pending = (await readPendingMutations()).filter((mutation) => mutation.type === 'updatePreferences').at(-1);
+    if (pending?.type !== 'updatePreferences') return;
+    const owner = await getCachedUser();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
+      if (response.status !== 200) throw new ApiRequestError(response.status, 'Unable to verify your account. Please retry.', response.status === 401 ? 'invalid_auth' : null);
+      if (!owner || response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+      return await persistPreferences(pending.payload, token);
+    } finally { clearTimeout(timeout); }
+  });
+}
+
+async function persistPreferences(preferences: Preferences, token: string) {
+  await assertCurrentSession(token);
+  preferenceWriteRevision++;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await contractClient.updatePreferences({
       extraHeaders: buildAuthHeaders(token),
       body: preferences,
+      fetchOptions: { signal: controller.signal },
     });
 
     if (response.status !== 200) {
       throw toApiRequestError(response.status, response.body);
     }
 
-    await writeCache(storageKeys.preferences, preferences);
+    await removePendingMutationsByType('updatePreferences', token);
+    await writeCache(storageKeys.preferences, preferences, token);
+    await notifyPreferences(preferences, token);
 
     return {
       queued: false,
     };
   } catch (error) {
-    if (!isNetworkFailure(error)) {
+    const temporarilyUnavailable = error instanceof ApiRequestError && (error.status >= 500 || error.status === 429);
+    if (!isNetworkFailure(error) && !controller.signal.aborted && !temporarilyUnavailable) {
       throw error;
     }
 
@@ -820,12 +1078,16 @@ export async function updatePreferences(preferences: Preferences) {
       createdAt: new Date().toISOString(),
       type: 'updatePreferences',
       payload: preferences,
-    });
-    await writeCache(storageKeys.preferences, preferences);
+    }, token);
+    await writeCache(storageKeys.preferences, preferences, token);
+    await notifyPreferences(preferences, token);
 
     return {
       queued: true,
     };
+  } finally {
+    preferenceWriteRevision++;
+    clearTimeout(timeout);
   }
 }
 
@@ -855,7 +1117,7 @@ export async function registerDevice(device: NotificationDevice) {
       createdAt: new Date().toISOString(),
       type: 'registerDevice',
       payload: device,
-    });
+    }, token);
 
     return {
       queued: true,
@@ -865,6 +1127,9 @@ export async function registerDevice(device: NotificationDevice) {
 
 export async function flushPendingMutations() {
   const token = await getSessionToken();
+  return serializePreferences(() => flushPendingMutationsSerial(token));
+}
+async function flushPendingMutationsSerial(token: string | null) {
   if (!token) {
     return {
       flushed: 0,
@@ -872,37 +1137,62 @@ export async function flushPendingMutations() {
     };
   }
 
-  const queue = coalescePendingMutations(await readPendingMutations());
-  if (queue.length === 0) {
-    return {
-      flushed: 0,
-      remaining: 0,
-    };
-  }
-
-  const remaining: PendingMutation[] = [];
-  let flushed = 0;
-
-  for (const mutation of queue) {
+  const key = await accountStorageKey(storageKeys.pendingMutations);
+  await assertCurrentSession(token);
+  return withQueue(key, async () => {
+    // One deadline covers owner validation and the complete locked batch.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      await executePendingMutation(mutation, token);
-      flushed += 1;
-    } catch (error) {
-      if (isNetworkFailure(error)) {
-        remaining.push(mutation);
-        continue;
+      await assertCurrentSession(token);
+      const queue = coalescePendingMutations(await readPendingMutations(key));
+      if (queue.length === 0) {
+        return {
+          flushed: 0,
+          remaining: 0,
+        };
       }
 
-      // Drop non-retriable mutations and continue with later entries.
-    }
-  }
+      const owner = await getCachedUser();
+      if (owner) {
+        const response = await contractClient.me({ extraHeaders: buildAuthHeaders(token), fetchOptions: { signal: controller.signal } });
+        if (response.status !== 200) throw new ApiRequestError(response.status, 'Unable to verify your account. Please retry.', response.status === 401 ? 'invalid_auth' : null);
+        if (response.body.id !== owner.id) throw new ApiRequestError(401, 'Queued changes belong to a different account.', 'invalid_auth');
+        await assertCurrentSession(token);
+      }
 
-  await writePendingMutations(remaining);
+      let remaining = queue;
+      await writePendingMutations(key, remaining);
+      let flushed = 0;
 
-  return {
-    flushed,
-    remaining: remaining.length,
-  };
+      for (const mutation of queue) {
+        await assertCurrentSession(token);
+        controller.signal.throwIfAborted();
+        try {
+          await executePendingMutation(mutation, token, controller.signal);
+          flushed += 1;
+        } catch (error) {
+          if (controller.signal.aborted || isNetworkFailure(error)) throw error;
+          if (error instanceof ApiRequestError && error.status === 401) throw error;
+          if (error instanceof ApiRequestError && (error.status === 429 || error.status >= 500)) {
+            continue;
+          }
+
+          // Drop non-retriable mutations and continue with later entries.
+        }
+        remaining = remaining.filter((item) => item.id !== mutation.id);
+        // Persist acknowledged work before the next request can fail (including 401).
+        await writePendingMutations(key, remaining);
+      }
+
+      await assertCurrentSession(token);
+
+      return {
+        flushed,
+        remaining: remaining.length,
+      };
+    } finally { clearTimeout(timeout); }
+  });
 }
 
 export async function getPendingMutationCount() {
@@ -915,6 +1205,7 @@ export function __setApiTestAdapters(input: {
 }) {
   if (input.storage) {
     storage = input.storage;
+    migratedUsers.clear(); migration = Promise.resolve();
   }
 
   if (input.client) {
@@ -924,5 +1215,6 @@ export function __setApiTestAdapters(input: {
 
 export function __resetApiTestAdapters() {
   storage = defaultStorage;
+  migratedUsers.clear(); migration = Promise.resolve();
   contractClient = apiClient;
 }

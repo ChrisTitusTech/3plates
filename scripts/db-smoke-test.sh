@@ -38,6 +38,8 @@ required_tables=(
 	notification_devices
 	progress_events
 	workouts
+	health_logs
+	health_mutations
 )
 
 compose() {
@@ -168,33 +170,32 @@ echo "==> Creating a temporary bearer-auth smoke session"
 smoke_token="$(build_session_token)"
 smoke_token_hash="$(hash_session_token "$smoke_token")"
 session_expires_at="$(one_hour_from_now)"
+smoke_user_id="$(node -e 'console.log(require("node:crypto").randomUUID())')"
+
+# Email is profile data, not a unique identity. Isolate each run by user ID.
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+cleanup_smoke_user() {
+	psql_command -v ON_ERROR_STOP=1 -v smoke_user_id="$smoke_user_id" <<'SQL' >/dev/null
+DELETE FROM users WHERE id = :'smoke_user_id';
+SQL
+}
+trap cleanup_smoke_user EXIT
 
 psql_command \
 	-v ON_ERROR_STOP=1 \
+	-v smoke_user_id="$smoke_user_id" \
 	-v smoke_email="$smoke_email" \
 	-v smoke_display_name="$smoke_display_name" \
 	-v smoke_token_hash="$smoke_token_hash" \
 	-v session_expires_at="$session_expires_at" <<'SQL' >/dev/null
 WITH smoke_user AS (
-  INSERT INTO users (email, display_name, updated_at)
-  VALUES (:'smoke_email', :'smoke_display_name', now())
-  ON CONFLICT (email) DO UPDATE
-    SET display_name = EXCLUDED.display_name,
-        updated_at = now()
+  INSERT INTO users (id, email, display_name, updated_at)
+  VALUES (:'smoke_user_id', :'smoke_email', :'smoke_display_name', now())
   RETURNING id
-),
-revoked_existing_sessions AS (
-  UPDATE auth_sessions
-  SET revoked_at = now()
-  WHERE user_id = (SELECT id FROM smoke_user)
-    AND revoked_at IS NULL
 )
 INSERT INTO auth_sessions (user_id, token_hash, expires_at)
 SELECT id, :'smoke_token_hash', :'session_expires_at'::timestamptz
-FROM smoke_user
-ON CONFLICT (token_hash) DO UPDATE
-  SET expires_at = EXCLUDED.expires_at,
-      revoked_at = NULL;
+FROM smoke_user;
 SQL
 
 auth_header=(-H "authorization: Bearer ${smoke_token}")
@@ -236,7 +237,7 @@ curl -fsS -X POST \
 	-H 'content-type: application/json' \
 	"${auth_header[@]}" \
 	"$api_base_url/notifications/devices" \
-	-d '{"platform":"web","pushToken":"smoke-web-push-token"}' >/dev/null
+	-d "{\"platform\":\"web\",\"pushToken\":\"smoke-web-${smoke_user_id}\"}" >/dev/null
 
 echo "==> Verifying unauthenticated requests are rejected"
 unauthenticated_status="$(curl -sS -o /dev/null -w '%{http_code}' "$api_base_url/users/me/progress")"

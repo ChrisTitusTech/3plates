@@ -1,0 +1,8 @@
+[Unit]
+Description=Verify a Gallant backup by restoring a scratch database
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gallant-dashboard/current/deploy/verify-backup.sh
+TimeoutStartSec=1800
+UMask=0077

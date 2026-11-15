@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Gallant database backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -12,7 +12,9 @@ import {
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
-  email: text('email').notNull().unique(),
+  email: text('email'),
+  authGeneration: integer('auth_generation').notNull().default(0),
+  deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
   displayName: text('display_name'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -45,6 +47,7 @@ export const oauthTransactions = pgTable(
     state: text('state').notNull().unique(),
     provider: text('provider').notNull(),
     purpose: text('purpose').notNull(),
+    authGeneration: integer('auth_generation'),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     redirectTo: text('redirect_to'),
     codeVerifier: text('code_verifier').notNull(),
@@ -64,6 +67,7 @@ export const authSessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
+    authGeneration: integer('auth_generation').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -166,3 +170,22 @@ export const workouts = pgTable('workouts', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   publishedAt: timestamp('published_at', { withTimezone: true }),
 });
+
+
+export const healthLogs = pgTable('health_logs', {
+  id: uuid('id').notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  date: text('date').notNull(),
+  entry: jsonb('entry'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({ pk: primaryKey({ columns: [table.userId, table.id] }) }));
+
+export const healthMutations = pgTable('health_mutations', {
+  id: uuid('id').notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  requestHash: text('request_hash').notNull(),
+  response: jsonb('response').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({ pk: primaryKey({ columns: [table.userId, table.id] }) }));

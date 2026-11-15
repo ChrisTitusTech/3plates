@@ -25,7 +25,13 @@ Native apps first; Apple Health and Health Connect are deferred. Native charts m
 
 # Release constraints
 
-Implementation is authorized. Publishing/deploying this integration requires explicit authorization; previous maintenance/PR authorization does not implicitly publish this new feature. No production migration or credential changes during development. Signing credentials, actual devices, WHOOP callback registration/member tier, and live consent are external acceptance gates; report missing evidence rather than marking them complete. Test data must be synthetic; preserve all unrelated changes.
+Implementation and the subsequent VPS deployment are authorized. Application
+revision `636b8c7` is deployed to the VPS with verified backups and migration.
+WHOOP sign-in remains disabled pending registration of the new API callback;
+the legacy Gallant dashboard and worker remain operational. Native publication,
+actual devices, WHOOP member tier, and live consent remain external acceptance
+gates; report missing evidence rather than marking them complete. Test data must
+be synthetic; preserve all unrelated changes.
 
 # Baseline
 

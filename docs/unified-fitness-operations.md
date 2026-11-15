@@ -126,9 +126,10 @@ this integration, so remote CI and PR review/thread state are not applicable.
 
 # Server configuration and rollout
 
-Publishing and deployment of this integration have not been authorized. The
-following is the prepared rollout procedure, to perform only after that approval
-and completion of the acceptance gates.
+The user authorized VPS deployment on 2026-11-14. The web/API release is now
+deployed as described below. Native app-store publication remains a separate
+release action. The following procedure records the rollout and its remaining
+WHOOP configuration step.
 
 1. Back up both the 3plates and existing Gallant databases and verify a restore.
    Preserve the current Gallant encryption key and protected environment file.
@@ -157,10 +158,11 @@ and completion of the acceptance gates.
    manual entry CRUD, sync/backfill status, private exports, selective expiring
    public shares, disconnect/reconnect, and deletion retry. Compare WHOOP values
    and coverage against the existing dashboard for the same member and dates.
-7. Publish web and signed native artifacts only after the checks below pass.
+7. Validate the deployed web/API release with explicit health and route checks.
+   Signed native publication still requires the device/provider gates below.
    Apply the repository's VPS instructions: one SSH connection and one remote
-   command at a time, long command timeout, and explicit health checks. No VPS
-   commands were required for this implementation.
+   command at a time, long command timeout, and explicit health checks. VPS
+   commands were used only for the subsequently authorized deployment.
 
 Rollback must retain the new identity semantics: the old application can merge
 accounts by email and cannot represent the new logs/deletion markers. Disable the
@@ -169,6 +171,49 @@ verified pre-release database backups with the corresponding application version
 in a maintenance window. Do not simply reintroduce the old unique-email constraint
 once accounts with matching emails exist. Keep the legacy Gallant worker/key and
 backups intact throughout.
+
+## VPS deployment evidence (2026-11-14 America/Chicago)
+
+- Deployed application revision `636b8c7` to
+  `/opt/3plates/releases/636b8c7`, switched `/opt/3plates/current`, and published
+  the production web export to `/var/www/3plates`. Existing hashed web assets
+  were retained for already-open clients; the HTML was replaced last.
+- Connected through `ssh 3plates`. Multiplexing was refused, so commands used a
+  single persistent shell. That shell was closed before the sequential SCP
+  transfer, then reopened. No concurrent SSH commands or transfers were used.
+- Verified source and web archive SHA-256 checksums. Built the API on the VPS
+  using Node 24 and the pinned pnpm 12.18.0 without changing the global pnpm.
+- Backed up both databases, protected environment files, previous release path,
+  and website under `/var/backups/3plates/deploy-636b8c7`. Both database dumps
+  restored successfully into temporary databases. Gallant had one member and
+  1,381 records at verification time. An additional 3plates dump was taken with
+  the API stopped immediately before production migration.
+- Applied migrations to the restored database first. A temporary candidate API
+  passed authenticated log CRUD, mutation replay, conflict, export, and deletion
+  checks using a synthetic account in that database. The candidate also read
+  the existing WHOOP profile/dashboard through the integration. The temporary
+  service, account, and database were removed afterward.
+- Applied the production migration and restarted the API successfully. API,
+  Gallant web, and Gallant worker services remain active and enabled. The legacy
+  Gallant release, worker, database, and encryption key were retained.
+- External HTTP checks passed for the website, all five app routes, API health,
+  Gallant dashboard, and `forum.christitus.com`. Unauthenticated manual-log
+  access returns 401. Public HTML matches the new release. API activation logs
+  contain no warnings or errors.
+
+**Remaining blocker:** WHOOP rejects
+`https://api.3spinningplates.com/auth/callback` as an unregistered redirect URI.
+Add it to the existing WHOOP developer application's allowed redirects while
+keeping its legacy callback. Google and Apple remain available; WHOOP sign-in
+is deliberately not advertised by the production API until this check passes.
+The existing Gallant dashboard continues to work independently.
+
+The complete candidate API environment, including the existing WHOOP settings,
+is staged securely at `/etc/3plates-api-636b8c7.env` (mode 600). After verifying
+the new callback is accepted, back up the then-current API environment, merge
+the staged WHOOP settings while preserving any intervening configuration
+changes, restart `3plates-api`, and recheck `/auth/providers`, health, and the
+WHOOP authorization redirect. Do not print either environment file or tokens.
 
 # Release acceptance still requiring external evidence
 

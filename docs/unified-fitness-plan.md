@@ -27,8 +27,9 @@ Native apps first; Apple Health and Health Connect are deferred. Native charts m
 
 Implementation and the subsequent VPS deployment are authorized. Application
 revision `636b8c7` is deployed to the VPS with verified backups and migration.
-WHOOP sign-in remains disabled pending registration of the new API callback;
-the legacy Gallant dashboard and worker remain operational. Native publication,
+WHOOP sign-in is enabled after callback registration and a successful live
+authorization redirect check; the legacy Gallant dashboard and worker remain
+operational. Native publication,
 actual devices, WHOOP member tier, and live consent remain external acceptance
 gates; report missing evidence rather than marking them complete. Test data must
 be synthetic; preserve all unrelated changes.

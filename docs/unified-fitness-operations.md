@@ -201,19 +201,20 @@ backups intact throughout.
   access returns 401. Public HTML matches the new release. API activation logs
   contain no warnings or errors.
 
-**Remaining blocker:** WHOOP rejects
-`https://api.3spinningplates.com/auth/callback` as an unregistered redirect URI.
-Add it to the existing WHOOP developer application's allowed redirects while
-keeping its legacy callback. Google and Apple remain available; WHOOP sign-in
-is deliberately not advertised by the production API until this check passes.
-The existing Gallant dashboard continues to work independently.
+**WHOOP callback resolved:** after the user updated the provider configuration,
+`https://api.3spinningplates.com/auth/callback` was accepted. The authorization
+endpoint now returns 302 through WHOOP's auth-service login to `id.whoop.com`,
+instead of its invalid-redirect error page. The identity login page rejects
+non-browser fetches with 403, so this verifies the authorization redirect, not
+a completed user consent or token exchange.
 
-The complete candidate API environment, including the existing WHOOP settings,
-is staged securely at `/etc/3plates-api-636b8c7.env` (mode 600). After verifying
-the new callback is accepted, back up the then-current API environment, merge
-the staged WHOOP settings while preserving any intervening configuration
-changes, restart `3plates-api`, and recheck `/auth/providers`, health, and the
-WHOOP authorization redirect. Do not print either environment file or tokens.
+The active API environment was backed up before merging the five staged WHOOP
+settings, preserving all other current configuration. Environment files remain
+mode 600. After restarting `3plates-api`, the public `/auth/providers` endpoint
+lists Google, Apple, and WHOOP. A live `/auth/start` request with the web callback
+successfully reaches WHOOP's identity login. Website, API, Gallant, and forum
+checks pass; API activation logs contain no warnings or errors. The SSH session
+was closed after the sequential checks.
 
 # Release acceptance still requiring external evidence
 

@@ -690,3 +690,35 @@ test('retrying pending preferences during owner-check outages keeps the session 
   expect(f.preferences.get(user.id)?.theme).toBe('dark');
   expect(f.errors).toEqual([]);
 });
+
+for (const linking of [false, true]) {
+  test(`OAuth ${linking ? 'link' : 'login'} preserves private proof through same-tab navigation`, async ({ page, context }) => {
+    const f = await setup(page, linking);
+    let challenge = '';
+    let exchanges = 0;
+    await page.route(`**/auth/${linking ? 'link' : 'start'}`, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      challenge = route.request().postDataJSON().exchangeChallenge;
+      await route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { ok: true, provider: 'google', state: 'browser-state', next: 'https://provider.example.test/authorize' } });
+    });
+    await page.route('https://provider.example.test/authorize', (route) => route.fulfill({
+      status: 302, headers: { location: 'http://127.0.0.1:4173/auth/callback?state=browser-state&exchangeCode=browser-code' },
+    }));
+    await page.route('**/auth/exchange', async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      const { code, verifier } = route.request().postDataJSON();
+      expect(code).toBe('browser-code');
+      expect(createHash('sha256').update(verifier).digest('hex')).toBe(challenge);
+      exchanges++;
+      await route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { sessionToken: 'browser-session', user } });
+    });
+    await page.goto(linking ? '/account' : '/sign-in');
+    await page.getByRole('button', { name: linking ? 'Link Google' : 'Continue with Google', exact: true }).click();
+    await expect(page).toHaveURL(/\/today$/);
+    expect(context.pages()).toHaveLength(1);
+    expect(exchanges).toBe(1);
+    expect(await page.evaluate(() => sessionStorage.getItem('threeplates-pending-auth'))).toBeNull();
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('browser-session');
+    expect(f.errors).toEqual([]);
+  });
+}

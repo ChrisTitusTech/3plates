@@ -260,7 +260,6 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         .where(and(eq(mobileAuthExchanges.code, code), eq(mobileAuthExchanges.exchangeChallenge, exchangeChallenge), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
         .returning({
           code: mobileAuthExchanges.code,
-          exchangeChallenge: mobileAuthExchanges.exchangeChallenge,
           sessionToken: mobileAuthExchanges.sessionToken,
           sessionExpiresAt: mobileAuthExchanges.sessionExpiresAt,
           userId: mobileAuthExchanges.userId,
@@ -277,7 +276,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
       return {
         code: exchange.code,
-        exchangeChallenge: exchange.exchangeChallenge!,
+        exchangeChallenge,
         sessionToken: exchange.sessionToken,
         sessionExpiresAt: exchange.sessionExpiresAt,
         isNewUser: exchange.isNewUser,

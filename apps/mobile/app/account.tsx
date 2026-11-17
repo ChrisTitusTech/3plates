@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useRouter } from 'expo-router';
 import * as ExpoLinking from 'expo-linking';
-import { Linking, Text, View } from 'react-native';
+import { Linking, Platform, Text, View } from 'react-native';
 import { calendarDateSchema, type AuthProvider } from '@3plates/contract';
 import type { Member, Sync } from '@3plates/whoop/types';
 import { Button, Card, Field, FitnessPage, useFitnessStyles } from '../src/components/FitnessUI';
@@ -95,7 +95,8 @@ export default function AccountScreen() {
   }
   async function link(provider: AuthProvider) {
     const started = await startAuthLink(provider, ExpoLinking.createURL('auth/callback'));
-    await Linking.openURL(started.next);
+    if (Platform.OS === 'web') window.location.assign(started.next);
+    else await Linking.openURL(started.next);
   }
   async function signOut(discard = false) {
     const generation = getSessionGeneration();

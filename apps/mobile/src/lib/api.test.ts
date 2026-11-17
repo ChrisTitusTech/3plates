@@ -12,7 +12,6 @@ import {
   __setApiTestAdapters,
   clearSession,
   expireSession,
-  completeAuthCallback,
   createManualWorkout,
   deleteManualWorkout,
   fetchMe,
@@ -73,7 +72,6 @@ function createProgress(): Progress {
 function createClientOverrides(overrides: Record<string, unknown>) {
   return {
     authStart: async () => ({ status: 500, body: null }),
-    authCallback: async () => ({ status: 500, body: null }),
     authExchange: async () => ({ status: 500, body: null }),
     authRefresh: async () => ({ status: 500, body: null }),
     authSignOut: async () => ({ status: 500, body: null }),
@@ -98,13 +96,14 @@ test('API base URL defaults to production for bundled native builds', () => {
   assert.equal(resolveApiBaseUrl('https://api.example.test'), 'https://api.example.test');
 });
 
-test('auth callback persists token and subsequent me request sends bearer token', async (t) => {
+test('auth exchange persists token and subsequent me request sends bearer token', async (t) => {
   const storage = createMemoryStorage();
   const user = createBaseUser();
   let meHeaders: Record<string, string | undefined> | undefined;
 
   const client = createClientOverrides({
-    authCallback: async () => ({
+    authStart: async () => ({ status: 200, body: { state: 'demo-state' } }),
+    authExchange: async () => ({
       status: 200,
       body: {
         ok: true,
@@ -133,11 +132,8 @@ test('auth callback persists token and subsequent me request sends bearer token'
     __resetApiTestAdapters();
   });
 
-  await completeAuthCallback({
-    provider: 'google',
-    code: 'demo-code',
-    state: 'demo-state',
-  });
+  await startAuth('google', 'threeplates://auth/callback');
+  await redeemMobileAuthExchangeCode('demo-code', 'demo-state');
 
   const token = await getSessionToken();
   assert.equal(token, 'session-token-1');
@@ -1117,9 +1113,48 @@ for (const linking of [false, true]) {
     await assert.rejects(redeemMobileAuthExchangeCode('unsolicited', 'foreign-state'), /pending sign-in/);
     assert.equal(exchanges, 0);
     assert.equal(await getSessionToken(), 'existing-session');
-    await redeemMobileAuthExchangeCode('valid-code', 'pending-state');
+    await Promise.all([
+      redeemMobileAuthExchangeCode('valid-code', 'pending-state'),
+      redeemMobileAuthExchangeCode('valid-code', 'pending-state'),
+    ]);
     assert.equal(await getSessionToken(), 'new-session');
     await assert.rejects(redeemMobileAuthExchangeCode('valid-code', 'pending-state'), /pending sign-in/);
     assert.equal(exchanges, 1);
   });
 }
+
+for (const phase of ['before', 'during'] as const) {
+  test(`exchange cannot replace an account changed ${phase} redemption`, async (t) => {
+    const storage = createMemoryStorage();
+    let exchanges = 0;
+    __setApiTestAdapters({ storage, client: createClientOverrides({
+      authStart: async () => ({ status: 200, body: { state: 'pending-state' } }),
+      authExchange: async () => {
+        exchanges++;
+        await setSessionToken('different-account');
+        return { status: 200, body: { sessionToken: 'stale-session', user: createBaseUser() } };
+      },
+    }) as never });
+    t.after(__resetApiTestAdapters);
+    await startAuth('google', 'threeplates://auth/callback');
+    if (phase === 'before') await setSessionToken('different-account');
+    await assert.rejects(redeemMobileAuthExchangeCode('code', 'pending-state'), /active account changed/);
+    assert.equal(await getSessionToken(), 'different-account');
+    assert.equal(exchanges, phase === 'before' ? 0 : 1);
+  });
+}
+
+test('exchange rejects expired and corrupt pending proof without contacting the server', async (t) => {
+  const storage = createMemoryStorage();
+  __setApiTestAdapters({ storage, client: createClientOverrides({
+    authStart: async () => ({ status: 200, body: { state: 'pending-state' } }),
+    authExchange: async () => { assert.fail('Invalid proof must not be exchanged'); },
+  }) as never });
+  t.after(__resetApiTestAdapters);
+  await startAuth('google', 'threeplates://auth/callback');
+  const pending = JSON.parse((await storage.getItem('threeplates-pending-auth'))!);
+  await storage.setItem('threeplates-pending-auth', JSON.stringify({ ...pending, expiresAt: 0 }));
+  await assert.rejects(redeemMobileAuthExchangeCode('code', 'pending-state'), /pending sign-in/);
+  await storage.setItem('threeplates-pending-auth', '{broken');
+  await assert.rejects(redeemMobileAuthExchangeCode('code', 'pending-state'), /pending sign-in/);
+});

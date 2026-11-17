@@ -40,7 +40,6 @@ type ContractClientLike = Pick<
   typeof apiClient,
   'authStart'
   | 'authLinkStart'
-  | 'authCallback'
   | 'authExchange'
   | 'authRefresh'
   | 'authSignOut'
@@ -567,7 +566,7 @@ export function clearSession(expectedGeneration = getSessionGeneration()) {
 
 // The proof stays on the initiating installation (and browser tab) across redirects.
 const pendingAuthKey = 'threeplates-pending-auth';
-type PendingAuth = { verifier: string; state: string; expiresAt: number };
+type PendingAuth = { verifier: string; state: string; expiresAt: number; sessionHash: string | null };
 async function pendingAuthStorage(): Promise<StorageLike> {
   if (typeof window !== 'undefined' && window.sessionStorage) {
     return {
@@ -589,11 +588,12 @@ async function createExchangeProof() {
   const verifier = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
   return { verifier, exchangeChallenge: await sessionHash(verifier) };
 }
-async function savePendingAuth(verifier: string, state: string) {
-  await (await pendingAuthStorage()).setItem(pendingAuthKey, JSON.stringify({ verifier, state, expiresAt: Date.now() + 10 * 60 * 1000 }));
+async function savePendingAuth(verifier: string, state: string, token: string | null) {
+  await (await pendingAuthStorage()).setItem(pendingAuthKey, JSON.stringify({ verifier, state, expiresAt: Date.now() + 10 * 60 * 1000, sessionHash: token ? await sessionHash(token) : null }));
 }
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
+  const token = await getSessionToken();
   const proof = await createExchangeProof();
   const response = await contractClient.authStart({
     body: {
@@ -607,7 +607,8 @@ export async function startAuth(provider: AuthProvider, redirectTo?: string) {
     throw toApiRequestError(response.status, response.body);
   }
 
-  await savePendingAuth(proof.verifier, response.body.state);
+  await assertCurrentSession(token);
+  await savePendingAuth(proof.verifier, response.body.state, token);
   return response.body;
 }
 
@@ -628,30 +629,8 @@ export async function startAuthLink(provider: AuthProvider, redirectTo?: string)
     throw toApiRequestError(response.status, response.body);
   }
 
-  await savePendingAuth(proof.verifier, response.body.state);
-  return response.body;
-}
-
-export async function completeAuthCallback(input: {
-  provider: AuthProvider;
-  code: string;
-  state: string;
-}) {
-  const response = await contractClient.authCallback({
-    query: {
-      provider: input.provider,
-      code: input.code,
-      state: input.state,
-    },
-  });
-
-  if (response.status !== 200) {
-    throw toApiRequestError(response.status, response.body);
-  }
-
-  await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
-
+  await assertCurrentSession(token);
+  await savePendingAuth(proof.verifier, response.body.state, token);
   return response.body;
 }
 
@@ -674,13 +653,21 @@ export async function refreshSessionAndPersist() {
   return response.body;
 }
 
+let activeExchange: { code: string; state?: string; result: Promise<unknown> } | null = null;
 export function redeemMobileAuthExchangeCode(code: string, state?: string) {
-  return withQueue(pendingAuthKey, () => redeemPendingAuthExchange(code, state));
+  if (activeExchange?.code === code && activeExchange.state === state) return activeExchange.result;
+  const result = withQueue(pendingAuthKey, () => redeemPendingAuthExchange(code, state));
+  activeExchange = { code, state, result };
+  void result.finally(() => {
+    if (activeExchange?.result === result) activeExchange = null;
+  }).catch(() => undefined);
+  return result;
 }
 async function redeemPendingAuthExchange(code: string, state?: string) {
   const pendingStorage = await pendingAuthStorage();
   const raw = await pendingStorage.getItem(pendingAuthKey);
-  const pending: PendingAuth | null = raw ? JSON.parse(raw) : null;
+  let pending: PendingAuth | null = null;
+  try { pending = raw ? JSON.parse(raw) : null; } catch { /* Invalid proof requires a new sign-in. */ }
   if (!state || !pending || pending.state !== state || pending.expiresAt <= Date.now()) {
     throw new Error('No matching pending sign-in. Start sign-in again.');
   }
@@ -688,6 +675,9 @@ async function redeemPendingAuthExchange(code: string, state?: string) {
   await pendingStorage.removeItem(pendingAuthKey);
   const generation = getSessionGeneration();
   const token = await getSessionToken();
+  if (pending.sessionHash !== (token ? await sessionHash(token) : null)) {
+    throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
+  }
   const response = await contractClient.authExchange({
     body: {
       code,

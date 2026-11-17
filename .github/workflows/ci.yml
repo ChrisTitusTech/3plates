@@ -142,6 +142,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Check Expo dependency compatibility
+        env:
+          # Validate against the installed SDK, rather than changing remote recommendations.
+          EXPO_OFFLINE: '1'
         run: pnpm --filter @3plates/mobile exec expo install --check
       - name: Export production client bundle
         run: pnpm --filter @3plates/mobile exec expo export --platform ${{ matrix.platform }} --output-dir dist-${{ matrix.platform }}

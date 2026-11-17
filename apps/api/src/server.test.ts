@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { jwtVerify } from 'jose';
 

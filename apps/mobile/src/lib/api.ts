@@ -589,7 +589,9 @@ async function createExchangeProof() {
   return { verifier, exchangeChallenge: await sessionHash(verifier) };
 }
 async function savePendingAuth(verifier: string, state: string, token: string | null) {
-  await (await pendingAuthStorage()).setItem(pendingAuthKey, JSON.stringify({ verifier, state, expiresAt: Date.now() + 10 * 60 * 1000, sessionHash: token ? await sessionHash(token) : null }));
+  await withQueue(pendingAuthKey, async () => {
+    await (await pendingAuthStorage()).setItem(pendingAuthKey, JSON.stringify({ verifier, state, expiresAt: Date.now() + 10 * 60 * 1000, sessionHash: token ? await sessionHash(token) : null }));
+  });
 }
 
 export async function startAuth(provider: AuthProvider, redirectTo?: string) {
@@ -671,8 +673,6 @@ async function redeemPendingAuthExchange(code: string, state?: string) {
   if (!state || !pending || pending.state !== state || pending.expiresAt <= Date.now()) {
     throw new Error('No matching pending sign-in. Start sign-in again.');
   }
-  // Claim locally before the request so duplicate callback handlers cannot install twice.
-  await pendingStorage.removeItem(pendingAuthKey);
   const generation = getSessionGeneration();
   const token = await getSessionToken();
   if (pending.sessionHash !== (token ? await sessionHash(token) : null)) {
@@ -689,6 +689,7 @@ async function redeemPendingAuthExchange(code: string, state?: string) {
     throw toApiRequestError(response.status, response.body);
   }
 
+  await pendingStorage.removeItem(pendingAuthKey);
   await setSessionToken(response.body.sessionToken, { token, generation });
   await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
 

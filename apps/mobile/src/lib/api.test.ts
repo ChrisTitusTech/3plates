@@ -1158,3 +1158,29 @@ test('exchange rejects expired and corrupt pending proof without contacting the 
   await storage.setItem('threeplates-pending-auth', '{broken');
   await assert.rejects(redeemMobileAuthExchangeCode('code', 'pending-state'), /pending sign-in/);
 });
+
+
+test('exchange retains the same private proof through network and server failures', async (t) => {
+  const storage = createMemoryStorage();
+  let attempts = 0;
+  const verifiers: string[] = [];
+  __setApiTestAdapters({ storage, client: createClientOverrides({
+    authStart: async () => ({ status: 200, body: { state: 'retry-state' } }),
+    authExchange: async ({ body }: { body: { verifier: string } }) => {
+      verifiers.push(body.verifier);
+      if (++attempts === 1) throw new TypeError('Network request failed');
+      if (attempts === 2) return { status: 503, body: { error: { message: 'Please retry' } } };
+      return { status: 200, body: { sessionToken: 'retried-session', user: createBaseUser() } };
+    },
+  }) as never });
+  t.after(__resetApiTestAdapters);
+  await startAuth('google', 'threeplates://auth/callback');
+  await assert.rejects(redeemMobileAuthExchangeCode('retry-code', 'retry-state'), /Network request failed/);
+  await assert.rejects(redeemMobileAuthExchangeCode('retry-code', 'retry-state'));
+  assert.ok(await storage.getItem('threeplates-pending-auth'));
+  await redeemMobileAuthExchangeCode('retry-code', 'retry-state');
+  assert.equal(await getSessionToken(), 'retried-session');
+  assert.equal(await storage.getItem('threeplates-pending-auth'), null);
+  assert.equal(verifiers.length, 3);
+  assert.equal(new Set(verifiers).size, 1);
+});

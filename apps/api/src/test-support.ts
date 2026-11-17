@@ -184,3 +184,24 @@ export async function assertProviderActivationFollowsAcceptance(context: ReturnT
     assert.equal((await callback).statusCode, 409); assert.equal(activations, 1);
   } finally { release(); store.activateOAuthIdentity = activate; }
 }
+
+
+export async function assertSignOutCancelsPendingLinks(context: ReturnType<typeof createTestAuthApp>) {
+  const { app, store } = context;
+  const session = await signIn(app, 'google');
+  const otherSession = await signIn(app, 'google');
+  const headers = { authorization: `Bearer ${session.sessionToken}` };
+  const start = await app.inject({ method: 'POST', url: '/auth/link', headers, payload: { provider: 'apple' } });
+  assert.equal(start.statusCode, 200);
+  const signedOut = await app.inject({ method: 'POST', url: '/auth/sign-out', headers, payload: {} });
+  assert.equal(signedOut.statusCode, 200);
+  const callback = await app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${start.json().state}` });
+  assert.equal(callback.statusCode, 409);
+  assert.deepEqual((await store.listIdentities(session.user.id)).map((identity) => identity.provider), ['google']);
+  assert.equal(await store.getAuthenticationGeneration(session.user.id), 0);
+  const otherHeaders = { authorization: `Bearer ${otherSession.sessionToken}` };
+  assert.equal((await app.inject({ method: 'GET', url: '/users/me', headers: otherHeaders })).statusCode, 200);
+  const fresh = await app.inject({ method: 'POST', url: '/auth/link', headers: otherHeaders, payload: { provider: 'apple' } });
+  assert.equal(fresh.statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: `/auth/callback?provider=apple&code=test&state=${fresh.json().state}` })).statusCode, 200);
+}

@@ -8,7 +8,7 @@ import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertApiError, createFakeProvider, assertSignOutCancelsPendingLinks, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
@@ -1425,4 +1425,10 @@ test('native and web handoffs require a client challenge before issuing state', 
     const response = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'google', redirectTo } });
     assert.equal(response.statusCode, 400);
   }
+});
+
+
+test('sign-out cancels pending provider links without revoking other sessions', async (t) => {
+  const context = createAuthenticatedApp(); t.after(() => context.app.close());
+  await assertSignOutCancelsPendingLinks(context);
 });

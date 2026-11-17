@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertSignOutCancelsPendingLinks, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -924,4 +924,9 @@ dbTest('DB callback exchanges require proof and are consumed atomically', async 
     const redeemed = await Promise.all([1, 2].map(() => app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier } })));
     assert.deepEqual(redeemed.map((response) => response.statusCode).sort(), [200, 409]);
   });
+});
+
+
+dbTest('DB sign-out cancels pending provider links without revoking other sessions', async () => {
+  await withDbApp(assertSignOutCancelsPendingLinks);
 });

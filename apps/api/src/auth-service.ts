@@ -232,10 +232,12 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
     async revokeSessionByToken(token) {
       const tokenHash = hashToken(token);
-      await db
-        .update(authSessions)
-        .set({ revokedAt: new Date() })
-        .where(eq(authSessions.tokenHash, tokenHash));
+      await db.transaction(async (tx) => {
+        const [session] = await tx.update(authSessions).set({ revokedAt: new Date() })
+          .where(eq(authSessions.tokenHash, tokenHash)).returning({ userId: authSessions.userId });
+        if (session) await tx.delete(oauthTransactions)
+          .where(and(eq(oauthTransactions.userId, session.userId), eq(oauthTransactions.purpose, 'link')));
+      });
     },
 
     async createMobileAuthExchange(input) {
@@ -350,6 +352,9 @@ export function createMemoryAuthRepository(): AuthRepository {
       const session = sessions.get(tokenHash);
       if (session) {
         session.revokedAt = new Date();
+        for (const [state, transaction] of transactions) {
+          if (transaction.userId === session.userId && transaction.purpose === 'link') transactions.delete(state);
+        }
       }
     },
 

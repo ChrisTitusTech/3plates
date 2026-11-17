@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { jwtVerify } from 'jose';
 
@@ -413,6 +413,8 @@ test('auth routes return typed errors for invalid payload and stale callbacks', 
 });
 
 test('auth callback redirects to native deep link with an exchange code and redeem succeeds once', async (t) => {
+  const verifier = 'a'.repeat(64);
+  const exchangeChallenge = createHash('sha256').update(verifier).digest('base64url');
   const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();
@@ -424,6 +426,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     payload: {
       provider: 'google',
       redirectTo: 'threeplates://auth-finished',
+      exchangeChallenge,
     },
   });
 
@@ -448,11 +451,24 @@ test('auth callback redirects to native deep link with an exchange code and rede
   assert.equal(typeof exchangeCode, 'string');
   assert.equal(typeof redirectUrl.searchParams.get('expiresAt'), 'string');
 
+  assert.equal(redirectUrl.searchParams.get('state'), startBody.state);
+  assert.equal(redirectUrl.searchParams.has('sessionToken'), false);
+  assert.equal(redirectUrl.searchParams.has('verifier'), false);
+  for (const proof of [undefined, 'short', 'b'.repeat(64)]) {
+    const rejected = await app.inject({
+      method: 'POST', url: '/auth/exchange',
+      payload: { code: exchangeCode, ...(proof ? { verifier: proof } : {}) },
+    });
+    assert.equal(rejected.statusCode, proof?.length === 64 ? 409 : 400);
+    assert.equal(rejected.json().sessionToken, undefined);
+  }
+
   const redeemResponse = await app.inject({
     method: 'POST',
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier,
     },
   });
 
@@ -476,6 +492,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier,
     },
   });
 
@@ -1374,7 +1391,7 @@ test('OAuth start rejects untrusted redirect targets before issuing state', asyn
       assert.equal(response.statusCode, 400, redirectTo);
     }
     const response = await app.inject({ method: 'POST', url: '/auth/start', payload: {
-      provider: 'google', redirectTo: 'threeplates://auth/callback',
+      provider: 'google', redirectTo: 'threeplates://auth/callback', exchangeChallenge: 'a'.repeat(43),
     } });
     assert.equal(response.statusCode, 200);
   } finally {
@@ -1407,3 +1424,16 @@ test('memory provider activation rejects conflicting links and callbacks after d
   const context = createAuthenticatedApp(); t.after(() => context.app.close());
   await assertProviderActivationFollowsAcceptance(context);
 });
+
+for (const redirectTo of ['threeplates://auth/callback', 'http://localhost:8081/auth/callback']) {
+  test(`app handoff requires a valid challenge: ${redirectTo}`, async (t) => {
+    const { app } = createAuthenticatedApp(); t.after(() => app.close());
+    for (const path of ['/auth/start', '/auth/link']) {
+      for (const exchangeChallenge of [undefined, 'short', 'a'.repeat(44), '+'.repeat(43)]) {
+        const result = await app.inject({ method: 'POST', url: path,
+          payload: { provider: 'google', redirectTo, exchangeChallenge } });
+        assert.equal(result.statusCode, 400);
+      }
+    }
+  });
+}

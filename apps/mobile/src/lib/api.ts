@@ -62,6 +62,7 @@ let storage: StorageLike = defaultStorage;
 let contractClient: ContractClientLike = apiClient;
 
 const storageKeys = {
+  pendingAuth: '3plates.pending-auth',
   sessionToken: '@3plates/session-token',
   me: '@3plates/cache/me',
   progress: '@3plates/cache/progress',
@@ -529,6 +530,7 @@ export function setSessionToken(token: string | null, expected?: { token: string
     if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
     await migratePreviousProfile();
     if (expected) { assertSessionGeneration(expected.generation); await assertCurrentSession(expected.token); }
+    await writePendingAuth(null);
     await writeSessionToken(token);
     sessionChanged();
   });
@@ -539,6 +541,7 @@ export function expireSession(expectedGeneration = getSessionGeneration()) {
     if (getSessionGeneration() !== expectedGeneration) return false;
     await migratePreviousProfile();
     if (getSessionGeneration() !== expectedGeneration) return false;
+    await writePendingAuth(null);
     await writeSessionToken(null);
     sessionChanged();
     return true;
@@ -550,6 +553,7 @@ export function clearSession(expectedGeneration = getSessionGeneration()) {
     assertSessionGeneration(expectedGeneration);
     const owner = await getCachedUser();
     assertSessionGeneration(expectedGeneration);
+    await writePendingAuth(null);
     await writeSessionToken(null);
     sessionChanged();
     for (const key of [storageKeys.progress, storageKeys.manualWorkouts, storageKeys.preferences, storageKeys.pendingMutations]) {
@@ -565,37 +569,91 @@ export function clearSession(expectedGeneration = getSessionGeneration()) {
   });
 }
 
-export async function startAuth(provider: AuthProvider, redirectTo?: string) {
-  const response = await contractClient.authStart({
-    body: {
-      provider,
-      ...(redirectTo ? { redirectTo } : {}),
-    },
+type PendingAuth = {
+  state: string;
+  verifier: string;
+  expiresAt: number;
+  sessionToken: string | null;
+};
+
+async function createAuthProof() {
+  const crypto = await import('expo-crypto');
+  const bytes = await crypto.getRandomBytesAsync(32);
+  const verifier = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const digest = await crypto.digestStringAsync(crypto.CryptoDigestAlgorithm.SHA256, verifier, {
+    encoding: crypto.CryptoEncoding.BASE64,
   });
+  return { verifier, challenge: digest.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') };
+}
+let authProofFactory = createAuthProof;
 
-  if (response.status !== 200) {
-    throw toApiRequestError(response.status, response.body);
+// Web redirects reload the app. Keep proof in this tab, rather than sharing it
+// through AsyncStorage/localStorage with unrelated browser login transactions.
+async function readPendingAuth(): Promise<PendingAuth | null> {
+  const secureStore = await loadSecureStoreModule();
+  const value = await isSecureStoreAvailable() && secureStore
+    ? await secureStore.getItemAsync(storageKeys.pendingAuth)
+    : typeof sessionStorage !== 'undefined'
+      ? sessionStorage.getItem(storageKeys.pendingAuth)
+      : await storage.getItem(storageKeys.pendingAuth);
+  if (!value) return null;
+  try {
+    const pending = JSON.parse(value);
+    if (typeof pending.state !== 'string' || typeof pending.verifier !== 'string' ||
+        typeof pending.expiresAt !== 'number' ||
+        !(pending.sessionToken === null || typeof pending.sessionToken === 'string')) return null;
+    return pending;
+  } catch { return null; }
+}
+let authAttemptRevision = 0;
+async function writePendingAuth(pending: PendingAuth | null) {
+  if (!pending) authAttemptRevision++;
+  const secureStore = await loadSecureStoreModule();
+  const value = pending ? JSON.stringify(pending) : null;
+  if (await isSecureStoreAvailable() && secureStore) {
+    if (value) await secureStore.setItemAsync(storageKeys.pendingAuth, value);
+    else await secureStore.deleteItemAsync(storageKeys.pendingAuth);
+  } else if (typeof sessionStorage !== 'undefined') {
+    if (value) sessionStorage.setItem(storageKeys.pendingAuth, value);
+    else sessionStorage.removeItem(storageKeys.pendingAuth);
+  } else {
+    if (value) await storage.setItem(storageKeys.pendingAuth, value);
+    else await storage.removeItem(storageKeys.pendingAuth);
   }
-
-  return response.body;
 }
 
-export async function startAuthLink(provider: AuthProvider, redirectTo?: string) {
-  const token = await requireSessionToken();
-
-  const response = await contractClient.authLinkStart({
-    extraHeaders: buildAuthHeaders(token),
-    body: {
-      provider,
-      ...(redirectTo ? { redirectTo } : {}),
-    },
+async function startClientAuth(provider: AuthProvider, redirectTo: string | undefined, link: boolean) {
+  const initiating = await sessionTransition(async () => {
+    await writePendingAuth(null);
+    const token = await getSessionToken();
+    if (link && !token) throw new Error('Sign in before linking another provider.');
+    return { token, revision: authAttemptRevision, generation: getSessionGeneration() };
   });
-
-  if (response.status !== 200) {
-    throw toApiRequestError(response.status, response.body);
-  }
-
+  const proof = await authProofFactory();
+  const response = await contractClient[link ? 'authLinkStart' : 'authStart']({
+    ...(link && initiating.token ? { extraHeaders: buildAuthHeaders(initiating.token) } : {}),
+    body: { provider, ...(redirectTo ? { redirectTo, exchangeChallenge: proof.challenge } : {}) },
+  });
+  if (response.status !== 200) throw toApiRequestError(response.status, response.body);
+  await sessionTransition(async () => {
+    if (authAttemptRevision !== initiating.revision || getSessionGeneration() !== initiating.generation ||
+        await getSessionToken() !== initiating.token) {
+      throw new Error('Sign-in was superseded. Start sign-in again.');
+    }
+    if (redirectTo) await writePendingAuth({
+      state: response.body.state,
+      verifier: proof.verifier,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      sessionToken: initiating.token,
+    });
+  });
   return response.body;
+}
+export function startAuth(provider: AuthProvider, redirectTo?: string) {
+  return startClientAuth(provider, redirectTo, false);
+}
+export function startAuthLink(provider: AuthProvider, redirectTo?: string) {
+  return startClientAuth(provider, redirectTo, true);
 }
 
 export async function completeAuthCallback(input: {
@@ -640,21 +698,41 @@ export async function refreshSessionAndPersist() {
   return response.body;
 }
 
-export async function redeemMobileAuthExchangeCode(code: string) {
-  const response = await contractClient.authExchange({
-    body: {
-      code,
-    },
-  });
-
-  if (response.status !== 200) {
-    throw toApiRequestError(response.status, response.body);
+const pendingExchanges = new Map<string, Promise<unknown>>();
+export function redeemMobileAuthExchangeCode(code: string, state: string) {
+  if (typeof code !== 'string' || !code || typeof state !== 'string' || !state) {
+    return Promise.reject(new Error('Missing authentication callback parameters.'));
   }
-
-  await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
-
-  return response.body;
+  const key = JSON.stringify([code, state]);
+  const existing = pendingExchanges.get(key);
+  if (existing) return existing;
+  const exchange = (async () => {
+    const pending = await readPendingAuth();
+    async function assertPending() {
+      const current = await readPendingAuth();
+      if (!pending || pending.state !== state || pending.expiresAt <= Date.now() ||
+          current?.state !== state || current.verifier !== pending.verifier ||
+          await getSessionToken() !== pending.sessionToken) {
+        throw new Error('No matching pending sign-in. Start sign-in again.');
+      }
+    }
+    await assertPending();
+    const response = await contractClient.authExchange({ body: { code, verifier: pending!.verifier } });
+    if (response.status !== 200) throw toApiRequestError(response.status, response.body);
+    await sessionTransition(async () => {
+      await assertPending();
+      await migratePreviousProfile();
+      await assertPending();
+      // Consume local authorization before changing the active account.
+      await writePendingAuth(null);
+      await writeSessionToken(response.body.sessionToken);
+      sessionChanged();
+      await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
+    });
+    return response.body;
+  })().finally(() => { pendingExchanges.delete(key); });
+  pendingExchanges.set(key, exchange);
+  return exchange;
 }
 
 let beforeSignOut: ((owner: User | null) => Promise<void>) | undefined;
@@ -1202,7 +1280,9 @@ export async function getPendingMutationCount() {
 export function __setApiTestAdapters(input: {
   storage?: StorageLike;
   client?: ContractClientLike;
+  authProofFactory?: typeof createAuthProof;
 }) {
+  if (input.authProofFactory) authProofFactory = input.authProofFactory;
   if (input.storage) {
     storage = input.storage;
     migratedUsers.clear(); migration = Promise.resolve();
@@ -1214,6 +1294,7 @@ export function __setApiTestAdapters(input: {
 }
 
 export function __resetApiTestAdapters() {
+  authProofFactory = createAuthProof;
   storage = defaultStorage;
   migratedUsers.clear(); migration = Promise.resolve();
   contractClient = apiClient;

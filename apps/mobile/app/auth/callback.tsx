@@ -9,19 +9,19 @@ import { redeemMobileAuthExchangeCode } from '../../src/lib/api';
 export default function AuthCallbackScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { exchangeCode } = useLocalSearchParams<{ exchangeCode?: string }>();
+  const { exchangeCode, state } = useLocalSearchParams<{ exchangeCode?: string; state?: string }>();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!exchangeCode) {
-      setError('Missing exchange code in callback URL.');
+    if (typeof exchangeCode !== 'string' || typeof state !== 'string') {
+      setError('Missing authentication callback parameters.');
       return;
     }
 
     let active = true;
 
-    redeemMobileAuthExchangeCode(exchangeCode)
+    redeemMobileAuthExchangeCode(exchangeCode, state)
       .then(() => {
         if (active) {
           router.replace('/today');
@@ -36,7 +36,7 @@ export default function AuthCallbackScreen() {
     return () => {
       active = false;
     };
-  }, [exchangeCode, router]);
+  }, [exchangeCode, state, router]);
 
   return (
     <View style={styles.page}>

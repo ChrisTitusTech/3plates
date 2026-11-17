@@ -448,3 +448,14 @@ test('oversized workout pages fail before validating individual entries', () => 
     assert.equal(result.error.issues[0].code, 'too_big');
   }
 });
+
+
+test('exchange contract requires client proof and validates the S256 challenge format', () => {
+  assert.equal(appContract.authExchange.body.safeParse({ code: 'code' }).success, false);
+  assert.equal(appContract.authExchange.body.safeParse({ code: 'code', verifier: 'short' }).success, false);
+  assert.equal(appContract.authExchange.body.safeParse({ code: 'code', verifier: 'v'.repeat(64) }).success, true);
+  for (const exchangeChallenge of ['short', '+'.repeat(43), 'a'.repeat(44)]) {
+    assert.equal(appContract.authStart.body.safeParse({ provider: 'google', exchangeChallenge }).success, false);
+  }
+  assert.equal(appContract.authStart.body.safeParse({ provider: 'google', exchangeChallenge: 'a'.repeat(43) }).success, true);
+});

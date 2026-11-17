@@ -51,6 +51,7 @@ export const oauthTransactions = pgTable(
     userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     redirectTo: text('redirect_to'),
     codeVerifier: text('code_verifier').notNull(),
+    exchangeChallenge: text('exchange_challenge'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
@@ -83,6 +84,7 @@ export const mobileAuthExchanges = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     code: text('code').notNull().unique(),
+    exchangeChallenge: text('exchange_challenge'),
     sessionToken: text('session_token').notNull(),
     sessionExpiresAt: timestamp('session_expires_at', { withTimezone: true }).notNull(),
     userId: uuid('user_id')

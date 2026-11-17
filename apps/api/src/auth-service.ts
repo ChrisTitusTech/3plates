@@ -1,3 +1,4 @@
+import { authExchangeChallengeSchema, authExchangeVerifierSchema } from '@3plates/contract';
 import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions, userIdentities, users } from '@3plates/db';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
@@ -26,6 +27,7 @@ export type OAuthTransaction = {
   userId: string | null;
   redirectTo: string | null;
   codeVerifier: string;
+  exchangeChallenge?: string | null;
   expiresAt: Date;
 };
 
@@ -36,6 +38,7 @@ export type AuthSession = {
 };
 
 export type MobileAuthExchangeRecord = {
+  exchangeChallenge: string | null;
   code: string;
   sessionToken: string;
   sessionExpiresAt: Date;
@@ -55,7 +58,7 @@ export interface AuthRepository {
   getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date; authGeneration: number } | null>;
   revokeSessionByToken(token: string): Promise<void>;
   createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
-  consumeMobileAuthExchange(code: string): Promise<MobileAuthExchangeRecord | null>;
+  consumeMobileAuthExchange(code: string, exchangeChallenge: string): Promise<MobileAuthExchangeRecord | null>;
   close?(): Promise<void>;
 }
 
@@ -65,6 +68,7 @@ export type AuthService = {
     provider: AuthProviderName;
     purpose: AuthTransactionPurpose;
     redirectTo?: string | null;
+    exchangeChallenge?: string | null;
     userId?: string | null;
     initiatingToken?: string | null;
     callbackUrl: string;
@@ -82,15 +86,17 @@ export type AuthService = {
     isNewUser: boolean;
     effectiveLevel: number;
     redirectTo: string | null;
+    exchangeChallenge: string | null;
   }>;
   issueMobileAuthExchangeCode(input: {
+    exchangeChallenge: string;
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
     isNewUser: boolean;
     effectiveLevel: number;
   }): Promise<{ code: string; exchangeExpiresAt: string }>;
-  redeemMobileAuthExchangeCode(code: string): Promise<{
+  redeemMobileAuthExchangeCode(code: string, verifier: string): Promise<{
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
@@ -153,6 +159,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         userId: input.userId,
         redirectTo: input.redirectTo,
         codeVerifier: input.codeVerifier,
+        exchangeChallenge: input.exchangeChallenge,
         expiresAt: input.expiresAt,
       });
     },
@@ -235,6 +242,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
     async createMobileAuthExchange(input) {
       await db.insert(mobileAuthExchanges).values({
         code: input.code,
+        exchangeChallenge: input.exchangeChallenge,
         sessionToken: input.sessionToken,
         sessionExpiresAt: input.sessionExpiresAt,
         userId: input.user.id,
@@ -246,13 +254,14 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       });
     },
 
-    async consumeMobileAuthExchange(code) {
+    async consumeMobileAuthExchange(code, exchangeChallenge) {
       const now = new Date();
       const [exchange] = await db
         .delete(mobileAuthExchanges)
-        .where(and(eq(mobileAuthExchanges.code, code), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
+        .where(and(eq(mobileAuthExchanges.code, code), eq(mobileAuthExchanges.exchangeChallenge, exchangeChallenge), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
         .returning({
           code: mobileAuthExchanges.code,
+          exchangeChallenge: mobileAuthExchanges.exchangeChallenge,
           sessionToken: mobileAuthExchanges.sessionToken,
           sessionExpiresAt: mobileAuthExchanges.sessionExpiresAt,
           userId: mobileAuthExchanges.userId,
@@ -269,6 +278,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
       return {
         code: exchange.code,
+        exchangeChallenge: exchange.exchangeChallenge,
         sessionToken: exchange.sessionToken,
         sessionExpiresAt: exchange.sessionExpiresAt,
         isNewUser: exchange.isNewUser,
@@ -350,10 +360,10 @@ export function createMemoryAuthRepository(): AuthRepository {
       mobileExchanges.set(input.code, input);
     },
 
-    async consumeMobileAuthExchange(code) {
+    async consumeMobileAuthExchange(code, exchangeChallenge) {
       pruneExpiredMobileExchanges();
       const exchange = mobileExchanges.get(code) ?? null;
-      if (!exchange) {
+      if (!exchange || exchange.exchangeChallenge !== exchangeChallenge) {
         return null;
       }
 
@@ -594,7 +604,7 @@ export function createAuthService(input: {
   }
 
   return {
-    async startAuthentication({ provider, purpose, redirectTo, userId, initiatingToken, callbackUrl }) {
+    async startAuthentication({ provider, purpose, redirectTo, userId, initiatingToken, callbackUrl, exchangeChallenge }) {
       const adapter = providers[provider];
       if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const codeVerifier = buildCodeVerifier();
@@ -612,6 +622,7 @@ export function createAuthService(input: {
         userId: userId ?? null,
         redirectTo: redirectTo ?? null,
         codeVerifier,
+        exchangeChallenge: exchangeChallenge ?? null,
         expiresAt,
       });
 
@@ -665,16 +676,19 @@ export function createAuthService(input: {
         isNewUser: resolved.isNewUser,
         effectiveLevel: resolved.effectiveLevel,
         redirectTo: transaction.redirectTo,
+        exchangeChallenge: transaction.exchangeChallenge ?? null,
       };
     },
 
-    async issueMobileAuthExchangeCode({ sessionToken, expiresAt, user, isNewUser, effectiveLevel }) {
+    async issueMobileAuthExchangeCode({ exchangeChallenge, sessionToken, expiresAt, user, isNewUser, effectiveLevel }) {
+      authExchangeChallengeSchema.parse(exchangeChallenge);
       const exchangeCode = randomUUID();
       const exchangeExpiresAt = new Date(Date.now() + mobileExchangeTtlMilliseconds);
       const sessionExpiresAt = new Date(expiresAt);
 
       await authRepository.createMobileAuthExchange({
         code: exchangeCode,
+        exchangeChallenge,
         sessionToken,
         sessionExpiresAt,
         user,
@@ -689,8 +703,9 @@ export function createAuthService(input: {
       };
     },
 
-    async redeemMobileAuthExchangeCode(code) {
-      const exchange = await authRepository.consumeMobileAuthExchange(code);
+    async redeemMobileAuthExchangeCode(code, verifier) {
+      if (!authExchangeVerifierSchema.safeParse(verifier).success) return null;
+      const exchange = await authRepository.consumeMobileAuthExchange(code, buildCodeChallenge(verifier));
       if (!exchange) {
         return null;
       }

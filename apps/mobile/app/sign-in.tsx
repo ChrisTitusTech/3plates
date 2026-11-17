@@ -4,6 +4,7 @@ import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import {
   Linking,
+  Platform,
 } from 'react-native';
 
 import { AuthLanding } from '../src/components/AuthLanding';
@@ -31,7 +32,11 @@ export default function SignInScreen() {
   useEffect(() => { void loadProviders(); }, []);
   async function signIn(provider: AuthProvider) {
     setBusy(true); setError(null);
-    try { const started = await startAuth(provider, mobileRedirectUrl); await Linking.openURL(started.next); }
+    try {
+      const started = await startAuth(provider, mobileRedirectUrl);
+      if (Platform.OS === 'web') window.location.assign(started.next);
+      else await Linking.openURL(started.next);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Sign-in failed.'); }
     finally { setBusy(false); }
   }
@@ -68,7 +73,8 @@ export default function SignInScreen() {
       }
 
       const exchangeCode = parsed.queryParams?.exchangeCode;
-      if (typeof exchangeCode !== 'string') {
+      const state = parsed.queryParams?.state;
+      if (typeof exchangeCode !== 'string' || typeof state !== 'string') {
         return;
       }
 
@@ -76,7 +82,7 @@ export default function SignInScreen() {
       setBusy(true);
 
       try {
-        await redeemMobileAuthExchangeCode(exchangeCode);
+        await redeemMobileAuthExchangeCode(exchangeCode, state);
         if (active) {
           router.replace('/today');
         }

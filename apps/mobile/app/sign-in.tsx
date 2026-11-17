@@ -1,5 +1,5 @@
 import type { AuthProvider } from '@3plates/contract';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import {
@@ -11,7 +11,6 @@ import { AuthLanding } from '../src/components/AuthLanding';
 import {
   apiBaseUrl,
   getSessionToken,
-  redeemMobileAuthExchangeCode,
   startAuth,
 } from '../src/lib/api';
 
@@ -40,7 +39,6 @@ export default function SignInScreen() {
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Sign-in failed.'); }
     finally { setBusy(false); }
   }
-  const handledDeepLinkRef = useRef<string | null>(null);
   const mobileRedirectUrl = ExpoLinking.createURL('auth/callback');
 
   useEffect(() => {
@@ -56,58 +54,6 @@ export default function SignInScreen() {
 
     return () => {
       active = false;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    let active = true;
-
-    const handleDeepLink = async (url: string) => {
-      if (!active || handledDeepLinkRef.current === url) {
-        return;
-      }
-
-      const parsed = ExpoLinking.parse(url);
-      if (parsed.path !== 'auth/callback') {
-        return;
-      }
-
-      const exchangeCode = parsed.queryParams?.exchangeCode;
-      const state = parsed.queryParams?.state;
-      if (typeof exchangeCode !== 'string' || typeof state !== 'string') {
-        return;
-      }
-
-      handledDeepLinkRef.current = url;
-      setBusy(true);
-
-      try {
-        await redeemMobileAuthExchangeCode(exchangeCode, state);
-        if (active) {
-          router.replace('/today');
-        }
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Sign-in failed.');
-      } finally {
-        if (active) {
-          setBusy(false);
-        }
-      }
-    };
-
-    const subscription = Linking.addEventListener('url', (event) => {
-      void handleDeepLink(event.url);
-    });
-
-    void Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl) {
-        void handleDeepLink(initialUrl);
-      }
-    });
-
-    return () => {
-      active = false;
-      subscription.remove();
     };
   }, [router]);
 

@@ -13,7 +13,6 @@ import {
   redeemMobileAuthExchangeCode,
   clearSession,
   expireSession,
-  completeAuthCallback,
   createManualWorkout,
   deleteManualWorkout,
   fetchMe,
@@ -74,7 +73,6 @@ function createProgress(): Progress {
 function createClientOverrides(overrides: Record<string, unknown>) {
   return {
     authStart: async () => ({ status: 500, body: null }),
-    authCallback: async () => ({ status: 500, body: null }),
     authExchange: async () => ({ status: 500, body: null }),
     authRefresh: async () => ({ status: 500, body: null }),
     authSignOut: async () => ({ status: 500, body: null }),
@@ -99,55 +97,6 @@ test('API base URL defaults to production for bundled native builds', () => {
   assert.equal(resolveApiBaseUrl('https://api.example.test'), 'https://api.example.test');
 });
 
-test('auth callback persists token and subsequent me request sends bearer token', async (t) => {
-  const storage = createMemoryStorage();
-  const user = createBaseUser();
-  let meHeaders: Record<string, string | undefined> | undefined;
-
-  const client = createClientOverrides({
-    authCallback: async () => ({
-      status: 200,
-      body: {
-        ok: true,
-        provider: 'google',
-        redirectTo: null,
-        sessionToken: 'session-token-1',
-        expiresAt: '2026-05-12T00:00:00.000Z',
-        user,
-      },
-    }),
-    me: async (input: { extraHeaders?: Record<string, string | undefined> }) => {
-      meHeaders = input.extraHeaders;
-      return {
-        status: 200,
-        body: user,
-      };
-    },
-  });
-
-  __setApiTestAdapters({
-    storage,
-    client: client as never,
-  });
-
-  t.after(() => {
-    __resetApiTestAdapters();
-  });
-
-  await completeAuthCallback({
-    provider: 'google',
-    code: 'demo-code',
-    state: 'demo-state',
-  });
-
-  const token = await getSessionToken();
-  assert.equal(token, 'session-token-1');
-
-  const me = await fetchMe();
-  assert.equal(me.source, 'network');
-  assert.deepEqual(me.data, user);
-  assert.equal(meHeaders?.authorization, 'Bearer session-token-1');
-});
 
 test('progress read falls back to cached value on network failure', async (t) => {
   const storage = createMemoryStorage();
@@ -1101,6 +1050,10 @@ function setupAuthExchangeTest(t: TestContext) {
   let delay = false;
   let rejectExchange = false;
   const client = createClientOverrides({
+    me: async ({ extraHeaders }: { extraHeaders: Record<string, string> }) => {
+      assert.equal(extraHeaders.authorization, 'Bearer verified-token');
+      return { status: 200, body: createBaseUser() };
+    },
     authStart: async ({ body }: { body: { exchangeChallenge: string } }) => {
       challenge = body.exchangeChallenge;
       return { status: 200, body: { ok: true, state: `state-${++stateIndex}`, next: 'https://provider.example', provider: 'google' } };
@@ -1142,6 +1095,7 @@ test('matching callbacks share redemption, persist once, and reject replay', asy
   await Promise.all([redeemMobileAuthExchangeCode('code', started.state), redeemMobileAuthExchangeCode('code', started.state)]);
   assert.equal(context.attempts(), 1);
   assert.equal(await getSessionToken(), 'verified-token');
+  assert.deepEqual((await fetchMe()).data, createBaseUser());
   await assert.rejects(redeemMobileAuthExchangeCode('code', started.state), /pending sign-in/);
 });
 

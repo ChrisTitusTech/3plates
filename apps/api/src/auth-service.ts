@@ -56,7 +56,7 @@ export interface AuthRepository {
   rotateSession(token: string, nextHash: string, expiresAt: Date): Promise<string | null>;
   revokeUserSessions(userId: string): Promise<void>;
   getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date; authGeneration: number } | null>;
-  revokeSessionByToken(token: string): Promise<void>;
+  revokeSessionByToken(token: string, options?: { cancelPendingLinks: boolean }): Promise<void>;
   createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
   consumeMobileAuthExchange(code: string, exchangeChallenge: string): Promise<MobileAuthExchangeRecord | null>;
   close?(): Promise<void>;
@@ -231,12 +231,19 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       return session;
     },
 
-    async revokeSessionByToken(token) {
-      const tokenHash = hashToken(token);
-      await db
-        .update(authSessions)
-        .set({ revokedAt: new Date() })
-        .where(eq(authSessions.tokenHash, tokenHash));
+    async revokeSessionByToken(token, options) {
+      await db.transaction(async (transaction) => {
+        const revoked = await transaction.update(authSessions)
+          .set({ revokedAt: new Date() })
+          .where(eq(authSessions.tokenHash, hashToken(token)))
+          .returning({ owner: authSessions.userId });
+        if (options?.cancelPendingLinks && revoked.length) {
+          await transaction.delete(oauthTransactions).where(and(
+            eq(oauthTransactions.userId, revoked[0].owner),
+            eq(oauthTransactions.purpose, 'link'),
+          ));
+        }
+      });
     },
 
     async createMobileAuthExchange(input) {
@@ -347,11 +354,14 @@ export function createMemoryAuthRepository(): AuthRepository {
       return { userId: session.userId, expiresAt: session.expiresAt, authGeneration: session.authGeneration };
     },
 
-    async revokeSessionByToken(token) {
-      const tokenHash = hashToken(token);
-      const session = sessions.get(tokenHash);
-      if (session) {
-        session.revokedAt = new Date();
+    async revokeSessionByToken(token, options) {
+      const session = sessions.get(hashToken(token));
+      if (!session) return;
+      session.revokedAt = new Date();
+      if (options?.cancelPendingLinks) {
+        for (const [state, pending] of transactions) {
+          if (pending.purpose === 'link' && pending.userId === session.userId) transactions.delete(state);
+        }
       }
     },
 
@@ -751,7 +761,7 @@ export function createAuthService(input: {
         return false;
       }
 
-      await authRepository.revokeSessionByToken(token);
+      await authRepository.revokeSessionByToken(token, { cancelPendingLinks: true });
 
       return session.expiresAt.getTime() > Date.now();
     },

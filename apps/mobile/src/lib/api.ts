@@ -40,7 +40,6 @@ type ContractClientLike = Pick<
   typeof apiClient,
   'authStart'
   | 'authLinkStart'
-  | 'authCallback'
   | 'authExchange'
   | 'authRefresh'
   | 'authSignOut'
@@ -654,29 +653,6 @@ export function startAuth(provider: AuthProvider, redirectTo?: string) {
 }
 export function startAuthLink(provider: AuthProvider, redirectTo?: string) {
   return startClientAuth(provider, redirectTo, true);
-}
-
-export async function completeAuthCallback(input: {
-  provider: AuthProvider;
-  code: string;
-  state: string;
-}) {
-  const response = await contractClient.authCallback({
-    query: {
-      provider: input.provider,
-      code: input.code,
-      state: input.state,
-    },
-  });
-
-  if (response.status !== 200) {
-    throw toApiRequestError(response.status, response.body);
-  }
-
-  await setSessionToken(response.body.sessionToken);
-  await writeCache(storageKeys.me, response.body.user, response.body.sessionToken);
-
-  return response.body;
 }
 
 export async function refreshSessionAndPersist() {

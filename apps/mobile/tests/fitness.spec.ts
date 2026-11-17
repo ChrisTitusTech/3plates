@@ -692,37 +692,45 @@ test('retrying pending preferences during owner-check outages keeps the session 
 });
 
 
-test('sign-in keeps its verifier across web navigation and only adopts a matching callback', async ({ page }) => {
-  const f = await setup(page, false);
-  let challenge = '';
-  let exchangeCalls = 0;
-  await page.route('**/auth/start', async (route) => {
-    const body = route.request().postDataJSON();
-    challenge = body.exchangeChallenge;
-    expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(body.verifier).toBeUndefined();
-    await route.fulfill({ json: { ok: true, provider: 'google', state: 'pending-browser-state',
-      next: 'http://127.0.0.1:4173/auth/callback?exchangeCode=bound-code&state=pending-browser-state' },
-      headers: { 'access-control-allow-origin': '*' } });
+for (const operation of ['sign-in', 'link'] as const) {
+  test(`${operation} preserves proof across an external provider redirect and rejects unsolicited callbacks`, async ({ page, context }) => {
+    const linking = operation === 'link';
+    const f = await setup(page, linking);
+    let challenge = '';
+    let exchangeCalls = 0;
+    await page.route(`**/auth/${linking ? 'link' : 'start'}`, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      const body = route.request().postDataJSON();
+      challenge = body.exchangeChallenge;
+      expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(body.verifier).toBeUndefined();
+      if (linking) expect(route.request().headers().authorization).toBe('Bearer synthetic-session');
+      await route.fulfill({ json: { ok: true, provider: 'google', state: 'pending-browser-state',
+        next: 'https://auth-test.example/consent' }, headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.route('https://auth-test.example/consent', (route) => route.fulfill({ status: 302,
+      headers: { location: 'http://127.0.0.1:4173/auth/callback?exchangeCode=bound-code&state=pending-browser-state' } }));
+    await page.route('**/auth/exchange', async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      exchangeCalls++;
+      const body = route.request().postDataJSON();
+      expect(body.code).toBe('bound-code');
+      expect(createHash('sha256').update(body.verifier).digest('base64url')).toBe(challenge);
+      await route.fulfill({ json: { ok: true, sessionToken: 'proof-bound-session',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(), user, isNewUser: false, effectiveLevel: 1 },
+        headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.goto('/auth/callback?exchangeCode=unsolicited&state=unsolicited');
+    await expect(page.getByText('No matching pending sign-in. Start sign-in again.')).toBeVisible();
+    expect(exchangeCalls).toBe(0);
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe(linking ? 'synthetic-session' : null);
+    await page.goto(linking ? '/account' : '/sign-in');
+    await page.getByRole('button', { name: linking ? 'Link Google' : 'Continue with Google', exact: true }).click();
+    await expect(page).toHaveURL(/\/today$/);
+    expect(context.pages()).toHaveLength(1);
+    expect(exchangeCalls).toBe(1);
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('proof-bound-session');
+    expect(await page.evaluate(() => sessionStorage.getItem('3plates.pending-auth'))).toBeNull();
+    expect(f.errors).toEqual([]);
   });
-  await page.route('**/auth/exchange', async (route) => {
-    exchangeCalls++;
-    const body = route.request().postDataJSON();
-    expect(body.code).toBe('bound-code');
-    expect(createHash('sha256').update(body.verifier).digest('base64url')).toBe(challenge);
-    await route.fulfill({ json: { ok: true, sessionToken: 'proof-bound-session',
-      expiresAt: new Date(Date.now() + 60_000).toISOString(), user, isNewUser: false, effectiveLevel: 1 },
-      headers: { 'access-control-allow-origin': '*' } });
-  });
-  await page.goto('/auth/callback?exchangeCode=unsolicited&state=unsolicited');
-  await expect(page.getByText('No matching pending sign-in. Start sign-in again.')).toBeVisible();
-  expect(exchangeCalls).toBe(0);
-  expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Continue with Google', exact: true }).click();
-  await expect(page).toHaveURL(/\/today$/);
-  expect(exchangeCalls).toBe(1);
-  expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('proof-bound-session');
-  expect(await page.evaluate(() => sessionStorage.getItem('3plates.pending-auth'))).toBeNull();
-  expect(f.errors).toEqual([]);
-});
+}

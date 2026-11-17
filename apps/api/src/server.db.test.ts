@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertLinkCancellationOnSignOut, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -931,4 +931,9 @@ dbTest('DB exchange binds client proof through OAuth and atomically consumes it 
     assert.equal(results.filter((result) => result.statusCode === 200).length, 1);
     assert.equal(results.filter((result) => result.statusCode === 409).length, 7);
   });
+});
+
+
+dbTest('sign-out invalidates pending provider links and preserves other sessions in Postgres', async () => {
+  await withDbApp(assertLinkCancellationOnSignOut);
 });

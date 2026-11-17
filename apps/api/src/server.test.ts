@@ -8,7 +8,7 @@ import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertApiError, createFakeProvider, assertLinkCancellationOnSignOut, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
@@ -1437,3 +1437,10 @@ for (const redirectTo of ['threeplates://auth/callback', 'http://localhost:8081/
     }
   });
 }
+
+
+test('sign-out invalidates pending provider links and preserves other sessions in memory', async (t) => {
+  const context = createAuthenticatedApp();
+  t.after(() => context.app.close());
+  await assertLinkCancellationOnSignOut(context);
+});

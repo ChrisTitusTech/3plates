@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -424,6 +425,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     payload: {
       provider: 'google',
       redirectTo: 'threeplates://auth-finished',
+      exchangeChallenge: createHash('sha256').update('a'.repeat(64)).digest('hex'),
     },
   });
 
@@ -448,11 +450,18 @@ test('auth callback redirects to native deep link with an exchange code and rede
   assert.equal(typeof exchangeCode, 'string');
   assert.equal(typeof redirectUrl.searchParams.get('expiresAt'), 'string');
 
+  assert.equal(redirectUrl.searchParams.get('state'), startBody.state);
+  for (const verifier of [undefined, 'b'.repeat(64)]) {
+    const rejected = await app.inject({ method: 'POST', url: '/auth/exchange', payload: { code: exchangeCode, verifier } });
+    assert.equal(rejected.statusCode, verifier ? 409 : 400);
+  }
+
   const redeemResponse = await app.inject({
     method: 'POST',
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier: 'a'.repeat(64),
     },
   });
 
@@ -476,6 +485,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier: 'a'.repeat(64),
     },
   });
 
@@ -1375,6 +1385,7 @@ test('OAuth start rejects untrusted redirect targets before issuing state', asyn
     }
     const response = await app.inject({ method: 'POST', url: '/auth/start', payload: {
       provider: 'google', redirectTo: 'threeplates://auth/callback',
+      exchangeChallenge: createHash('sha256').update('a'.repeat(64)).digest('hex'),
     } });
     assert.equal(response.statusCode, 200);
   } finally {
@@ -1406,4 +1417,13 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
 test('memory provider activation rejects conflicting links and callbacks after deletion', async (t) => {
   const context = createAuthenticatedApp(); t.after(() => context.app.close());
   await assertProviderActivationFollowsAcceptance(context);
+});
+
+test('native and web handoffs require a client challenge before issuing state', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(() => app.close());
+  for (const redirectTo of ['threeplates://auth/callback', 'http://localhost:3000/auth/callback']) {
+    const response = await app.inject({ method: 'POST', url: '/auth/start', payload: { provider: 'google', redirectTo } });
+    assert.equal(response.statusCode, 400);
+  }
 });

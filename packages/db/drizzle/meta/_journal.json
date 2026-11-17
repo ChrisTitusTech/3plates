@@ -71,6 +71,13 @@
       "when": 1794764061034,
       "tag": "0009_outstanding_secret_warriors",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794934745706,
+      "tag": "0010_loving_thena",
+      "breakpoints": true
     }
   ]
 }

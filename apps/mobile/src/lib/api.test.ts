@@ -5,6 +5,9 @@ import type { ManualWorkoutCreate, NotificationDevice, Preferences, Progress, Us
 
 import {
   ApiRequestError,
+  startAuth,
+  startAuthLink,
+  redeemMobileAuthExchangeCode,
   __resetApiTestAdapters,
   __setApiTestAdapters,
   clearSession,
@@ -1087,3 +1090,36 @@ test('queue owner checks preserve transient status, sessions and mutations in bo
     assert.equal(await getPendingMutationCount(), 0); assert.equal(await getSessionToken(), 'owner-check');
   }
 });
+
+for (const linking of [false, true]) {
+  test(`exchange requires a matching pending ${linking ? 'link' : 'login'} and sends private proof`, async (t) => {
+    const storage = createMemoryStorage();
+    const user = createBaseUser();
+    let challenge = '';
+    let exchanges = 0;
+    const start = async ({ body }: { body: { exchangeChallenge: string } }) => {
+      challenge = body.exchangeChallenge;
+      return { status: 200, body: { ok: true, provider: 'google', state: 'pending-state', next: 'https://provider.test' } };
+    };
+    __setApiTestAdapters({ storage, client: createClientOverrides({
+      authStart: start, authLinkStart: start,
+      authExchange: async ({ body }: { body: { verifier: string } }) => {
+        exchanges++;
+        const { createHash } = await import('node:crypto');
+        assert.equal(createHash('sha256').update(body.verifier).digest('hex'), challenge);
+        return { status: 200, body: { sessionToken: 'new-session', user } };
+      },
+    }) as never });
+    t.after(__resetApiTestAdapters);
+    await setSessionToken('existing-session');
+    await assert.rejects(redeemMobileAuthExchangeCode('unsolicited', 'foreign-state'), /pending sign-in/);
+    await (linking ? startAuthLink : startAuth)('google', 'threeplates://auth/callback');
+    await assert.rejects(redeemMobileAuthExchangeCode('unsolicited', 'foreign-state'), /pending sign-in/);
+    assert.equal(exchanges, 0);
+    assert.equal(await getSessionToken(), 'existing-session');
+    await redeemMobileAuthExchangeCode('valid-code', 'pending-state');
+    assert.equal(await getSessionToken(), 'new-session');
+    await assert.rejects(redeemMobileAuthExchangeCode('valid-code', 'pending-state'), /pending sign-in/);
+    assert.equal(exchanges, 1);
+  });
+}

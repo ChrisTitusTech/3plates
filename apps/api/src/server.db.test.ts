@@ -907,3 +907,21 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
 dbTest('DB provider activation rejects conflicting links and callbacks after deletion', async () => {
   await withDbApp(assertProviderActivationFollowsAcceptance);
 });
+
+dbTest('DB callback exchanges require proof and are consumed atomically', async () => {
+  await withDbApp(async ({ app }) => {
+    const verifier = 'a'.repeat(64);
+    const start = await app.inject({ method: 'POST', url: '/auth/start', payload: {
+      provider: 'google', redirectTo: 'threeplates://auth/callback',
+      exchangeChallenge: createHash('sha256').update(verifier).digest('hex'),
+    } });
+    assert.equal(start.statusCode, 200);
+    const callback = await app.inject({ method: 'GET', url: `/auth/callback?code=google-code&state=${start.json().state}` });
+    assert.equal(callback.statusCode, 302);
+    const code = new URL(callback.headers.location!).searchParams.get('exchangeCode');
+    const wrong = await app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier: 'b'.repeat(64) } });
+    assert.equal(wrong.statusCode, 409);
+    const redeemed = await Promise.all([1, 2].map(() => app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier } })));
+    assert.deepEqual(redeemed.map((response) => response.statusCode).sort(), [200, 409]);
+  });
+});

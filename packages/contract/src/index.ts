@@ -221,6 +221,7 @@ export const appContract = c.router({
     body: z.object({
       provider: authProviderSchema,
       redirectTo: z.string().url().optional(),
+      exchangeChallenge: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     }),
     responses: {
       400: apiErrorSchema,
@@ -238,6 +239,7 @@ export const appContract = c.router({
     body: z.object({
       provider: authProviderSchema,
       redirectTo: z.string().url().optional(),
+      exchangeChallenge: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     }),
     responses: {
       400: apiErrorSchema,
@@ -299,6 +301,7 @@ export const appContract = c.router({
     path: '/auth/exchange',
     body: z.object({
       code: z.string().min(1),
+      verifier: z.string().regex(/^[a-f0-9]{64}$/),
     }),
     responses: {
       400: apiErrorSchema,

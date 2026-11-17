@@ -76,7 +76,7 @@ export default function SignInScreen() {
       setBusy(true);
 
       try {
-        await redeemMobileAuthExchangeCode(exchangeCode);
+        await redeemMobileAuthExchangeCode(exchangeCode, typeof parsed.queryParams?.state === 'string' ? parsed.queryParams.state : undefined);
         if (active) {
           router.replace('/today');
         }

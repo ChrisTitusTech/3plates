@@ -15,10 +15,12 @@ import { isAllowedAuthRedirect } from '../auth-redirect.js';
 const authStartBodySchema = z.object({
   provider: authProviderSchema,
   redirectTo: z.string().url().optional(),
+  exchangeChallenge: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 
 const authExchangeBodySchema = z.object({
   code: z.string().min(1),
+  verifier: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
 function getCallbackUrl(request: FastifyRequest) {
@@ -66,6 +68,10 @@ async function handleStartAuthentication(
     throw invalidRequestPayloadError('Redirect URL is not allowed.');
   }
 
+  if (parsedBody.data.redirectTo && requiresExchangeHandoff(parsedBody.data.redirectTo) && !parsedBody.data.exchangeChallenge) {
+    throw invalidRequestPayloadError('An exchange challenge is required.');
+  }
+
   const currentUser = purpose === 'link' ? request.authUser : null;
   if (purpose === 'link' && !currentUser) {
     throw invalidAuthError();
@@ -73,6 +79,7 @@ async function handleStartAuthentication(
 
   const startedAuth = await authService.startAuthentication({
     provider: parsedBody.data.provider,
+    exchangeChallenge: parsedBody.data.exchangeChallenge,
     purpose,
     redirectTo: parsedBody.data.redirectTo ?? null,
     userId: currentUser?.id ?? null,
@@ -140,8 +147,10 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     });
 
     if (completedAuth.redirectTo && requiresExchangeHandoff(completedAuth.redirectTo)) {
+      if (!completedAuth.exchangeChallenge) throw conflictOrStaleUpdateError('Start sign-in again.');
       const redirectUrl = new URL(completedAuth.redirectTo);
       const exchange = await authService.issueMobileAuthExchangeCode({
+        exchangeChallenge: completedAuth.exchangeChallenge,
         sessionToken: completedAuth.sessionToken,
         expiresAt: completedAuth.expiresAt,
         user: completedAuth.user,
@@ -149,6 +158,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
         effectiveLevel: completedAuth.effectiveLevel,
       });
 
+      redirectUrl.searchParams.set('state', state);
       redirectUrl.searchParams.set('provider', completedAuth.provider);
       redirectUrl.searchParams.set('exchangeCode', exchange.code);
       redirectUrl.searchParams.set('expiresAt', completedAuth.expiresAt);
@@ -235,7 +245,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       throw invalidRequestPayloadError();
     }
 
-    const exchangeRecord = await authService.redeemMobileAuthExchangeCode(parsedBody.data.code);
+    const exchangeRecord = await authService.redeemMobileAuthExchangeCode(parsedBody.data.code, parsedBody.data.verifier);
     if (!exchangeRecord) {
       throw conflictOrStaleUpdateError('Exchange code is missing or expired.');
     }

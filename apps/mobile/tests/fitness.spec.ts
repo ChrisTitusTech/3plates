@@ -270,8 +270,10 @@ test('account outages retain pending edits until confirmed discard and sign-out'
 test('appearance follows system changes and explicit choices persist across routes and reloads', async ({ page }, info) => {
   const f = await setup(page); await page.emulateMedia({ colorScheme: 'dark' }); await page.goto('/today');
   const surface = () => page.locator('[data-testid="fitness-page"]:visible');
+  const followSystem = page.getByRole('radio', { name: 'Theme: Follow system', exact: true });
   await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
-  await expect(page.getByRole('radio', { name: 'Theme: Follow system', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(followSystem).toBeEnabled();
+  await expect(followSystem).toHaveAttribute('aria-checked', 'true');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
   await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
@@ -286,7 +288,6 @@ test('appearance follows system changes and explicit choices persist across rout
   await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
   await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
   await page.screenshot({ path: `test-results/theme-light-${info.project.name}.png`, fullPage: true });
-  const followSystem = page.getByRole('radio', { name: 'Theme: Follow system', exact: true });
   await followSystem.click();
   await expect(followSystem).toHaveAttribute('aria-checked', 'true');
   await expect.poll(() => f.preferences.get(user.id)?.theme).toBe('system');

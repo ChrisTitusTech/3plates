@@ -12,6 +12,7 @@
     "build:android:production": "node scripts/build-android-apk.mjs production",
     "test": "tsx --test src/**/*.test.ts",
     "test:android:device": "node scripts/test-android-device.mjs",
+    "test:simulator:auth": "node scripts/test-expo-auth.mjs",
     "typecheck": "tsc --noEmit",
     "test:browser": "playwright test"
   },

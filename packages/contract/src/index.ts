@@ -196,6 +196,9 @@ export const authSessionSchema = z.object({
   effectiveLevel: z.number().int().min(1),
 });
 
+export const authExchangeChallengeSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const authExchangeVerifierSchema = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
+
 export const appContract = c.router({
   healthLogs: {
     method: 'GET', path: '/users/me/logs', query: healthLogQuerySchema,
@@ -221,6 +224,7 @@ export const appContract = c.router({
     body: z.object({
       provider: authProviderSchema,
       redirectTo: z.string().url().optional(),
+      exchangeChallenge: authExchangeChallengeSchema.optional(),
     }),
     responses: {
       400: apiErrorSchema,
@@ -238,6 +242,7 @@ export const appContract = c.router({
     body: z.object({
       provider: authProviderSchema,
       redirectTo: z.string().url().optional(),
+      exchangeChallenge: authExchangeChallengeSchema.optional(),
     }),
     responses: {
       400: apiErrorSchema,
@@ -299,6 +304,7 @@ export const appContract = c.router({
     path: '/auth/exchange',
     body: z.object({
       code: z.string().min(1),
+      verifier: authExchangeVerifierSchema,
     }),
     responses: {
       400: apiErrorSchema,

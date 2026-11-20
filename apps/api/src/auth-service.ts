@@ -1,3 +1,4 @@
+import { authExchangeChallengeSchema, authExchangeVerifierSchema } from '@3plates/contract';
 import { authSessions, createDatabaseClient, mobileAuthExchanges, oauthTransactions, userIdentities, users } from '@3plates/db';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
@@ -9,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { jwtVerify, createRemoteJWKSet, importPKCS8, SignJWT } from 'jose';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
+import { requiresExchangeHandoff } from './auth-redirect.js';
+import { lockActiveLinkSession, type LinkSession } from './auth-session.js';
 import { env } from './env.js';
 import type { AuthProviderName, AuthTransactionPurpose, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import type { UserRecord, UserStateStore } from './user-state-store.js';
@@ -23,9 +26,11 @@ export type OAuthTransaction = {
   provider: AuthProviderName;
   purpose: AuthTransactionPurpose;
   authGeneration?: number | null;
+  initiatingSessionHash?: string | null;
   userId: string | null;
   redirectTo: string | null;
   codeVerifier: string;
+  exchangeChallenge?: string | null;
   expiresAt: Date;
 };
 
@@ -36,6 +41,7 @@ export type AuthSession = {
 };
 
 export type MobileAuthExchangeRecord = {
+  exchangeChallenge: string | null;
   code: string;
   sessionToken: string;
   sessionExpiresAt: Date;
@@ -45,17 +51,18 @@ export type MobileAuthExchangeRecord = {
   exchangeExpiresAt: Date;
 };
 
-type SessionAuthorization = { generation: number; provider: string; subject: string };
+type SessionAuthorization = { generation: number; provider: string; subject: string; linkSession?: LinkSession };
 export interface AuthRepository {
   createOAuthTransaction(input: OAuthTransaction): Promise<void>;
+  isMemoryLinkSessionActive?(userId: string, session: LinkSession): boolean;
   consumeOAuthTransaction(state: string): Promise<OAuthTransaction | null>;
   createSession(userId: string, tokenHash: string, expiresAt: Date, authorization?: SessionAuthorization): Promise<void>;
   rotateSession(token: string, nextHash: string, expiresAt: Date): Promise<string | null>;
   revokeUserSessions(userId: string): Promise<void>;
   getSessionByToken(token: string): Promise<{ userId: string; expiresAt: Date; authGeneration: number } | null>;
-  revokeSessionByToken(token: string): Promise<void>;
+  revokeSessionByToken(token: string, options?: { cancelPendingLinks: boolean }): Promise<void>;
   createMobileAuthExchange(input: MobileAuthExchangeRecord): Promise<void>;
-  consumeMobileAuthExchange(code: string): Promise<MobileAuthExchangeRecord | null>;
+  consumeMobileAuthExchange(code: string, exchangeChallenge: string): Promise<MobileAuthExchangeRecord | null>;
   close?(): Promise<void>;
 }
 
@@ -65,6 +72,7 @@ export type AuthService = {
     provider: AuthProviderName;
     purpose: AuthTransactionPurpose;
     redirectTo?: string | null;
+    exchangeChallenge?: string | null;
     userId?: string | null;
     initiatingToken?: string | null;
     callbackUrl: string;
@@ -82,15 +90,17 @@ export type AuthService = {
     isNewUser: boolean;
     effectiveLevel: number;
     redirectTo: string | null;
+    exchangeChallenge: string | null;
   }>;
   issueMobileAuthExchangeCode(input: {
+    exchangeChallenge: string;
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
     isNewUser: boolean;
     effectiveLevel: number;
   }): Promise<{ code: string; exchangeExpiresAt: string }>;
-  redeemMobileAuthExchangeCode(code: string): Promise<{
+  redeemMobileAuthExchangeCode(code: string, verifier: string): Promise<{
     sessionToken: string;
     expiresAt: string;
     user: UserRecord;
@@ -110,6 +120,13 @@ export type AuthService = {
 
 function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function readLinkSession(transaction: OAuthTransaction): LinkSession {
+  if (!transaction.initiatingSessionHash || typeof transaction.authGeneration !== 'number') {
+    throw conflictOrStaleUpdateError('Start linking again.');
+  }
+  return { tokenHash: transaction.initiatingSessionHash, generation: transaction.authGeneration };
 }
 
 function buildCodeVerifier() {
@@ -145,15 +162,18 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
   return {
     async createOAuthTransaction(input) {
-      await db.insert(oauthTransactions).values({
-        state: input.state,
-        provider: input.provider,
-        purpose: input.purpose,
-        authGeneration: input.authGeneration,
-        userId: input.userId,
-        redirectTo: input.redirectTo,
-        codeVerifier: input.codeVerifier,
-        expiresAt: input.expiresAt,
+      await db.transaction(async (tx) => {
+        if (input.purpose === 'link') {
+          const userId = input.userId;
+          const linkSession = readLinkSession(input);
+          if (!userId) throw missingUserStateError('Sign in before linking another provider.');
+          const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+          if (!user || user.deletionRequestedAt || user.authGeneration !== linkSession.generation ||
+              !await lockActiveLinkSession(tx, userId, linkSession)) {
+            throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          }
+        }
+        await tx.insert(oauthTransactions).values(input);
       });
     },
 
@@ -182,6 +202,9 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         if (authorization) {
           const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, authorization.provider), eq(userIdentities.providerSubjectId, authorization.subject)));
           if (!identity || user.authGeneration !== authorization.generation) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+          if (authorization.linkSession && !await lockActiveLinkSession(tx, userId, authorization.linkSession)) {
+            throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          }
         }
         await tx.insert(authSessions).values({ userId, tokenHash, expiresAt, authGeneration: authorization?.generation ?? user.authGeneration });
       });
@@ -224,17 +247,33 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       return session;
     },
 
-    async revokeSessionByToken(token) {
-      const tokenHash = hashToken(token);
-      await db
-        .update(authSessions)
-        .set({ revokedAt: new Date() })
-        .where(eq(authSessions.tokenHash, tokenHash));
+    async revokeSessionByToken(token, options) {
+      await db.transaction(async (transaction) => {
+        const tokenHash = hashToken(token);
+        if (options?.cancelPendingLinks) {
+          const [session] = await transaction.select({ owner: authSessions.userId })
+            .from(authSessions).where(eq(authSessions.tokenHash, tokenHash));
+          if (!session) return;
+          // Keep the same user-before-session lock order as linking and rotation.
+          await transaction.select({ id: users.id }).from(users).where(eq(users.id, session.owner)).for('update');
+        }
+        const revoked = await transaction.update(authSessions)
+          .set({ revokedAt: new Date() })
+          .where(eq(authSessions.tokenHash, tokenHash))
+          .returning({ owner: authSessions.userId });
+        if (options?.cancelPendingLinks && revoked.length) {
+          await transaction.delete(oauthTransactions).where(and(
+            eq(oauthTransactions.userId, revoked[0].owner),
+            eq(oauthTransactions.purpose, 'link'),
+          ));
+        }
+      });
     },
 
     async createMobileAuthExchange(input) {
       await db.insert(mobileAuthExchanges).values({
         code: input.code,
+        exchangeChallenge: input.exchangeChallenge,
         sessionToken: input.sessionToken,
         sessionExpiresAt: input.sessionExpiresAt,
         userId: input.user.id,
@@ -246,13 +285,14 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
       });
     },
 
-    async consumeMobileAuthExchange(code) {
+    async consumeMobileAuthExchange(code, exchangeChallenge) {
       const now = new Date();
       const [exchange] = await db
         .delete(mobileAuthExchanges)
-        .where(and(eq(mobileAuthExchanges.code, code), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
+        .where(and(eq(mobileAuthExchanges.code, code), eq(mobileAuthExchanges.exchangeChallenge, exchangeChallenge), gt(mobileAuthExchanges.exchangeExpiresAt, now)))
         .returning({
           code: mobileAuthExchanges.code,
+          exchangeChallenge: mobileAuthExchanges.exchangeChallenge,
           sessionToken: mobileAuthExchanges.sessionToken,
           sessionExpiresAt: mobileAuthExchanges.sessionExpiresAt,
           userId: mobileAuthExchanges.userId,
@@ -269,6 +309,7 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
       return {
         code: exchange.code,
+        exchangeChallenge: exchange.exchangeChallenge,
         sessionToken: exchange.sessionToken,
         sessionExpiresAt: exchange.sessionExpiresAt,
         isNewUser: exchange.isNewUser,
@@ -291,6 +332,12 @@ export function createMemoryAuthRepository(): AuthRepository {
   const sessions = new Map<string, { userId: string; expiresAt: Date; revokedAt: Date | null; authGeneration: number }>();
   const mobileExchanges = new Map<string, MobileAuthExchangeRecord>();
 
+  function isMemoryLinkSessionActive(userId: string, linkSession: LinkSession) {
+    const session = sessions.get(linkSession.tokenHash);
+    return !!session && session.userId === userId && session.authGeneration === linkSession.generation &&
+      !session.revokedAt && session.expiresAt.getTime() > Date.now();
+  }
+
   function pruneExpiredMobileExchanges() {
     const now = Date.now();
     for (const [code, exchange] of mobileExchanges.entries()) {
@@ -301,7 +348,11 @@ export function createMemoryAuthRepository(): AuthRepository {
   }
 
   return {
+    isMemoryLinkSessionActive,
     async createOAuthTransaction(input) {
+      if (input.purpose === 'link' && (!input.userId || !isMemoryLinkSessionActive(input.userId, readLinkSession(input)))) {
+        throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      }
       transactions.set(input.state, input);
     },
 
@@ -312,6 +363,9 @@ export function createMemoryAuthRepository(): AuthRepository {
     },
 
     async createSession(userId, tokenHash, expiresAt, authorization) {
+      if (authorization?.linkSession && !isMemoryLinkSessionActive(userId, authorization.linkSession)) {
+        throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      }
       sessions.set(tokenHash, { userId, expiresAt, revokedAt: null, authGeneration: authorization?.generation ?? 0 });
     },
 
@@ -337,11 +391,14 @@ export function createMemoryAuthRepository(): AuthRepository {
       return { userId: session.userId, expiresAt: session.expiresAt, authGeneration: session.authGeneration };
     },
 
-    async revokeSessionByToken(token) {
-      const tokenHash = hashToken(token);
-      const session = sessions.get(tokenHash);
-      if (session) {
-        session.revokedAt = new Date();
+    async revokeSessionByToken(token, options) {
+      const session = sessions.get(hashToken(token));
+      if (!session) return;
+      session.revokedAt = new Date();
+      if (options?.cancelPendingLinks) {
+        for (const [state, pending] of transactions) {
+          if (pending.purpose === 'link' && pending.userId === session.userId) transactions.delete(state);
+        }
       }
     },
 
@@ -350,10 +407,10 @@ export function createMemoryAuthRepository(): AuthRepository {
       mobileExchanges.set(input.code, input);
     },
 
-    async consumeMobileAuthExchange(code) {
+    async consumeMobileAuthExchange(code, exchangeChallenge) {
       pruneExpiredMobileExchanges();
       const exchange = mobileExchanges.get(code) ?? null;
-      if (!exchange) {
+      if (!exchange || exchange.exchangeChallenge !== exchangeChallenge) {
         return null;
       }
 
@@ -518,7 +575,7 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
       url.searchParams.set('client_id', appleClientId);
       url.searchParams.set('redirect_uri', redirectUri);
       url.searchParams.set('response_type', 'code');
-      url.searchParams.set('response_mode', 'query');
+      url.searchParams.set('response_mode', 'form_post');
       url.searchParams.set('scope', 'name email');
       url.searchParams.set('state', state);
       url.searchParams.set('code_challenge', codeChallenge);
@@ -594,7 +651,7 @@ export function createAuthService(input: {
   }
 
   return {
-    async startAuthentication({ provider, purpose, redirectTo, userId, initiatingToken, callbackUrl }) {
+    async startAuthentication({ provider, purpose, redirectTo, userId, initiatingToken, callbackUrl, exchangeChallenge }) {
       const adapter = providers[provider];
       if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const codeVerifier = buildCodeVerifier();
@@ -606,12 +663,14 @@ export function createAuthService(input: {
       if (purpose === 'link' && (!initiatingSession || initiatingSession.userId !== userId || initiatingSession.expiresAt.getTime() <= Date.now() || authGeneration !== await userStateStore.getAuthenticationGeneration(initiatingSession.userId))) throw missingUserStateError('Sign in before linking another provider.');
       await authRepository.createOAuthTransaction({
         authGeneration,
+        initiatingSessionHash: initiatingSession && initiatingToken ? hashToken(initiatingToken) : null,
         state,
         provider,
         purpose,
         userId: userId ?? null,
         redirectTo: redirectTo ?? null,
         codeVerifier,
+        exchangeChallenge: exchangeChallenge ?? null,
         expiresAt,
       });
 
@@ -638,6 +697,12 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
+      if (transaction.redirectTo && requiresExchangeHandoff(transaction.redirectTo) && !transaction.exchangeChallenge) {
+        throw conflictOrStaleUpdateError('Restart sign-in to verify this client.');
+      }
+      const linkSession = transaction.purpose === 'link' ? readLinkSession(transaction) : undefined;
+      if (linkSession && !transaction.userId) throw conflictOrStaleUpdateError('Start linking again.');
+
       const adapter = providers[transaction.provider];
       if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const identity = await adapter.exchangeCode({
@@ -646,16 +711,20 @@ export function createAuthService(input: {
         codeVerifier: transaction.codeVerifier,
       });
 
-      if (transaction.purpose === 'link' && (!transaction.userId || typeof transaction.authGeneration !== 'number')) throw conflictOrStaleUpdateError('Start linking again.');
       const resolved = await userStateStore.resolveOAuthIdentity({
         ...identity,
-        linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
-        linkedAuthGeneration: transaction.purpose === 'link' ? transaction.authGeneration! : undefined,
+        linkedUserId: linkSession ? transaction.userId : null,
+        linkedSession: linkSession,
+        isMemoryLinkSessionActive: linkSession && transaction.userId && authRepository.isMemoryLinkSessionActive
+          ? authRepository.isMemoryLinkSessionActive.bind(authRepository, transaction.userId, linkSession)
+          : undefined,
       });
 
       if (identity.activate) await userStateStore.activateOAuthIdentity(resolved.user.id, identity, resolved.authGeneration, identity.activate);
       await userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
-      const session = await issueSession(resolved.user.id, { generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId });
+      const session = await issueSession(resolved.user.id, {
+        generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId, linkSession,
+      });
 
       return {
         provider: transaction.provider,
@@ -665,16 +734,19 @@ export function createAuthService(input: {
         isNewUser: resolved.isNewUser,
         effectiveLevel: resolved.effectiveLevel,
         redirectTo: transaction.redirectTo,
+        exchangeChallenge: transaction.exchangeChallenge ?? null,
       };
     },
 
-    async issueMobileAuthExchangeCode({ sessionToken, expiresAt, user, isNewUser, effectiveLevel }) {
+    async issueMobileAuthExchangeCode({ exchangeChallenge, sessionToken, expiresAt, user, isNewUser, effectiveLevel }) {
+      authExchangeChallengeSchema.parse(exchangeChallenge);
       const exchangeCode = randomUUID();
       const exchangeExpiresAt = new Date(Date.now() + mobileExchangeTtlMilliseconds);
       const sessionExpiresAt = new Date(expiresAt);
 
       await authRepository.createMobileAuthExchange({
         code: exchangeCode,
+        exchangeChallenge,
         sessionToken,
         sessionExpiresAt,
         user,
@@ -689,8 +761,9 @@ export function createAuthService(input: {
       };
     },
 
-    async redeemMobileAuthExchangeCode(code) {
-      const exchange = await authRepository.consumeMobileAuthExchange(code);
+    async redeemMobileAuthExchangeCode(code, verifier) {
+      if (!authExchangeVerifierSchema.safeParse(verifier).success) return null;
+      const exchange = await authRepository.consumeMobileAuthExchange(code, buildCodeChallenge(verifier));
       if (!exchange) {
         return null;
       }
@@ -736,7 +809,7 @@ export function createAuthService(input: {
         return false;
       }
 
-      await authRepository.revokeSessionByToken(token);
+      await authRepository.revokeSessionByToken(token, { cancelPendingLinks: true });
 
       return session.expiresAt.getTime() > Date.now();
     },

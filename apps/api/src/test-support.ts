@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { createAuthService } from './auth-service.js';
 import type { AuthRepository } from './auth-service.js';
@@ -183,4 +183,67 @@ export async function assertProviderActivationFollowsAcceptance(context: ReturnT
     await started; await store.requestDeletion(session.user.id); release();
     assert.equal((await callback).statusCode, 409); assert.equal(activations, 1);
   } finally { release(); store.activateOAuthIdentity = activate; }
+}
+
+
+export async function assertLinkCancellationOnSignOut(
+  context: ReturnType<typeof createTestAuthApp>,
+  phase: 'pending' | 'starting' | 'completing' = 'pending',
+) {
+  const primary = await signIn(context.app, 'google');
+  const retained = await signIn(context.app, 'google');
+  const verifier = 's'.repeat(64);
+  const exchangeChallenge = createHash('sha256').update(verifier).digest('base64url');
+  const startLink = (token: string) => context.app.inject({
+    method: 'POST', url: '/auth/link', headers: { authorization: `Bearer ${token}` },
+    payload: { provider: 'apple', redirectTo: 'threeplates://auth/callback', exchangeChallenge },
+  });
+  const complete = (state: string) => context.app.inject({ method: 'GET',
+    url: `/auth/callback?provider=apple&code=apple-code&state=${state}` });
+  const createTransaction = context.authRepository.createOAuthTransaction.bind(context.authRepository);
+  const resolveIdentity = context.store.resolveOAuthIdentity.bind(context.store);
+  let markEntered!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  if (phase === 'starting') context.authRepository.createOAuthTransaction = async (input) => {
+    markEntered();
+    await waiting;
+    return createTransaction(input);
+  };
+  if (phase === 'completing') context.store.resolveOAuthIdentity = async (input) => {
+    markEntered();
+    await waiting;
+    return resolveIdentity(input);
+  };
+  try {
+    const starting = startLink(primary.sessionToken);
+    const first = phase === 'starting' ? null : await starting;
+    if (first) assert.equal(first.statusCode, 200);
+    const completing = phase === 'completing' && first ? complete(first.json().state) : null;
+    if (phase !== 'pending') await entered;
+    const signOut = await context.app.inject({ method: 'POST', url: '/auth/sign-out',
+      headers: { authorization: `Bearer ${primary.sessionToken}` }, payload: {} });
+    assert.equal(signOut.statusCode, 200);
+    release();
+    const rejected = completing ?? (first ? complete(first.json().state) : starting);
+    assert.equal((await rejected).statusCode, 409);
+  } finally {
+    release();
+    context.authRepository.createOAuthTransaction = createTransaction;
+    context.store.resolveOAuthIdentity = resolveIdentity;
+  }
+  assert.deepEqual((await context.store.listIdentities(primary.user.id)).map((identity) => identity.provider), ['google']);
+  const retainedSession = await context.app.inject({ method: 'GET', url: '/users/me',
+    headers: { authorization: `Bearer ${retained.sessionToken}` } });
+  assert.equal(retainedSession.statusCode, 200);
+  const fresh = await startLink(retained.sessionToken);
+  assert.equal(fresh.statusCode, 200);
+  const callback = await complete(fresh.json().state);
+  assert.equal(callback.statusCode, 302);
+  const code = new URL(callback.headers.location!).searchParams.get('exchangeCode');
+  const exchange = await context.app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier } });
+  assert.equal(exchange.statusCode, 200);
+  assert.equal(exchange.json().user.id, primary.user.id);
+  assert.deepEqual((await context.store.listIdentities(primary.user.id)).map((identity) => identity.provider).sort(), ['apple', 'google']);
 }

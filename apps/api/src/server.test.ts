@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { jwtVerify } from 'jose';
 
@@ -8,7 +8,7 @@ import { createAppleOAuthProvider, createAuthService, createMemoryAuthRepository
 import { env } from './env.js';
 import { computeStreakUpdate, createMemoryUserStateStore } from './user-state-store.js';
 import type { UserStateStore } from './user-state-store.js';
-import { assertApiError, createFakeProvider, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertApiError, createFakeProvider, assertLinkCancellationOnSignOut, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 
 function createAuthenticatedApp() {
   const store = createMemoryUserStateStore();
@@ -286,6 +286,15 @@ test('Apple OAuth provider generates client secrets from signing key config', as
   });
 
   const provider = createAppleOAuthProvider();
+  const authorizationUrl = new URL(provider.buildAuthorizationUrl({
+    redirectUri: 'https://api.example.com/auth/callback',
+    state: 'test-state',
+    codeChallenge: 'test-challenge',
+  }));
+  assert.equal(authorizationUrl.searchParams.get('client_id'), 'com.example.3plates.web');
+  assert.equal(authorizationUrl.searchParams.get('response_mode'), 'form_post');
+  assert.equal(authorizationUrl.searchParams.get('scope'), 'name email');
+
   await assert.rejects(
     provider.exchangeCode({
       code: 'apple-code',
@@ -413,6 +422,8 @@ test('auth routes return typed errors for invalid payload and stale callbacks', 
 });
 
 test('auth callback redirects to native deep link with an exchange code and redeem succeeds once', async (t) => {
+  const verifier = 'a'.repeat(64);
+  const exchangeChallenge = createHash('sha256').update(verifier).digest('base64url');
   const { app } = createAuthenticatedApp();
   t.after(async () => {
     await app.close();
@@ -424,6 +435,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     payload: {
       provider: 'google',
       redirectTo: 'threeplates://auth-finished',
+      exchangeChallenge,
     },
   });
 
@@ -448,11 +460,24 @@ test('auth callback redirects to native deep link with an exchange code and rede
   assert.equal(typeof exchangeCode, 'string');
   assert.equal(typeof redirectUrl.searchParams.get('expiresAt'), 'string');
 
+  assert.equal(redirectUrl.searchParams.get('state'), startBody.state);
+  assert.equal(redirectUrl.searchParams.has('sessionToken'), false);
+  assert.equal(redirectUrl.searchParams.has('verifier'), false);
+  for (const proof of [undefined, 'short', 'b'.repeat(64)]) {
+    const rejected = await app.inject({
+      method: 'POST', url: '/auth/exchange',
+      payload: { code: exchangeCode, ...(proof ? { verifier: proof } : {}) },
+    });
+    assert.equal(rejected.statusCode, proof?.length === 64 ? 409 : 400);
+    assert.equal(rejected.json().sessionToken, undefined);
+  }
+
   const redeemResponse = await app.inject({
     method: 'POST',
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier,
     },
   });
 
@@ -476,6 +501,7 @@ test('auth callback redirects to native deep link with an exchange code and rede
     url: '/auth/exchange',
     payload: {
       code: exchangeCode,
+      verifier,
     },
   });
 
@@ -485,6 +511,47 @@ test('auth callback redirects to native deep link with an exchange code and rede
     'conflict_or_stale_update',
     'Exchange code is missing or expired.',
   );
+});
+
+test('Apple form callback hands off to the native app with a single-use exchange code', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(() => app.close());
+
+  const verifier = 'a'.repeat(64);
+  const start = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'apple',
+      redirectTo: 'threeplates://auth/callback',
+      exchangeChallenge: createHash('sha256').update(verifier).digest('base64url'),
+    },
+  });
+  assert.equal(start.statusCode, 200);
+  const { state } = start.json<{ state: string }>();
+  const body = new URLSearchParams({ code: 'apple-code', state });
+  const callback = (payload: string) => app.inject({
+    method: 'POST',
+    url: '/auth/callback',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    payload,
+  });
+  assert.equal((await callback(`${body}&state=duplicate`)).statusCode, 400);
+
+  const response = await callback(body.toString());
+  assert.equal(response.statusCode, 303);
+  assert.ok(response.headers.location);
+  const redirect = new URL(response.headers.location);
+  assert.equal(redirect.protocol, 'threeplates:');
+  assert.equal(redirect.searchParams.get('provider'), 'apple');
+  assert.equal(redirect.searchParams.get('state'), state);
+  assert.equal(redirect.searchParams.has('sessionToken'), false);
+  const code = redirect.searchParams.get('exchangeCode');
+  assert.ok(code);
+
+  const exchange = await app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier } });
+  assert.equal(exchange.statusCode, 200);
+  assert.equal((await callback(body.toString())).statusCode, 409);
 });
 
 test('missing user state returns a typed 404 response', async (t) => {
@@ -1374,7 +1441,7 @@ test('OAuth start rejects untrusted redirect targets before issuing state', asyn
       assert.equal(response.statusCode, 400, redirectTo);
     }
     const response = await app.inject({ method: 'POST', url: '/auth/start', payload: {
-      provider: 'google', redirectTo: 'threeplates://auth/callback',
+      provider: 'google', redirectTo: 'threeplates://auth/callback', exchangeChallenge: 'a'.repeat(43),
     } });
     assert.equal(response.statusCode, 200);
   } finally {
@@ -1406,4 +1473,53 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
 test('memory provider activation rejects conflicting links and callbacks after deletion', async (t) => {
   const context = createAuthenticatedApp(); t.after(() => context.app.close());
   await assertProviderActivationFollowsAcceptance(context);
+});
+
+for (const redirectTo of ['threeplates://auth/callback', 'http://localhost:8081/auth/callback']) {
+  test(`app handoff requires a valid challenge: ${redirectTo}`, async (t) => {
+    const { app } = createAuthenticatedApp(); t.after(() => app.close());
+    for (const path of ['/auth/start', '/auth/link']) {
+      for (const exchangeChallenge of [undefined, 'short', 'a'.repeat(44), '+'.repeat(43)]) {
+        const result = await app.inject({ method: 'POST', url: path,
+          payload: { provider: 'google', redirectTo, exchangeChallenge } });
+        assert.equal(result.statusCode, 400);
+      }
+    }
+  });
+}
+
+
+test('sign-out invalidates pending provider links and preserves other sessions in memory', async (t) => {
+  const context = createAuthenticatedApp();
+  t.after(() => context.app.close());
+  await assertLinkCancellationOnSignOut(context);
+});
+
+for (const phase of ['starting', 'completing'] as const) {
+  test(`sign-out blocks a provider link that was ${phase} in memory`, async (t) => {
+    const context = createAuthenticatedApp();
+    t.after(() => context.app.close());
+    await assertLinkCancellationOnSignOut(context, phase);
+  });
+}
+
+test('legacy app callbacks without proof fail before resolving identity', async (t) => {
+  const { app, store, authRepository, googleProfile } = createAuthenticatedApp();
+  t.after(() => app.close());
+  let resolved = false;
+  const resolveIdentity = store.resolveOAuthIdentity.bind(store);
+  store.resolveOAuthIdentity = async (input) => {
+    resolved = true;
+    return resolveIdentity(input);
+  };
+  for (const redirectTo of ['threeplates://auth/callback', 'https://3spinningplates.com/auth/callback']) {
+    const state = randomUUID();
+    await authRepository.createOAuthTransaction({
+      state, provider: googleProfile.provider, purpose: 'sign-in', userId: null, redirectTo,
+      codeVerifier: 'legacy-transaction', expiresAt: new Date(Date.now() + 60_000),
+    });
+    const result = await app.inject({ method: 'GET', url: `/auth/callback?code=fixture&state=${state}` });
+    assert.equal(result.statusCode, 409);
+    assert.equal(resolved, false);
+  }
 });

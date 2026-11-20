@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { createDbAuthRepository } from './auth-service.js';
 import { env } from './env.js';
-import { assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
+import { assertLinkCancellationOnSignOut, assertUnlinkInvalidatesAuthentication, assertProviderActivationFollowsAcceptance, createTestAuthApp, signIn } from './test-support.js';
 import { createDbUserStateStore } from './user-state-store.js';
 
 const repoRootDirectory = new URL('../../../', import.meta.url).pathname;
@@ -907,3 +907,39 @@ for (const phase of ['pending-link', 'consumed-link', 'resolved-login'] as const
 dbTest('DB provider activation rejects conflicting links and callbacks after deletion', async () => {
   await withDbApp(assertProviderActivationFollowsAcceptance);
 });
+
+dbTest('DB exchange binds client proof through OAuth and atomically consumes it once', async () => {
+  await withDbApp(async ({ app }) => {
+    const verifier = 'c'.repeat(64);
+    const exchangeChallenge = createHash('sha256').update(verifier).digest('base64url');
+    const started = await app.inject({ method: 'POST', url: '/auth/start', payload: {
+      provider: 'google', redirectTo: 'threeplates://auth/callback', exchangeChallenge,
+    } });
+    assert.equal(started.statusCode, 200);
+    const callback = await app.inject({ method: 'GET',
+      url: `/auth/callback?code=google-code&state=${started.json().state}` });
+    assert.equal(callback.statusCode, 302);
+    const redirect = new URL(callback.headers.location!);
+    assert.equal(redirect.searchParams.get('state'), started.json().state);
+    const code = redirect.searchParams.get('exchangeCode');
+    const wrongProof = await app.inject({ method: 'POST', url: '/auth/exchange',
+      payload: { code, verifier: 'd'.repeat(64) } });
+    assert.equal(wrongProof.statusCode, 409);
+    const results = await Promise.all(Array.from({ length: 8 }, () => app.inject({
+      method: 'POST', url: '/auth/exchange', payload: { code, verifier },
+    })));
+    assert.equal(results.filter((result) => result.statusCode === 200).length, 1);
+    assert.equal(results.filter((result) => result.statusCode === 409).length, 7);
+  });
+});
+
+
+dbTest('sign-out invalidates pending provider links and preserves other sessions in Postgres', async () => {
+  await withDbApp(assertLinkCancellationOnSignOut);
+});
+
+for (const phase of ['starting', 'completing'] as const) {
+  dbTest(`sign-out blocks a provider link that was ${phase} in Postgres`, async () => {
+    await withDbApp((context) => assertLinkCancellationOnSignOut(context, phase));
+  });
+}

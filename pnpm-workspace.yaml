@@ -17,5 +17,14 @@
   "minimumReleaseAgeStrict": true,
   "allowBuilds": {
     "esbuild": true
-  }
+  },
+  "minimumReleaseAgeExclude": [
+    "@expo/cli@58.1.21",
+    "@expo/metro-config@58.0.23",
+    "@expo/router-server@58.0.23",
+    "babel-preset-expo@58.0.26",
+    "expo-file-system@58.0.14",
+    "expo-router@58.0.32",
+    "expo@58.0.26"
+  ]
 }

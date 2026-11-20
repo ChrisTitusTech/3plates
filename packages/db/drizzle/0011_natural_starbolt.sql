@@ -1,0 +1,1 @@
+ALTER TABLE "oauth_transactions" ADD COLUMN "initiating_session_hash" text;

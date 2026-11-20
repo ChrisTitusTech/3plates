@@ -30,3 +30,12 @@ export function isAllowedAuthRedirect(value: string): boolean {
     return false;
   }
 }
+
+export function requiresExchangeHandoff(redirectTo: string): boolean {
+  try {
+    const target = new URL(redirectTo);
+    return (target.protocol !== 'http:' && target.protocol !== 'https:') || target.pathname === '/auth/callback';
+  } catch {
+    return false;
+  }
+}

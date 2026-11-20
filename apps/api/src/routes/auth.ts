@@ -1,4 +1,4 @@
-import { authProviderSchema } from '@3plates/contract';
+import { authProviderSchema, authExchangeChallengeSchema, authExchangeVerifierSchema } from '@3plates/contract';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -10,15 +10,17 @@ import {
   invalidRequestPayloadError,
 } from '../api-error.js';
 import { env } from '../env.js';
-import { isAllowedAuthRedirect } from '../auth-redirect.js';
+import { isAllowedAuthRedirect, requiresExchangeHandoff } from '../auth-redirect.js';
 
 const authStartBodySchema = z.object({
   provider: authProviderSchema,
   redirectTo: z.string().url().optional(),
+  exchangeChallenge: authExchangeChallengeSchema.optional(),
 });
 
 const authExchangeBodySchema = z.object({
   code: z.string().min(1),
+  verifier: authExchangeVerifierSchema,
 });
 
 function getCallbackUrl(request: FastifyRequest) {
@@ -33,21 +35,6 @@ function getAuthorizationToken(request: FastifyRequest) {
   }
 
   return authorizationHeader.slice('Bearer '.length).trim() || null;
-}
-
-function requiresExchangeHandoff(redirectTo: string) {
-  try {
-    const redirectUrl = new URL(redirectTo);
-    // Native app schemes always need exchange handoff
-    if (redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:') {
-      return true;
-    }
-    // Web app callback paths also need exchange handoff so the browser
-    // is redirected back to the Expo web app with the exchange code
-    return redirectUrl.pathname === '/auth/callback';
-  } catch {
-    return false;
-  }
 }
 
 async function handleStartAuthentication(
@@ -66,6 +53,11 @@ async function handleStartAuthentication(
     throw invalidRequestPayloadError('Redirect URL is not allowed.');
   }
 
+  const needsExchange = !!parsedBody.data.redirectTo && requiresExchangeHandoff(parsedBody.data.redirectTo);
+  if (needsExchange !== !!parsedBody.data.exchangeChallenge) {
+    throw invalidRequestPayloadError('App callbacks require a client exchange challenge.');
+  }
+
   const currentUser = purpose === 'link' ? request.authUser : null;
   if (purpose === 'link' && !currentUser) {
     throw invalidAuthError();
@@ -73,6 +65,7 @@ async function handleStartAuthentication(
 
   const startedAuth = await authService.startAuthentication({
     provider: parsedBody.data.provider,
+    exchangeChallenge: parsedBody.data.exchangeChallenge,
     purpose,
     redirectTo: parsedBody.data.redirectTo ?? null,
     userId: currentUser?.id ?? null,
@@ -107,28 +100,23 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     },
   }, async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
 
-  app.get('/auth/callback', {
+  const callbackOptions = {
     config: {
       rateLimit: {
         max: 30,
         timeWindow: '1 minute',
       },
     },
-  }, async (request, reply) => {
-    const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
-    let provider = null as z.infer<typeof authProviderSchema> | null;
-    if (query.provider !== undefined) {
-      const providerResult = authProviderSchema.safeParse(query.provider);
-      if (!providerResult.success) {
-        throw invalidRequestPayloadError();
-      }
-      provider = providerResult.data;
-    }
+  };
 
-    const code = typeof query.code === 'string' ? query.code : null;
-    const state = typeof query.state === 'string' ? query.state : null;
-
-    if (!code || !state) {
+  async function completeCallback(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    provider: z.infer<typeof authProviderSchema> | null,
+    code: unknown,
+    state: unknown,
+  ) {
+    if (typeof code !== 'string' || !code || typeof state !== 'string' || !state) {
       throw invalidRequestPayloadError();
     }
 
@@ -140,8 +128,10 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     });
 
     if (completedAuth.redirectTo && requiresExchangeHandoff(completedAuth.redirectTo)) {
+      if (!completedAuth.exchangeChallenge) throw conflictOrStaleUpdateError('Restart sign-in to verify this client.');
       const redirectUrl = new URL(completedAuth.redirectTo);
       const exchange = await authService.issueMobileAuthExchangeCode({
+        exchangeChallenge: completedAuth.exchangeChallenge,
         sessionToken: completedAuth.sessionToken,
         expiresAt: completedAuth.expiresAt,
         user: completedAuth.user,
@@ -151,10 +141,11 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
 
       redirectUrl.searchParams.set('provider', completedAuth.provider);
       redirectUrl.searchParams.set('exchangeCode', exchange.code);
+      redirectUrl.searchParams.set('state', state);
       redirectUrl.searchParams.set('expiresAt', completedAuth.expiresAt);
 
       return reply
-        .code(302)
+        .code(request.method === 'POST' ? 303 : 302)
         .header('location', redirectUrl.toString())
         .send();
     }
@@ -169,6 +160,32 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       isNewUser: completedAuth.isNewUser,
       effectiveLevel: completedAuth.effectiveLevel,
     };
+  }
+
+  app.get<{ Querystring: { provider?: unknown; code?: unknown; state?: unknown } }>(
+    '/auth/callback', callbackOptions, async (request, reply) => {
+      const { provider, code, state } = request.query;
+      const providerResult = authProviderSchema.optional().safeParse(provider);
+      if (!providerResult.success) throw invalidRequestPayloadError();
+
+      return completeCallback(request, reply, providerResult.data ?? null, code, state);
+    },
+  );
+
+  app.register(async (appleApp) => {
+    appleApp.addContentTypeParser<string>('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
+      done(null, new URLSearchParams(body));
+    });
+
+    appleApp.post('/auth/callback', callbackOptions, async (request, reply) => {
+      if (!(request.body instanceof URLSearchParams)) throw invalidRequestPayloadError();
+
+      const codes = request.body.getAll('code');
+      const states = request.body.getAll('state');
+      if (codes.length !== 1 || states.length !== 1) throw invalidRequestPayloadError();
+
+      return completeCallback(request, reply, 'apple', codes[0], states[0]);
+    });
   });
 
   app.post('/auth/refresh', {
@@ -235,7 +252,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       throw invalidRequestPayloadError();
     }
 
-    const exchangeRecord = await authService.redeemMobileAuthExchangeCode(parsedBody.data.code);
+    const exchangeRecord = await authService.redeemMobileAuthExchangeCode(parsedBody.data.code, parsedBody.data.verifier);
     if (!exchangeRecord) {
       throw conflictOrStaleUpdateError('Exchange code is missing or expired.');
     }

@@ -57,6 +57,41 @@ Restart the API after changing this environment variable. Do not use wildcards.
 4. Start the Expo app with `pnpm dev:mobile`.
 5. Open the app in web, Android, or iOS as needed.
 
+## Hosted native auth smoke test
+
+Check out the commit you want to test. Use an Expo project with access to Expo
+Simulators and export its ID as `EXPO_PUBLIC_EAS_PROJECT_ID`. Sign in to EAS CLI
+before building or starting a session.
+
+For Android, build an x86_64 APK from the repository root with the Android SDK
+and JDK configured:
+
+```sh
+ORG_GRADLE_PROJECT_reactNativeArchitectures=x86_64 pnpm --filter @3plates/mobile build:android:production
+cd apps/mobile
+npx --yes eas-cli@27.11.0 simulator:start --platform android --type agent-device --max-duration-minutes 20 --no-force --non-interactive
+npx --yes eas-cli@27.11.0 simulator:exec npx --yes agent-device@0.21.41 install com.christitustech.threeplates ./dist/3plates-android-production.apk --platform android
+pnpm test:simulator:auth android
+npx --yes eas-cli@27.11.0 simulator:stop --non-interactive
+```
+
+For iOS, run the simulator build from `apps/mobile` and use its build ID when
+starting the session:
+
+```sh
+npx --yes eas-cli@27.11.0 build --platform ios --profile ios-preview --non-interactive
+npx --yes eas-cli@27.11.0 simulator:start --platform ios --type agent-device --build-id "$IOS_BUILD_ID" --open-url 'threeplates://auth/callback' --max-duration-minutes 20 --no-force --non-interactive
+pnpm test:simulator:auth ios
+npx --yes eas-cli@27.11.0 simulator:stop --non-interactive
+```
+
+The smoke test verifies that missing and unsolicited callback parameters are
+rejected, and checks the browser handoff for Google, Apple, and WHOOP. Use the
+default Android Expo emulator image, which includes Chrome. Screenshots go to
+`apps/mobile/test-results/expo-auth/`. Stop the session even if the test fails.
+Complete provider sign-in with a dedicated test account when testing live OAuth
+end to end.
+
 ## Database setup
 
 1. The repo ships with `docker-compose.yml` for a local Postgres 16 instance.

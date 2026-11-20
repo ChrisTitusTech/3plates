@@ -270,8 +270,10 @@ test('account outages retain pending edits until confirmed discard and sign-out'
 test('appearance follows system changes and explicit choices persist across routes and reloads', async ({ page }, info) => {
   const f = await setup(page); await page.emulateMedia({ colorScheme: 'dark' }); await page.goto('/today');
   const surface = () => page.locator('[data-testid="fitness-page"]:visible');
+  const followSystem = page.getByRole('radio', { name: 'Theme: Follow system', exact: true });
   await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
-  await expect(page.getByRole('radio', { name: 'Theme: Follow system', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(followSystem).toBeEnabled();
+  await expect(followSystem).toHaveAttribute('aria-checked', 'true');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
   await page.getByRole('radio', { name: 'Theme: Dark', exact: true }).click();
@@ -286,7 +288,9 @@ test('appearance follows system changes and explicit choices persist across rout
   await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
   await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
   await page.screenshot({ path: `test-results/theme-light-${info.project.name}.png`, fullPage: true });
-  await page.getByRole('radio', { name: 'Theme: Follow system', exact: true }).click();
+  await followSystem.click();
+  await expect(followSystem).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => f.preferences.get(user.id)?.theme).toBe('system');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
   expect(f.errors).toEqual([]);
@@ -689,4 +693,80 @@ test('retrying pending preferences during owner-check outages keeps the session 
   await expect(page.getByText('Pending offline updates: 0', { exact: true })).toBeVisible();
   expect(f.preferences.get(user.id)?.theme).toBe('dark');
   expect(f.errors).toEqual([]);
+});
+
+
+for (const operation of ['sign-in', 'link'] as const) {
+  test(`${operation} preserves proof across an external provider redirect and rejects unsolicited callbacks`, async ({ page, context }) => {
+    const linking = operation === 'link';
+    const f = await setup(page, linking);
+    let challenge = '';
+    let exchangeCalls = 0;
+    await page.route(`**/auth/${linking ? 'link' : 'start'}`, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      const body = route.request().postDataJSON();
+      challenge = body.exchangeChallenge;
+      expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(body.verifier).toBeUndefined();
+      if (linking) expect(route.request().headers().authorization).toBe('Bearer synthetic-session');
+      await route.fulfill({ json: { ok: true, provider: 'google', state: 'pending-browser-state',
+        next: 'https://auth-test.example/consent' }, headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.route('https://auth-test.example/consent', (route) => route.fulfill({ status: 302,
+      headers: { location: 'http://127.0.0.1:4173/auth/callback?exchangeCode=bound-code&state=pending-browser-state' } }));
+    await page.route('**/auth/exchange', async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback();
+      exchangeCalls++;
+      const body = route.request().postDataJSON();
+      expect(body.code).toBe('bound-code');
+      expect(createHash('sha256').update(body.verifier).digest('base64url')).toBe(challenge);
+      await route.fulfill({ json: { ok: true, sessionToken: 'proof-bound-session',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(), user, isNewUser: false, effectiveLevel: 1 },
+        headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.goto('/auth/callback?exchangeCode=unsolicited&state=unsolicited');
+    await expect(page.getByText('No matching pending sign-in. Start sign-in again.')).toBeVisible();
+    expect(exchangeCalls).toBe(0);
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe(linking ? 'synthetic-session' : null);
+    await page.goto(linking ? '/account' : '/sign-in');
+    await page.getByRole('button', { name: linking ? 'Link Google' : 'Continue with Google', exact: true }).click();
+    await expect(page).toHaveURL(/\/today$/);
+    expect(context.pages()).toHaveLength(1);
+    expect(exchangeCalls).toBe(1);
+    expect(await page.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBe('proof-bound-session');
+    expect(await page.evaluate(() => sessionStorage.getItem('3plates.pending-auth'))).toBeNull();
+    expect(f.errors).toEqual([]);
+  });
+}
+
+test('sign-out in another tab invalidates a pending callback after navigation', async ({ page, context }) => {
+  await setup(page, false);
+  let exchangeCalls = 0;
+  await page.route('**/auth/start', (route) => route.request().method() === 'OPTIONS' ? route.fallback() : route.fulfill({
+    json: { ok: true, provider: 'google', state: 'first-tab', next: 'https://auth-test.example/consent' },
+    headers: { 'access-control-allow-origin': '*' },
+  }));
+  await page.route('https://auth-test.example/consent', (route) => route.fulfill({ body: 'Provider consent fixture' }));
+  await page.route('**/auth/exchange', (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fallback();
+    exchangeCalls++;
+    return route.fallback();
+  });
+
+  await page.goto('/sign-in');
+  await page.getByRole('button', { name: 'Continue with Google', exact: true }).click();
+  await expect(page).toHaveURL('https://auth-test.example/consent');
+  const second = await context.newPage();
+  await setup(second);
+  await second.route('**/auth/sign-out', (route) => route.request().method() === 'OPTIONS' ? route.fallback() : route.fulfill({
+    json: { signedOut: true }, headers: { 'access-control-allow-origin': '*' },
+  }));
+  await second.goto('/account');
+  await second.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(second).toHaveURL(/\/sign-in$/);
+  expect(await second.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
+
+  await page.goto('/auth/callback?exchangeCode=bound-code&state=first-tab');
+  await expect(page.getByText('No matching pending sign-in. Start sign-in again.')).toBeVisible();
+  expect(exchangeCalls).toBe(0);
 });

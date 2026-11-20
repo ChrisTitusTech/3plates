@@ -286,7 +286,10 @@ test('appearance follows system changes and explicit choices persist across rout
   await page.getByRole('radio', { name: 'Theme: Light', exact: true }).click();
   await expect(surface()).toHaveCSS('background-color', 'rgb(244, 247, 249)');
   await page.screenshot({ path: `test-results/theme-light-${info.project.name}.png`, fullPage: true });
-  await page.getByRole('radio', { name: 'Theme: Follow system', exact: true }).click();
+  const followSystem = page.getByRole('radio', { name: 'Theme: Follow system', exact: true });
+  await followSystem.click();
+  await expect(followSystem).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => f.preferences.get(user.id)?.theme).toBe('system');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(surface()).toHaveCSS('background-color', 'rgb(14, 23, 31)');
   expect(f.errors).toEqual([]);

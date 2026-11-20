@@ -286,6 +286,15 @@ test('Apple OAuth provider generates client secrets from signing key config', as
   });
 
   const provider = createAppleOAuthProvider();
+  const authorizationUrl = new URL(provider.buildAuthorizationUrl({
+    redirectUri: 'https://api.example.com/auth/callback',
+    state: 'test-state',
+    codeChallenge: 'test-challenge',
+  }));
+  assert.equal(authorizationUrl.searchParams.get('client_id'), 'com.example.3plates.web');
+  assert.equal(authorizationUrl.searchParams.get('response_mode'), 'form_post');
+  assert.equal(authorizationUrl.searchParams.get('scope'), 'name email');
+
   await assert.rejects(
     provider.exchangeCode({
       code: 'apple-code',
@@ -502,6 +511,47 @@ test('auth callback redirects to native deep link with an exchange code and rede
     'conflict_or_stale_update',
     'Exchange code is missing or expired.',
   );
+});
+
+test('Apple form callback hands off to the native app with a single-use exchange code', async (t) => {
+  const { app } = createAuthenticatedApp();
+  t.after(() => app.close());
+
+  const verifier = 'a'.repeat(64);
+  const start = await app.inject({
+    method: 'POST',
+    url: '/auth/start',
+    payload: {
+      provider: 'apple',
+      redirectTo: 'threeplates://auth/callback',
+      exchangeChallenge: createHash('sha256').update(verifier).digest('base64url'),
+    },
+  });
+  assert.equal(start.statusCode, 200);
+  const { state } = start.json<{ state: string }>();
+  const body = new URLSearchParams({ code: 'apple-code', state });
+  const callback = (payload: string) => app.inject({
+    method: 'POST',
+    url: '/auth/callback',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    payload,
+  });
+  assert.equal((await callback(`${body}&state=duplicate`)).statusCode, 400);
+
+  const response = await callback(body.toString());
+  assert.equal(response.statusCode, 303);
+  assert.ok(response.headers.location);
+  const redirect = new URL(response.headers.location);
+  assert.equal(redirect.protocol, 'threeplates:');
+  assert.equal(redirect.searchParams.get('provider'), 'apple');
+  assert.equal(redirect.searchParams.get('state'), state);
+  assert.equal(redirect.searchParams.has('sessionToken'), false);
+  const code = redirect.searchParams.get('exchangeCode');
+  assert.ok(code);
+
+  const exchange = await app.inject({ method: 'POST', url: '/auth/exchange', payload: { code, verifier } });
+  assert.equal(exchange.statusCode, 200);
+  assert.equal((await callback(body.toString())).statusCode, 409);
 });
 
 test('missing user state returns a typed 404 response', async (t) => {

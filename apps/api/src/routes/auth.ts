@@ -100,28 +100,23 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     },
   }, async (request, reply) => handleStartAuthentication(request, reply, authService, 'link'));
 
-  app.get('/auth/callback', {
+  const callbackOptions = {
     config: {
       rateLimit: {
         max: 30,
         timeWindow: '1 minute',
       },
     },
-  }, async (request, reply) => {
-    const query = request.query as { provider?: unknown; code?: unknown; state?: unknown };
-    let provider = null as z.infer<typeof authProviderSchema> | null;
-    if (query.provider !== undefined) {
-      const providerResult = authProviderSchema.safeParse(query.provider);
-      if (!providerResult.success) {
-        throw invalidRequestPayloadError();
-      }
-      provider = providerResult.data;
-    }
+  };
 
-    const code = typeof query.code === 'string' ? query.code : null;
-    const state = typeof query.state === 'string' ? query.state : null;
-
-    if (!code || !state) {
+  async function completeCallback(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    provider: z.infer<typeof authProviderSchema> | null,
+    code: unknown,
+    state: unknown,
+  ) {
+    if (typeof code !== 'string' || !code || typeof state !== 'string' || !state) {
       throw invalidRequestPayloadError();
     }
 
@@ -150,7 +145,7 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       redirectUrl.searchParams.set('expiresAt', completedAuth.expiresAt);
 
       return reply
-        .code(302)
+        .code(request.method === 'POST' ? 303 : 302)
         .header('location', redirectUrl.toString())
         .send();
     }
@@ -165,6 +160,32 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
       isNewUser: completedAuth.isNewUser,
       effectiveLevel: completedAuth.effectiveLevel,
     };
+  }
+
+  app.get<{ Querystring: { provider?: unknown; code?: unknown; state?: unknown } }>(
+    '/auth/callback', callbackOptions, async (request, reply) => {
+      const { provider, code, state } = request.query;
+      const providerResult = authProviderSchema.optional().safeParse(provider);
+      if (!providerResult.success) throw invalidRequestPayloadError();
+
+      return completeCallback(request, reply, providerResult.data ?? null, code, state);
+    },
+  );
+
+  app.register(async (appleApp) => {
+    appleApp.addContentTypeParser<string>('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
+      done(null, new URLSearchParams(body));
+    });
+
+    appleApp.post('/auth/callback', callbackOptions, async (request, reply) => {
+      if (!(request.body instanceof URLSearchParams)) throw invalidRequestPayloadError();
+
+      const codes = request.body.getAll('code');
+      const states = request.body.getAll('state');
+      if (codes.length !== 1 || states.length !== 1) throw invalidRequestPayloadError();
+
+      return completeCallback(request, reply, 'apple', codes[0], states[0]);
+    });
   });
 
   app.post('/auth/refresh', {

@@ -575,7 +575,7 @@ export function createAppleOAuthProvider(): OAuthProviderAdapter {
       url.searchParams.set('client_id', appleClientId);
       url.searchParams.set('redirect_uri', redirectUri);
       url.searchParams.set('response_type', 'code');
-      url.searchParams.set('response_mode', 'query');
+      url.searchParams.set('response_mode', 'form_post');
       url.searchParams.set('scope', 'name email');
       url.searchParams.set('state', state);
       url.searchParams.set('code_challenge', codeChallenge);

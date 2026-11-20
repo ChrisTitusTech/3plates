@@ -1444,3 +1444,32 @@ test('sign-out invalidates pending provider links and preserves other sessions i
   t.after(() => context.app.close());
   await assertLinkCancellationOnSignOut(context);
 });
+
+for (const phase of ['starting', 'completing'] as const) {
+  test(`sign-out blocks a provider link that was ${phase} in memory`, async (t) => {
+    const context = createAuthenticatedApp();
+    t.after(() => context.app.close());
+    await assertLinkCancellationOnSignOut(context, phase);
+  });
+}
+
+test('legacy app callbacks without proof fail before resolving identity', async (t) => {
+  const { app, store, authRepository, googleProfile } = createAuthenticatedApp();
+  t.after(() => app.close());
+  let resolved = false;
+  const resolveIdentity = store.resolveOAuthIdentity.bind(store);
+  store.resolveOAuthIdentity = async (input) => {
+    resolved = true;
+    return resolveIdentity(input);
+  };
+  for (const redirectTo of ['threeplates://auth/callback', 'https://3spinningplates.com/auth/callback']) {
+    const state = randomUUID();
+    await authRepository.createOAuthTransaction({
+      state, provider: googleProfile.provider, purpose: 'sign-in', userId: null, redirectTo,
+      codeVerifier: 'legacy-transaction', expiresAt: new Date(Date.now() + 60_000),
+    });
+    const result = await app.inject({ method: 'GET', url: `/auth/callback?code=fixture&state=${state}` });
+    assert.equal(result.statusCode, 409);
+    assert.equal(resolved, false);
+  }
+});

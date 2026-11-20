@@ -10,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { jwtVerify, createRemoteJWKSet, importPKCS8, SignJWT } from 'jose';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
+import { requiresExchangeHandoff } from './auth-redirect.js';
+import { lockActiveLinkSession, type LinkSession } from './auth-session.js';
 import { env } from './env.js';
 import type { AuthProviderName, AuthTransactionPurpose, OAuthIdentity, OAuthProviderAdapter } from './auth-types.js';
 import type { UserRecord, UserStateStore } from './user-state-store.js';
@@ -24,6 +26,7 @@ export type OAuthTransaction = {
   provider: AuthProviderName;
   purpose: AuthTransactionPurpose;
   authGeneration?: number | null;
+  initiatingSessionHash?: string | null;
   userId: string | null;
   redirectTo: string | null;
   codeVerifier: string;
@@ -48,9 +51,10 @@ export type MobileAuthExchangeRecord = {
   exchangeExpiresAt: Date;
 };
 
-type SessionAuthorization = { generation: number; provider: string; subject: string };
+type SessionAuthorization = { generation: number; provider: string; subject: string; linkSession?: LinkSession };
 export interface AuthRepository {
   createOAuthTransaction(input: OAuthTransaction): Promise<void>;
+  isMemoryLinkSessionActive?(userId: string, session: LinkSession): boolean;
   consumeOAuthTransaction(state: string): Promise<OAuthTransaction | null>;
   createSession(userId: string, tokenHash: string, expiresAt: Date, authorization?: SessionAuthorization): Promise<void>;
   rotateSession(token: string, nextHash: string, expiresAt: Date): Promise<string | null>;
@@ -118,6 +122,13 @@ function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function readLinkSession(transaction: OAuthTransaction): LinkSession {
+  if (!transaction.initiatingSessionHash || typeof transaction.authGeneration !== 'number') {
+    throw conflictOrStaleUpdateError('Start linking again.');
+  }
+  return { tokenHash: transaction.initiatingSessionHash, generation: transaction.authGeneration };
+}
+
 function buildCodeVerifier() {
   return randomBytes(32).toString('base64url');
 }
@@ -151,16 +162,18 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
   return {
     async createOAuthTransaction(input) {
-      await db.insert(oauthTransactions).values({
-        state: input.state,
-        provider: input.provider,
-        purpose: input.purpose,
-        authGeneration: input.authGeneration,
-        userId: input.userId,
-        redirectTo: input.redirectTo,
-        codeVerifier: input.codeVerifier,
-        exchangeChallenge: input.exchangeChallenge,
-        expiresAt: input.expiresAt,
+      await db.transaction(async (tx) => {
+        if (input.purpose === 'link') {
+          const userId = input.userId;
+          const linkSession = readLinkSession(input);
+          if (!userId) throw missingUserStateError('Sign in before linking another provider.');
+          const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+          if (!user || user.deletionRequestedAt || user.authGeneration !== linkSession.generation ||
+              !await lockActiveLinkSession(tx, userId, linkSession)) {
+            throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          }
+        }
+        await tx.insert(oauthTransactions).values(input);
       });
     },
 
@@ -189,6 +202,9 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
         if (authorization) {
           const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, authorization.provider), eq(userIdentities.providerSubjectId, authorization.subject)));
           if (!identity || user.authGeneration !== authorization.generation) throw conflictOrStaleUpdateError('Account authentication changed. Sign in again.');
+          if (authorization.linkSession && !await lockActiveLinkSession(tx, userId, authorization.linkSession)) {
+            throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          }
         }
         await tx.insert(authSessions).values({ userId, tokenHash, expiresAt, authGeneration: authorization?.generation ?? user.authGeneration });
       });
@@ -233,9 +249,17 @@ export function createDbAuthRepository(connectionString: string): AuthRepository
 
     async revokeSessionByToken(token, options) {
       await db.transaction(async (transaction) => {
+        const tokenHash = hashToken(token);
+        if (options?.cancelPendingLinks) {
+          const [session] = await transaction.select({ owner: authSessions.userId })
+            .from(authSessions).where(eq(authSessions.tokenHash, tokenHash));
+          if (!session) return;
+          // Keep the same user-before-session lock order as linking and rotation.
+          await transaction.select({ id: users.id }).from(users).where(eq(users.id, session.owner)).for('update');
+        }
         const revoked = await transaction.update(authSessions)
           .set({ revokedAt: new Date() })
-          .where(eq(authSessions.tokenHash, hashToken(token)))
+          .where(eq(authSessions.tokenHash, tokenHash))
           .returning({ owner: authSessions.userId });
         if (options?.cancelPendingLinks && revoked.length) {
           await transaction.delete(oauthTransactions).where(and(
@@ -308,6 +332,12 @@ export function createMemoryAuthRepository(): AuthRepository {
   const sessions = new Map<string, { userId: string; expiresAt: Date; revokedAt: Date | null; authGeneration: number }>();
   const mobileExchanges = new Map<string, MobileAuthExchangeRecord>();
 
+  function isMemoryLinkSessionActive(userId: string, linkSession: LinkSession) {
+    const session = sessions.get(linkSession.tokenHash);
+    return !!session && session.userId === userId && session.authGeneration === linkSession.generation &&
+      !session.revokedAt && session.expiresAt.getTime() > Date.now();
+  }
+
   function pruneExpiredMobileExchanges() {
     const now = Date.now();
     for (const [code, exchange] of mobileExchanges.entries()) {
@@ -318,7 +348,11 @@ export function createMemoryAuthRepository(): AuthRepository {
   }
 
   return {
+    isMemoryLinkSessionActive,
     async createOAuthTransaction(input) {
+      if (input.purpose === 'link' && (!input.userId || !isMemoryLinkSessionActive(input.userId, readLinkSession(input)))) {
+        throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      }
       transactions.set(input.state, input);
     },
 
@@ -329,6 +363,9 @@ export function createMemoryAuthRepository(): AuthRepository {
     },
 
     async createSession(userId, tokenHash, expiresAt, authorization) {
+      if (authorization?.linkSession && !isMemoryLinkSessionActive(userId, authorization.linkSession)) {
+        throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      }
       sessions.set(tokenHash, { userId, expiresAt, revokedAt: null, authGeneration: authorization?.generation ?? 0 });
     },
 
@@ -626,6 +663,7 @@ export function createAuthService(input: {
       if (purpose === 'link' && (!initiatingSession || initiatingSession.userId !== userId || initiatingSession.expiresAt.getTime() <= Date.now() || authGeneration !== await userStateStore.getAuthenticationGeneration(initiatingSession.userId))) throw missingUserStateError('Sign in before linking another provider.');
       await authRepository.createOAuthTransaction({
         authGeneration,
+        initiatingSessionHash: initiatingSession && initiatingToken ? hashToken(initiatingToken) : null,
         state,
         provider,
         purpose,
@@ -659,6 +697,12 @@ export function createAuthService(input: {
         throw conflictOrStaleUpdateError('OAuth transaction has expired.');
       }
 
+      if (transaction.redirectTo && requiresExchangeHandoff(transaction.redirectTo) && !transaction.exchangeChallenge) {
+        throw conflictOrStaleUpdateError('Restart sign-in to verify this client.');
+      }
+      const linkSession = transaction.purpose === 'link' ? readLinkSession(transaction) : undefined;
+      if (linkSession && !transaction.userId) throw conflictOrStaleUpdateError('Start linking again.');
+
       const adapter = providers[transaction.provider];
       if (!adapter) throw conflictOrStaleUpdateError('This sign-in provider is not configured.');
       const identity = await adapter.exchangeCode({
@@ -667,16 +711,20 @@ export function createAuthService(input: {
         codeVerifier: transaction.codeVerifier,
       });
 
-      if (transaction.purpose === 'link' && (!transaction.userId || typeof transaction.authGeneration !== 'number')) throw conflictOrStaleUpdateError('Start linking again.');
       const resolved = await userStateStore.resolveOAuthIdentity({
         ...identity,
-        linkedUserId: transaction.purpose === 'link' ? transaction.userId : null,
-        linkedAuthGeneration: transaction.purpose === 'link' ? transaction.authGeneration! : undefined,
+        linkedUserId: linkSession ? transaction.userId : null,
+        linkedSession: linkSession,
+        isMemoryLinkSessionActive: linkSession && transaction.userId && authRepository.isMemoryLinkSessionActive
+          ? authRepository.isMemoryLinkSessionActive.bind(authRepository, transaction.userId, linkSession)
+          : undefined,
       });
 
       if (identity.activate) await userStateStore.activateOAuthIdentity(resolved.user.id, identity, resolved.authGeneration, identity.activate);
       await userStateStore.updateStreakOnLogin(resolved.user.id, new Date());
-      const session = await issueSession(resolved.user.id, { generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId });
+      const session = await issueSession(resolved.user.id, {
+        generation: resolved.authGeneration, provider: identity.provider, subject: identity.providerSubjectId, linkSession,
+      });
 
       return {
         provider: transaction.provider,

@@ -10,7 +10,7 @@ import {
   invalidRequestPayloadError,
 } from '../api-error.js';
 import { env } from '../env.js';
-import { isAllowedAuthRedirect } from '../auth-redirect.js';
+import { isAllowedAuthRedirect, requiresExchangeHandoff } from '../auth-redirect.js';
 
 const authStartBodySchema = z.object({
   provider: authProviderSchema,
@@ -35,21 +35,6 @@ function getAuthorizationToken(request: FastifyRequest) {
   }
 
   return authorizationHeader.slice('Bearer '.length).trim() || null;
-}
-
-function requiresExchangeHandoff(redirectTo: string) {
-  try {
-    const redirectUrl = new URL(redirectTo);
-    // Native app schemes always need exchange handoff
-    if (redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:') {
-      return true;
-    }
-    // Web app callback paths also need exchange handoff so the browser
-    // is redirected back to the Expo web app with the exchange code
-    return redirectUrl.pathname === '/auth/callback';
-  } catch {
-    return false;
-  }
 }
 
 async function handleStartAuthentication(
@@ -148,7 +133,6 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
     });
 
     if (completedAuth.redirectTo && requiresExchangeHandoff(completedAuth.redirectTo)) {
-      // In-flight transactions created before this protocol upgrade fail closed.
       if (!completedAuth.exchangeChallenge) throw conflictOrStaleUpdateError('Restart sign-in to verify this client.');
       const redirectUrl = new URL(completedAuth.redirectTo);
       const exchange = await authService.issueMobileAuthExchangeCode({

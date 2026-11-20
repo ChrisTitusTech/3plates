@@ -28,6 +28,7 @@ import { and, asc, desc, eq, gt, sql, isNull, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { conflictOrStaleUpdateError, missingUserStateError } from './api-error.js';
+import { lockActiveLinkSession, type LinkSession } from './auth-session.js';
 import type { OAuthIdentity } from './auth-types.js';
 
 const userIdentitySchema = z.object({
@@ -63,7 +64,11 @@ export interface UserStateStore {
   deleteAccount(userId: string): Promise<void>;
   getOrCreateUser(input: UserIdentityInput): Promise<UserRecord>;
   getUserById(userId: string): Promise<UserRecord | null>;
-  resolveOAuthIdentity(input: OAuthIdentity & { linkedUserId?: string | null; linkedAuthGeneration?: number }): Promise<AuthBootstrapResult>;
+  resolveOAuthIdentity(input: OAuthIdentity & {
+    linkedUserId?: string | null;
+    linkedSession?: LinkSession;
+    isMemoryLinkSessionActive?: () => boolean;
+  }): Promise<AuthBootstrapResult>;
   getUserEffectiveLevel(userId: string): Promise<number>;
   getProgress(userId: string): Promise<ProgressRecord>;
   updateProgress(userId: string, progress: ProgressRecord): Promise<void>;
@@ -348,7 +353,10 @@ export function createDbUserStateStore(connectionString: string): UserStateStore
         if (identity.linkedUserId) {
           const [owner] = await transaction.select().from(users).where(eq(users.id, identity.linkedUserId)).for('update');
           if (!owner || owner.deletionRequestedAt) throw missingUserStateError();
-          if (identity.linkedAuthGeneration !== undefined && owner.authGeneration !== identity.linkedAuthGeneration) throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          if (identity.linkedSession && (owner.authGeneration !== identity.linkedSession.generation ||
+              !await lockActiveLinkSession(transaction, owner.id, identity.linkedSession))) {
+            throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+          }
         }
         const [existingIdentity] = await transaction
           .select({
@@ -958,7 +966,11 @@ export function createMemoryUserStateStore(): UserStateStore & {
     },
 
     async resolveOAuthIdentity(input) {
-      if (input.linkedUserId && input.linkedAuthGeneration !== undefined && (authGenerations.get(input.linkedUserId) ?? 0) !== input.linkedAuthGeneration) throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      if (input.linkedUserId && input.linkedSession &&
+          ((authGenerations.get(input.linkedUserId) ?? 0) !== input.linkedSession.generation ||
+           !input.isMemoryLinkSessionActive?.())) {
+        throw conflictOrStaleUpdateError('Account authentication changed. Start linking again.');
+      }
       const existingUserId = identitiesByKey.get(identityKey(input.provider, input.providerSubjectId));
       if (existingUserId) {
         if (input.linkedUserId && existingUserId !== input.linkedUserId) {

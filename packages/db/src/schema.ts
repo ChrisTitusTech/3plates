@@ -48,6 +48,7 @@ export const oauthTransactions = pgTable(
     provider: text('provider').notNull(),
     purpose: text('purpose').notNull(),
     authGeneration: integer('auth_generation'),
+    initiatingSessionHash: text('initiating_session_hash'),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     redirectTo: text('redirect_to'),
     codeVerifier: text('code_verifier').notNull(),

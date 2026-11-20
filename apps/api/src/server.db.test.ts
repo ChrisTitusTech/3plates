@@ -937,3 +937,9 @@ dbTest('DB exchange binds client proof through OAuth and atomically consumes it 
 dbTest('sign-out invalidates pending provider links and preserves other sessions in Postgres', async () => {
   await withDbApp(assertLinkCancellationOnSignOut);
 });
+
+for (const phase of ['starting', 'completing'] as const) {
+  dbTest(`sign-out blocks a provider link that was ${phase} in Postgres`, async () => {
+    await withDbApp((context) => assertLinkCancellationOnSignOut(context, phase));
+  });
+}

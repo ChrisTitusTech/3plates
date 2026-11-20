@@ -186,7 +186,10 @@ export async function assertProviderActivationFollowsAcceptance(context: ReturnT
 }
 
 
-export async function assertLinkCancellationOnSignOut(context: ReturnType<typeof createTestAuthApp>) {
+export async function assertLinkCancellationOnSignOut(
+  context: ReturnType<typeof createTestAuthApp>,
+  phase: 'pending' | 'starting' | 'completing' = 'pending',
+) {
   const primary = await signIn(context.app, 'google');
   const retained = await signIn(context.app, 'google');
   const verifier = 's'.repeat(64);
@@ -195,14 +198,41 @@ export async function assertLinkCancellationOnSignOut(context: ReturnType<typeof
     method: 'POST', url: '/auth/link', headers: { authorization: `Bearer ${token}` },
     payload: { provider: 'apple', redirectTo: 'threeplates://auth/callback', exchangeChallenge },
   });
-  const first = await startLink(primary.sessionToken);
-  assert.equal(first.statusCode, 200);
-  const signOut = await context.app.inject({ method: 'POST', url: '/auth/sign-out',
-    headers: { authorization: `Bearer ${primary.sessionToken}` }, payload: {} });
-  assert.equal(signOut.statusCode, 200);
   const complete = (state: string) => context.app.inject({ method: 'GET',
     url: `/auth/callback?provider=apple&code=apple-code&state=${state}` });
-  assert.equal((await complete(first.json().state)).statusCode, 409);
+  const createTransaction = context.authRepository.createOAuthTransaction.bind(context.authRepository);
+  const resolveIdentity = context.store.resolveOAuthIdentity.bind(context.store);
+  let markEntered!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  if (phase === 'starting') context.authRepository.createOAuthTransaction = async (input) => {
+    markEntered();
+    await waiting;
+    return createTransaction(input);
+  };
+  if (phase === 'completing') context.store.resolveOAuthIdentity = async (input) => {
+    markEntered();
+    await waiting;
+    return resolveIdentity(input);
+  };
+  try {
+    const starting = startLink(primary.sessionToken);
+    const first = phase === 'starting' ? null : await starting;
+    if (first) assert.equal(first.statusCode, 200);
+    const completing = phase === 'completing' && first ? complete(first.json().state) : null;
+    if (phase !== 'pending') await entered;
+    const signOut = await context.app.inject({ method: 'POST', url: '/auth/sign-out',
+      headers: { authorization: `Bearer ${primary.sessionToken}` }, payload: {} });
+    assert.equal(signOut.statusCode, 200);
+    release();
+    const rejected = completing ?? (first ? complete(first.json().state) : starting);
+    assert.equal((await rejected).statusCode, 409);
+  } finally {
+    release();
+    context.authRepository.createOAuthTransaction = createTransaction;
+    context.store.resolveOAuthIdentity = resolveIdentity;
+  }
   assert.deepEqual((await context.store.listIdentities(primary.user.id)).map((identity) => identity.provider), ['google']);
   const retainedSession = await context.app.inject({ method: 'GET', url: '/users/me',
     headers: { authorization: `Bearer ${retained.sessionToken}` } });

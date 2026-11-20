@@ -64,6 +64,7 @@ const storageKeys = {
   pendingAuth: '3plates.pending-auth',
   nativeSessionToken: '3plates.session-token',
   sessionToken: '@3plates/session-token',
+  sessionRevision: '@3plates/session-revision',
   me: '@3plates/cache/me',
   progress: '@3plates/cache/progress',
   manualWorkouts: '@3plates/cache/manual-workouts',
@@ -124,6 +125,8 @@ async function readSessionToken() {
 }
 
 async function writeSessionToken(token: string | null) {
+  // Shared by browser tabs and preserved across an OAuth redirect or app restart.
+  await storage.setItem(storageKeys.sessionRevision, globalThis.crypto?.randomUUID?.() ?? makeMutationId());
   const secureStore = await loadSecureStoreModule();
   const secureStoreAvailable = await isSecureStoreAvailable();
   if (secureStoreAvailable && secureStore) {
@@ -517,12 +520,9 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   if (event.key === storageKeys.sessionToken || event.key === null) sessionChanged();
 });
 
-// Serialize local session transitions so cleanup cannot erase a newer sign-in.
-let sessionWork: Promise<unknown> = Promise.resolve();
+// Use the same lock across browser tabs when Web Locks is available.
 function sessionTransition<T>(run: () => Promise<T>): Promise<T> {
-  const next = sessionWork.then(run, run);
-  sessionWork = next.catch(() => undefined);
-  return next;
+  return withQueue(storageKeys.sessionRevision, run);
 }
 function assertSessionGeneration(expected: number) {
   if (getSessionGeneration() !== expected) throw new ApiRequestError(401, 'Your active account changed.', 'invalid_auth');
@@ -576,6 +576,7 @@ type PendingAuth = {
   verifier: string;
   expiresAt: number;
   sessionToken: string | null;
+  sessionRevision: string | null;
 };
 
 async function createAuthProof() {
@@ -603,7 +604,8 @@ async function readPendingAuth(): Promise<PendingAuth | null> {
     const pending = JSON.parse(value);
     if (typeof pending.state !== 'string' || typeof pending.verifier !== 'string' ||
         typeof pending.expiresAt !== 'number' ||
-        !(pending.sessionToken === null || typeof pending.sessionToken === 'string')) return null;
+        !(pending.sessionToken === null || typeof pending.sessionToken === 'string') ||
+        !(pending.sessionRevision === null || typeof pending.sessionRevision === 'string')) return null;
     return pending;
   } catch { return null; }
 }
@@ -629,7 +631,10 @@ async function startClientAuth(provider: AuthProvider, redirectTo: string | unde
     await writePendingAuth(null);
     const token = await getSessionToken();
     if (link && !token) throw new Error('Sign in before linking another provider.');
-    return { token, revision: authAttemptRevision, generation: getSessionGeneration() };
+    return {
+      token, revision: authAttemptRevision, generation: getSessionGeneration(),
+      sessionRevision: await storage.getItem(storageKeys.sessionRevision),
+    };
   });
   const proof = await authProofFactory();
   const response = await contractClient[link ? 'authLinkStart' : 'authStart']({
@@ -639,7 +644,8 @@ async function startClientAuth(provider: AuthProvider, redirectTo: string | unde
   if (response.status !== 200) throw toApiRequestError(response.status, response.body);
   await sessionTransition(async () => {
     if (authAttemptRevision !== initiating.revision || getSessionGeneration() !== initiating.generation ||
-        await getSessionToken() !== initiating.token) {
+        await getSessionToken() !== initiating.token ||
+        await storage.getItem(storageKeys.sessionRevision) !== initiating.sessionRevision) {
       throw new Error('Sign-in was superseded. Start sign-in again.');
     }
     if (redirectTo) await writePendingAuth({
@@ -647,6 +653,7 @@ async function startClientAuth(provider: AuthProvider, redirectTo: string | unde
       verifier: proof.verifier,
       expiresAt: Date.now() + 10 * 60 * 1000,
       sessionToken: initiating.token,
+      sessionRevision: initiating.sessionRevision,
     });
   });
   return response.body;
@@ -691,7 +698,9 @@ export function redeemMobileAuthExchangeCode(code: string, state: string) {
       const current = await readPendingAuth();
       if (!pending || pending.state !== state || pending.expiresAt <= Date.now() ||
           current?.state !== state || current.verifier !== pending.verifier ||
-          await getSessionToken() !== pending.sessionToken) {
+          current.sessionRevision !== pending.sessionRevision ||
+          await getSessionToken() !== pending.sessionToken ||
+          await storage.getItem(storageKeys.sessionRevision) !== pending.sessionRevision) {
         throw new Error('No matching pending sign-in. Start sign-in again.');
       }
     }

@@ -78,6 +78,13 @@
       "when": 1794939700570,
       "tag": "0010_silent_daredevil",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795205281308,
+      "tag": "0011_natural_starbolt",
+      "breakpoints": true
     }
   ]
 }

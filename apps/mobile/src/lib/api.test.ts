@@ -1136,6 +1136,25 @@ test('pending login survives client adapter reload and supports provider linking
   assert.equal(await getSessionToken(), 'verified-token');
 });
 
+test('a shared session revision invalidates pending sign-in even after returning to signed-out state', async (t) => {
+  const context = setupAuthExchangeTest(t);
+  const started = await startAuth('google', 'threeplates://auth/callback');
+  context.delay();
+  const redeeming = redeemMobileAuthExchangeCode('code', started.state);
+  while (!context.attempts()) await new Promise((resolve) => setImmediate(resolve));
+
+  await context.storage.setItem('@3plates/session-revision', 'other-tab-sign-in');
+  await context.storage.setItem('@3plates/session-token', 'other-tab-token');
+  await context.storage.setItem('@3plates/session-revision', 'other-tab-sign-out');
+  await context.storage.removeItem('@3plates/session-token');
+  context.finish();
+
+  await assert.rejects(redeeming, /pending sign-in/);
+  await assert.rejects(redeemMobileAuthExchangeCode('code', started.state), /pending sign-in/);
+  assert.equal(context.attempts(), 1);
+  assert.equal(await getSessionToken(), null);
+});
+
 test('expired pending logins never send their verifier', async (t) => {
   const context = setupAuthExchangeTest(t);
   const started = await startAuth('google', 'threeplates://auth/callback');

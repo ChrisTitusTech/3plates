@@ -734,3 +734,35 @@ for (const operation of ['sign-in', 'link'] as const) {
     expect(f.errors).toEqual([]);
   });
 }
+
+test('sign-out in another tab invalidates a pending callback after navigation', async ({ page, context }) => {
+  await setup(page, false);
+  let exchangeCalls = 0;
+  await page.route('**/auth/start', (route) => route.request().method() === 'OPTIONS' ? route.fallback() : route.fulfill({
+    json: { ok: true, provider: 'google', state: 'first-tab', next: 'https://auth-test.example/consent' },
+    headers: { 'access-control-allow-origin': '*' },
+  }));
+  await page.route('https://auth-test.example/consent', (route) => route.fulfill({ body: 'Provider consent fixture' }));
+  await page.route('**/auth/exchange', (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fallback();
+    exchangeCalls++;
+    return route.fallback();
+  });
+
+  await page.goto('/sign-in');
+  await page.getByRole('button', { name: 'Continue with Google', exact: true }).click();
+  await expect(page).toHaveURL('https://auth-test.example/consent');
+  const second = await context.newPage();
+  await setup(second);
+  await second.route('**/auth/sign-out', (route) => route.request().method() === 'OPTIONS' ? route.fallback() : route.fulfill({
+    json: { signedOut: true }, headers: { 'access-control-allow-origin': '*' },
+  }));
+  await second.goto('/account');
+  await second.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(second).toHaveURL(/\/sign-in$/);
+  expect(await second.evaluate(() => localStorage.getItem('@3plates/session-token'))).toBeNull();
+
+  await page.goto('/auth/callback?exchangeCode=bound-code&state=first-tab');
+  await expect(page.getByText('No matching pending sign-in. Start sign-in again.')).toBeVisible();
+  expect(exchangeCalls).toBe(0);
+});

@@ -1079,6 +1079,34 @@ function setupAuthExchangeTest(t: TestContext) {
     reject: () => { rejectExchange = true; }, finish: () => finishExchange?.() };
 }
 
+test('native sign-in stores and clears credentials with valid SecureStore keys', async (t) => {
+  const context = setupAuthExchangeTest(t);
+  const nativeStorage = createMemoryStorage();
+  const validateKey = (key: string) => assert.match(key, /^[A-Za-z0-9_.-]+$/);
+  __setApiTestAdapters({ secureStore: {
+    isAvailableAsync: async () => true,
+    async getItemAsync(key) {
+      validateKey(key);
+      return nativeStorage.getItem(key);
+    },
+    async setItemAsync(key, value) {
+      validateKey(key);
+      await nativeStorage.setItem(key, value);
+    },
+    async deleteItemAsync(key) {
+      validateKey(key);
+      await nativeStorage.removeItem(key);
+    },
+  } });
+
+  const started = await startAuth('google', 'threeplates://auth/callback');
+  await redeemMobileAuthExchangeCode('code', started.state);
+  assert.equal(await getSessionToken(), 'verified-token');
+  assert.equal(await context.storage.getItem('@3plates/session-token'), null);
+  await clearSession();
+  assert.equal(await getSessionToken(), null);
+});
+
 test('exchange rejects unsolicited and mismatched callbacks before sending proof', async (t) => {
   const context = setupAuthExchangeTest(t);
   await setSessionToken('existing-token');

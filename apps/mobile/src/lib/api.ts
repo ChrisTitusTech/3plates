@@ -62,6 +62,7 @@ let contractClient: ContractClientLike = apiClient;
 
 const storageKeys = {
   pendingAuth: '3plates.pending-auth',
+  nativeSessionToken: '3plates.session-token',
   sessionToken: '@3plates/session-token',
   me: '@3plates/cache/me',
   progress: '@3plates/cache/progress',
@@ -71,13 +72,15 @@ const storageKeys = {
   pendingMutations: '@3plates/pending-mutations',
 } as const;
 
-let secureStoreAvailabilityPromise: Promise<boolean> | null = null;
-let secureStoreModulePromise: Promise<null | {
+type SecureStoreLike = {
   isAvailableAsync: () => Promise<boolean>;
   getItemAsync: (key: string) => Promise<string | null>;
   setItemAsync: (key: string, value: string) => Promise<void>;
   deleteItemAsync: (key: string) => Promise<void>;
-}> | null = null;
+};
+
+let secureStoreAvailabilityPromise: Promise<boolean> | null = null;
+let secureStoreModulePromise: Promise<SecureStoreLike | null> | null = null;
 
 async function loadSecureStoreModule() {
   if (!secureStoreModulePromise) {
@@ -114,7 +117,7 @@ async function readSessionToken() {
   const secureStore = await loadSecureStoreModule();
   const secureStoreAvailable = await isSecureStoreAvailable();
   if (secureStoreAvailable && secureStore) {
-    return secureStore.getItemAsync(storageKeys.sessionToken);
+    return secureStore.getItemAsync(storageKeys.nativeSessionToken);
   }
 
   return storage.getItem(storageKeys.sessionToken);
@@ -125,11 +128,11 @@ async function writeSessionToken(token: string | null) {
   const secureStoreAvailable = await isSecureStoreAvailable();
   if (secureStoreAvailable && secureStore) {
     if (!token) {
-      await secureStore.deleteItemAsync(storageKeys.sessionToken);
+      await secureStore.deleteItemAsync(storageKeys.nativeSessionToken);
       return;
     }
 
-    await secureStore.setItemAsync(storageKeys.sessionToken, token);
+    await secureStore.setItemAsync(storageKeys.nativeSessionToken, token);
     return;
   }
 
@@ -1257,8 +1260,13 @@ export function __setApiTestAdapters(input: {
   storage?: StorageLike;
   client?: ContractClientLike;
   authProofFactory?: typeof createAuthProof;
+  secureStore?: SecureStoreLike;
 }) {
   if (input.authProofFactory) authProofFactory = input.authProofFactory;
+  if (input.secureStore) {
+    secureStoreModulePromise = Promise.resolve(input.secureStore);
+    secureStoreAvailabilityPromise = null;
+  }
   if (input.storage) {
     storage = input.storage;
     migratedUsers.clear(); migration = Promise.resolve();
@@ -1271,6 +1279,8 @@ export function __setApiTestAdapters(input: {
 
 export function __resetApiTestAdapters() {
   authProofFactory = createAuthProof;
+  secureStoreModulePromise = null;
+  secureStoreAvailabilityPromise = null;
   storage = defaultStorage;
   migratedUsers.clear(); migration = Promise.resolve();
   contractClient = apiClient;

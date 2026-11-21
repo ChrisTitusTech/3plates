@@ -52,6 +52,6 @@
     "babel-preset-expo": "58.0.25",
     "pngjs": "7.0.0",
     "tsx": "^4.23.15",
-    "typescript": "~6.0.3"
+    "typescript": "~7.0.2"
   }
 }
